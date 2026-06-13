@@ -22,5 +22,20 @@ services:
     ports:
       - "6379:6379"
 
+  # S3-compatible object storage for media (long video/audio never touch the app
+  # server — clients upload/download via presigned URLs). Console at :9001.
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: gamma
+      MINIO_ROOT_PASSWORD: gammasecret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
 volumes:
   pgdata:
+  miniodata:

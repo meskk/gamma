@@ -22,6 +22,8 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres",
 dotenvy = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
 tower = { version = "0.5", features = ["util"] }
+aws-sdk-s3 = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 # Faster, leaner release builds for the money-critical binaries.
 [profile.release]
