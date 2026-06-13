@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE media_assets\n            SET status = 'ready', size_bytes = $2\n            WHERE id = $1\n            RETURNING id, owner_id, kind, object_key, content_type, status,\n                      size_bytes, hls_manifest_key, transcode_status, created_at\n            ",
+  "query": "\n            UPDATE media_assets\n            SET hls_manifest_key = $2, transcode_status = 'done'\n            WHERE id = $1\n            RETURNING id, owner_id, kind, object_key, content_type, status,\n                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at\n            ",
   "describe": {
     "columns": [
       {
@@ -50,6 +50,11 @@
       },
       {
         "ordinal": 9,
+        "name": "unlock_price",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
@@ -57,7 +62,7 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Int8"
+        "Text"
       ]
     },
     "nullable": [
@@ -70,8 +75,9 @@
       true,
       true,
       false,
+      false,
       false
     ]
   },
-  "hash": "8a9b2fdeefe0f3438a26552cb92a7b46bac5af44af9ab27641112012b3e274f5"
+  "hash": "e56a7dd2337729d503a7e1a9846469bbbe1475afd440df09c60578241e7923a3"
 }

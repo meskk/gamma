@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO media_unlocks (viewer_id, asset_id)\n               VALUES ($1, $2) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c0a5a6cf4bcc59225bba187e8b1d32bf5041acce55917fdc9aa96cebec7e63e9"
+}

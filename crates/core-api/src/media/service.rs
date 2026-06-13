@@ -7,16 +7,23 @@ use storage::Storage;
 use uuid::Uuid;
 
 use crate::error::ApiError;
-use crate::media::model::{MediaAsset, MediaAssetView, NewUpload, UploadTicket};
-use crate::media::repository::MediaRepository;
+use crate::media::model::{MediaAsset, MediaAssetView, NewUpload, UnlockSummary, UploadTicket};
+use crate::media::repository::{MediaRepository, UnlockError};
 use crate::media::transcode;
 use crate::queue::TranscodeQueue;
 use db::PgPool;
 
 /// How long an upload ticket is valid.
 const UPLOAD_TTL: Duration = Duration::from_secs(15 * 60);
-/// How long a playback URL is valid.
+/// How long a direct download / playback URL is valid.
 const PLAYBACK_TTL: Duration = Duration::from_secs(60 * 60);
+/// HLS segment URLs must stay valid for a whole viewing session, so use a longer
+/// TTL. (Prod uses CDN signed cookies, which avoid per-URL expiry entirely.)
+const HLS_SEGMENT_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Sentinel account that receives the company fee. Not a real user (BIGSERIAL
+/// starts at 1), and gem_balances has no FK, so id 0 is a safe company bucket.
+const COMPANY_ACCOUNT_ID: i64 = 0;
 
 #[derive(Clone)]
 pub struct MediaService {
@@ -45,6 +52,10 @@ impl MediaService {
         // Opaque, non-enumerable storage key.
         let object_key = format!("media/{}/{}", req.kind.as_str(), Uuid::new_v4());
 
+        if req.unlock_price < 0 {
+            return Err(ApiError::Validation("negative_price"));
+        }
+
         let asset = self
             .repo
             .create(
@@ -52,6 +63,7 @@ impl MediaService {
                 req.kind.as_str(),
                 &object_key,
                 &req.content_type,
+                req.unlock_price,
             )
             .await
             .map_err(map_create_error)?;
@@ -136,6 +148,95 @@ impl MediaService {
         self.view(updated).await
     }
 
+    /// Pay to unlock an asset: split the price into creator share, company fee,
+    /// and burn (rates from econ-params), then apply it atomically. Owner-owned
+    /// and free assets need no unlock.
+    pub async fn unlock(&self, asset_id: i64, viewer_id: i64) -> Result<UnlockSummary, ApiError> {
+        let asset = self.repo.get(asset_id).await?.ok_or(ApiError::NotFound)?;
+
+        if asset.status != "ready" {
+            return Err(ApiError::Validation("not_ready"));
+        }
+        if asset.unlock_price <= 0 {
+            return Err(ApiError::Validation("free_content"));
+        }
+        if viewer_id == asset.owner_id {
+            return Err(ApiError::Validation("owner_already_entitled"));
+        }
+
+        // Split per the versioned knobs (content fee + fixed burn); the creator
+        // gets the remainder so creator + fee + burn == price exactly.
+        let params = econ_params::EconParams::default();
+        let price = asset.unlock_price;
+        let company_fee = price * params.content_fee_bps as i64 / 10_000;
+        let burned = price * params.transfer_burn_bps as i64 / 10_000;
+        let creator_received = price - company_fee - burned;
+
+        let outcome = self
+            .repo
+            .unlock(
+                viewer_id,
+                asset.owner_id,
+                COMPANY_ACCOUNT_ID,
+                asset_id,
+                price,
+                creator_received,
+                company_fee,
+            )
+            .await
+            .map_err(map_unlock_error)?;
+
+        Ok(UnlockSummary {
+            asset_id,
+            viewer_id,
+            price,
+            creator_received,
+            company_fee,
+            burned,
+            already_unlocked: outcome.already_unlocked,
+        })
+    }
+
+    /// Access-controlled HLS manifest. The viewer must own the asset, the asset
+    /// must be free, or the viewer must have unlocked it — otherwise 402. The
+    /// returned manifest has each segment rewritten to a short-lived presigned
+    /// URL, so the heavy segment bytes still come straight from the object store.
+    pub async fn manifest(&self, asset_id: i64, viewer_id: i64) -> Result<String, ApiError> {
+        let asset = self.repo.get(asset_id).await?.ok_or(ApiError::NotFound)?;
+
+        let manifest_key = match &asset.hls_manifest_key {
+            Some(key) if asset.transcode_status == "done" => key,
+            _ => return Err(ApiError::Validation("not_transcoded")),
+        };
+
+        let entitled = viewer_id == asset.owner_id
+            || asset.unlock_price <= 0
+            || self.repo.is_unlocked(viewer_id, asset_id).await?;
+        if !entitled {
+            return Err(ApiError::PaymentRequired);
+        }
+
+        let raw = self.storage.get_object(manifest_key).await?;
+        let manifest = String::from_utf8_lossy(&raw);
+        let prefix = format!("{}/hls", asset.object_key);
+
+        // Rewrite each segment line (non-comment, non-empty) to a presigned URL.
+        let mut out = String::with_capacity(manifest.len());
+        for line in manifest.lines() {
+            if line.is_empty() || line.starts_with('#') {
+                out.push_str(line);
+            } else {
+                let url = self
+                    .storage
+                    .presign_get(&format!("{prefix}/{line}"), HLS_SEGMENT_TTL)
+                    .await?;
+                out.push_str(&url);
+            }
+            out.push('\n');
+        }
+        Ok(out)
+    }
+
     async fn view(&self, asset: MediaAsset) -> Result<MediaAssetView, ApiError> {
         let playback_url = if asset.status == "ready" {
             Some(
@@ -155,7 +256,16 @@ impl MediaService {
             size_bytes: asset.size_bytes,
             playback_url,
             hls_ready: asset.transcode_status == "done",
+            unlock_price: asset.unlock_price,
         })
+    }
+}
+
+/// Map the unlock transaction error: insufficient gems is a client problem.
+fn map_unlock_error(err: UnlockError) -> ApiError {
+    match err {
+        UnlockError::InsufficientFunds => ApiError::Validation("insufficient_gems"),
+        UnlockError::Db(e) => ApiError::Database(e),
     }
 }
 

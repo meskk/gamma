@@ -28,6 +28,9 @@ pub struct NewUpload {
     pub kind: MediaKind,
     /// MIME type, e.g. "video/mp4". Its top-level type must match `kind`.
     pub content_type: String,
+    /// PT price to unlock this asset. 0 (default) means free / open.
+    #[serde(default)]
+    pub unlock_price: i64,
 }
 
 /// The persisted asset row.
@@ -42,6 +45,7 @@ pub struct MediaAsset {
     pub size_bytes: Option<i64>,
     pub hls_manifest_key: Option<String>,
     pub transcode_status: String,
+    pub unlock_price: i64,
     pub created_at: DateTime<Utc>,
 }
 
@@ -66,7 +70,21 @@ pub struct MediaAssetView {
     pub status: String,
     pub size_bytes: Option<i64>,
     pub playback_url: Option<String>,
-    /// True once an HLS rendition has been produced. (Serving HLS for playback is
-    /// the M3c CDN step; this flag reports that the rendition exists.)
+    /// True once an HLS rendition has been produced.
     pub hls_ready: bool,
+    /// PT price to unlock; 0 means free.
+    pub unlock_price: i64,
+}
+
+/// Result of a paid unlock — the split is reported for transparency.
+#[derive(Debug, Clone, Serialize)]
+pub struct UnlockSummary {
+    pub asset_id: i64,
+    pub viewer_id: i64,
+    pub price: i64,
+    pub creator_received: i64,
+    pub company_fee: i64,
+    pub burned: i64,
+    /// True if the viewer had already unlocked it (no charge applied).
+    pub already_unlocked: bool,
 }

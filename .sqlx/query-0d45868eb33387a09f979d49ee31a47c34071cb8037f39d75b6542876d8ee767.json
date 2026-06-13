@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            INSERT INTO media_assets (owner_id, kind, object_key, content_type, status)\n            VALUES ($1, $2, $3, $4, 'pending')\n            RETURNING id, owner_id, kind, object_key, content_type, status,\n                      size_bytes, hls_manifest_key, transcode_status, created_at\n            ",
+  "query": "\n            INSERT INTO media_assets (owner_id, kind, object_key, content_type, status, unlock_price)\n            VALUES ($1, $2, $3, $4, 'pending', $5)\n            RETURNING id, owner_id, kind, object_key, content_type, status,\n                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at\n            ",
   "describe": {
     "columns": [
       {
@@ -50,6 +50,11 @@
       },
       {
         "ordinal": 9,
+        "name": "unlock_price",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz"
       }
@@ -59,7 +64,8 @@
         "Int8",
         "Text",
         "Text",
-        "Text"
+        "Text",
+        "Int8"
       ]
     },
     "nullable": [
@@ -72,8 +78,9 @@
       true,
       true,
       false,
+      false,
       false
     ]
   },
-  "hash": "723da15e9313e4107b537909037b290c92f8181b0072226a90c0d83d0eaa1551"
+  "hash": "0d45868eb33387a09f979d49ee31a47c34071cb8037f39d75b6542876d8ee767"
 }

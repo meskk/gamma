@@ -14,6 +14,8 @@ pub enum ApiError {
     /// The request was well-formed but invalid (e.g. empty body, unknown author)
     /// → 400. Carries a stable machine-readable code.
     Validation(&'static str),
+    /// The resource requires a paid unlock the caller doesn't have → 402.
+    PaymentRequired,
     /// A database operation failed → 500 (details logged, not leaked to clients).
     Database(sqlx::Error),
     /// Any other internal failure → 500. Message is logged, not returned.
@@ -54,6 +56,7 @@ impl IntoResponse for ApiError {
         let (status, code) = match self {
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             ApiError::Validation(code) => (StatusCode::BAD_REQUEST, code),
+            ApiError::PaymentRequired => (StatusCode::PAYMENT_REQUIRED, "payment_required"),
             ApiError::Database(err) => {
                 // Log the real error; return an opaque code so we never leak SQL.
                 tracing::error!(%err, "database error");

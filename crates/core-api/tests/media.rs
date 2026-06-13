@@ -2,6 +2,7 @@
 //! finalize, and read back a playback URL — proving bytes never touch the API.
 //! Requires the `postgres` and `minio` services from docker-compose.
 
+use core_api::error::ApiError;
 use core_api::media::model::{MediaKind, NewUpload};
 use core_api::media::MediaService;
 use core_api::queue::TranscodeQueue;
@@ -364,6 +365,7 @@ async fn worker_transcodes_an_enqueued_asset(pool: PgPool) {
             owner_id: owner,
             kind: MediaKind::Video,
             content_type: "video/mp4".into(),
+            unlock_price: 0,
         })
         .await
         .unwrap();
@@ -388,4 +390,149 @@ async fn worker_transcodes_an_enqueued_asset(pool: PgPool) {
 
     // Queue is now empty.
     assert!(process_one(&media, &queue).await.is_none());
+}
+
+fn media_service(pool: &PgPool) -> MediaService {
+    let queue = TranscodeQueue::with_key(REDIS_URL, unique_queue_key()).unwrap();
+    MediaService::new(pool.clone(), Storage::new(StorageConfig::from_env()), queue)
+}
+
+async fn give_gems(pool: &PgPool, user: i64, amount: i64) {
+    sqlx::query(
+        "INSERT INTO gem_balances (user_id, balance) VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE SET balance = gem_balances.balance + EXCLUDED.balance",
+    )
+    .bind(user)
+    .bind(amount)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn gem_balance(pool: &PgPool, user: i64) -> i64 {
+    sqlx::query_scalar("SELECT COALESCE((SELECT balance FROM gem_balances WHERE user_id = $1), 0)")
+        .bind(user)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Upload + finalize + transcode a paid video, returning its asset id.
+async fn make_paid_video(pool: &PgPool, owner: i64, price: i64) -> i64 {
+    let media = media_service(pool);
+    let source = make_test_mp4().await;
+    let ticket = media
+        .create_upload(NewUpload {
+            owner_id: owner,
+            kind: MediaKind::Video,
+            content_type: "video/mp4".into(),
+            unlock_price: price,
+        })
+        .await
+        .unwrap();
+    reqwest::Client::new()
+        .put(&ticket.upload_url)
+        .header("content-type", "video/mp4")
+        .body(source)
+        .send()
+        .await
+        .unwrap();
+    media.finalize(ticket.asset_id).await.unwrap();
+    media.transcode(ticket.asset_id).await.unwrap();
+    ticket.asset_id
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn paid_unlock_splits_payment_and_grants_access(pool: PgPool) {
+    ensure_bucket().await;
+    let creator = verified_user(&pool).await;
+    let viewer = verified_user(&pool).await;
+    let price = 1000;
+    give_gems(&pool, viewer, price).await;
+    let asset_id = make_paid_video(&pool, creator, price).await;
+
+    let media = media_service(&pool);
+
+    // Owner is entitled without paying.
+    assert!(media.manifest(asset_id, creator).await.is_ok());
+
+    // Viewer is not entitled yet → 402.
+    assert!(matches!(
+        media.manifest(asset_id, viewer).await.unwrap_err(),
+        ApiError::PaymentRequired
+    ));
+
+    // Unlock: 2% fee + 2% burn (defaults) → creator 960, fee 20, burn 20.
+    let summary = media.unlock(asset_id, viewer).await.unwrap();
+    assert!(!summary.already_unlocked);
+    assert_eq!(summary.company_fee, 20);
+    assert_eq!(summary.burned, 20);
+    assert_eq!(summary.creator_received, 960);
+    assert_eq!(
+        summary.creator_received + summary.company_fee + summary.burned,
+        price,
+        "the split must conserve the price"
+    );
+
+    // Balances moved correctly; the burn left the supply (credited to no one).
+    assert_eq!(gem_balance(&pool, viewer).await, 0);
+    assert_eq!(gem_balance(&pool, creator).await, 960);
+    assert_eq!(
+        gem_balance(&pool, 0).await,
+        20,
+        "company account holds the fee"
+    );
+
+    // Now the viewer can fetch a manifest with presigned segment URLs.
+    let manifest = media.manifest(asset_id, viewer).await.unwrap();
+    assert!(manifest.contains("#EXTM3U"));
+    assert!(
+        manifest.contains("http"),
+        "segments should be presigned URLs"
+    );
+
+    // Re-unlock is a no-charge no-op.
+    let again = media.unlock(asset_id, viewer).await.unwrap();
+    assert!(again.already_unlocked);
+    assert_eq!(gem_balance(&pool, viewer).await, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn unlock_without_enough_gems_fails_and_grants_nothing(pool: PgPool) {
+    ensure_bucket().await;
+    let creator = verified_user(&pool).await;
+    let poor = verified_user(&pool).await; // no gems
+    let asset_id = make_paid_video(&pool, creator, 500).await;
+
+    let media = media_service(&pool);
+    assert!(matches!(
+        media.unlock(asset_id, poor).await.unwrap_err(),
+        ApiError::Validation("insufficient_gems")
+    ));
+    // The failed payment rolled back: still no access.
+    assert!(matches!(
+        media.manifest(asset_id, poor).await.unwrap_err(),
+        ApiError::PaymentRequired
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn http_manifest_is_402_until_unlocked(pool: PgPool) {
+    ensure_bucket().await;
+    let creator = verified_user(&pool).await;
+    let viewer = verified_user(&pool).await;
+    let asset_id = make_paid_video(&pool, creator, 100).await;
+
+    let router = app(AppState::new(pool));
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{asset_id}/manifest?viewer_id={viewer}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
 }
