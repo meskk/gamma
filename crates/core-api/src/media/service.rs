@@ -10,6 +10,7 @@ use crate::error::ApiError;
 use crate::media::model::{MediaAsset, MediaAssetView, NewUpload, UploadTicket};
 use crate::media::repository::MediaRepository;
 use crate::media::transcode;
+use crate::queue::TranscodeQueue;
 use db::PgPool;
 
 /// How long an upload ticket is valid.
@@ -21,13 +22,15 @@ const PLAYBACK_TTL: Duration = Duration::from_secs(60 * 60);
 pub struct MediaService {
     repo: MediaRepository,
     storage: Storage,
+    queue: TranscodeQueue,
 }
 
 impl MediaService {
-    pub fn new(pool: PgPool, storage: Storage) -> Self {
+    pub fn new(pool: PgPool, storage: Storage, queue: TranscodeQueue) -> Self {
         Self {
             repo: MediaRepository::new(pool),
             storage,
+            queue,
         }
     }
 
@@ -77,7 +80,23 @@ impl MediaService {
             .ok_or(ApiError::Validation("not_uploaded"))?;
 
         let ready = self.repo.mark_ready(asset.id, size).await?;
+
+        // Queue transcoding for playable media. A failure to enqueue is logged,
+        // not fatal — the asset is still usable and can be transcoded via the
+        // manual endpoint or a re-finalize.
+        if ready.kind == "video" || ready.kind == "audio" {
+            if let Err(err) = self.queue.enqueue(ready.id).await {
+                tracing::warn!(asset_id = ready.id, error = %err, "failed to enqueue transcode job");
+            }
+        }
+
         self.view(ready).await
+    }
+
+    /// Mark an asset's transcode as failed (used by the worker on ffmpeg errors).
+    pub async fn mark_failed(&self, asset_id: i64) -> Result<(), ApiError> {
+        self.repo.set_transcode_status(asset_id, "failed").await?;
+        Ok(())
     }
 
     /// Fetch an asset with a playback URL (present only once ready).

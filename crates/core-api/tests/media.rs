@@ -2,8 +2,12 @@
 //! finalize, and read back a playback URL — proving bytes never touch the API.
 //! Requires the `postgres` and `minio` services from docker-compose.
 
+use core_api::media::model::{MediaKind, NewUpload};
+use core_api::media::MediaService;
+use core_api::queue::TranscodeQueue;
 use core_api::users::model::NewUser;
 use core_api::users::repository::UserRepository;
+use core_api::worker::process_one;
 use core_api::{app, AppState};
 
 use axum::body::Body;
@@ -320,4 +324,68 @@ async fn transcode_produces_hls_in_storage(pool: PgPool) {
             .is_some(),
         "at least one HLS segment should exist"
     );
+}
+
+const REDIS_URL: &str = "redis://localhost:6379";
+
+fn unique_queue_key() -> String {
+    format!("gamma:transcode:test:{}", uuid_like())
+}
+
+#[tokio::test]
+async fn queue_enqueue_dequeue_is_fifo() {
+    let queue = TranscodeQueue::with_key(REDIS_URL, unique_queue_key()).unwrap();
+
+    assert!(queue.dequeue().await.unwrap().is_none());
+    queue.enqueue(42).await.unwrap();
+    queue.enqueue(43).await.unwrap();
+    assert_eq!(queue.dequeue().await.unwrap(), Some(42));
+    assert_eq!(queue.dequeue().await.unwrap(), Some(43));
+    assert!(queue.dequeue().await.unwrap().is_none());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn worker_transcodes_an_enqueued_asset(pool: PgPool) {
+    ensure_bucket().await;
+    let owner = verified_user(&pool).await;
+    let source = make_test_mp4().await;
+
+    // Isolated queue key so this test can't see other tests' jobs.
+    let queue = TranscodeQueue::with_key(REDIS_URL, unique_queue_key()).unwrap();
+    let media = MediaService::new(
+        pool.clone(),
+        Storage::new(StorageConfig::from_env()),
+        queue.clone(),
+    );
+
+    // Upload + finalize → finalize enqueues a transcode job.
+    let ticket = media
+        .create_upload(NewUpload {
+            owner_id: owner,
+            kind: MediaKind::Video,
+            content_type: "video/mp4".into(),
+        })
+        .await
+        .unwrap();
+    reqwest::Client::new()
+        .put(&ticket.upload_url)
+        .header("content-type", "video/mp4")
+        .body(source)
+        .send()
+        .await
+        .unwrap();
+    media.finalize(ticket.asset_id).await.unwrap();
+
+    // The worker picks up the job and transcodes it.
+    let processed = process_one(&media, &queue).await;
+    assert_eq!(processed, Some(ticket.asset_id));
+
+    let view = media.get(ticket.asset_id).await.unwrap();
+    assert!(
+        view.hls_ready,
+        "asset should be HLS-ready after the worker runs"
+    );
+
+    // Queue is now empty.
+    assert!(process_one(&media, &queue).await.is_none());
 }

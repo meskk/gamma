@@ -25,6 +25,7 @@ tower = { version = "0.5", features = ["util"] }
 aws-sdk-s3 = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 uuid = { version = "1", features = ["v4"] }
+redis = { version = "0.27", features = ["tokio-comp"] }
 
 # Faster, leaner release builds for the money-critical binaries.
 [profile.release]

@@ -10,6 +10,7 @@ use crate::gems::SettlementService;
 use crate::interactions::InteractionService;
 use crate::media::MediaService;
 use crate::posts::PostService;
+use crate::queue::TranscodeQueue;
 use crate::users::UserService;
 use db::PgPool;
 use storage::{Storage, StorageConfig};
@@ -37,7 +38,10 @@ impl AppState {
         let feed = FeedService::new(pool.clone());
         let interactions = InteractionService::new(pool.clone());
         let gems = SettlementService::new(pool.clone());
-        let media = MediaService::new(pool.clone(), storage.clone());
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+        let queue = TranscodeQueue::new(&redis_url).expect("valid REDIS_URL");
+        let media = MediaService::new(pool.clone(), storage.clone(), queue);
         Self {
             pool,
             users,

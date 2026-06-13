@@ -1,0 +1,28 @@
+//! Transcode worker loop body. `process_one` handles a single queued job; the
+//! `transcode-worker` binary calls it in a loop. Failures are logged and the
+//! asset marked failed, so one bad upload never stalls the queue.
+
+use crate::media::MediaService;
+use crate::queue::TranscodeQueue;
+
+/// Process one queued job if present. Returns the asset id handled, or `None` if
+/// the queue was empty (the caller should then back off briefly).
+pub async fn process_one(media: &MediaService, queue: &TranscodeQueue) -> Option<i64> {
+    let asset_id = match queue.dequeue().await {
+        Ok(Some(id)) => id,
+        Ok(None) => return None,
+        Err(err) => {
+            tracing::warn!(error = %err, "transcode queue dequeue failed");
+            return None;
+        }
+    };
+
+    match media.transcode(asset_id).await {
+        Ok(_) => tracing::info!(asset_id, "asset transcoded"),
+        Err(err) => {
+            tracing::warn!(asset_id, error = ?err, "transcode failed; marking asset failed");
+            let _ = media.mark_failed(asset_id).await;
+        }
+    }
+    Some(asset_id)
+}

@@ -14,8 +14,10 @@ pub mod gems;
 pub mod interactions;
 pub mod media;
 pub mod posts;
+pub mod queue;
 pub mod state;
 pub mod users;
+pub mod worker;
 
 mod health;
 

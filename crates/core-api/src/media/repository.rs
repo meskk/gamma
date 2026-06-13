@@ -70,6 +70,18 @@ impl MediaRepository {
         .await
     }
 
+    /// Set just the transcode status (e.g. 'failed' from the worker).
+    pub async fn set_transcode_status(&self, id: i64, status: &str) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            "UPDATE media_assets SET transcode_status = $2 WHERE id = $1",
+            id,
+            status
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Record a completed HLS rendition.
     pub async fn set_hls(&self, id: i64, manifest_key: &str) -> Result<MediaAsset, sqlx::Error> {
         sqlx::query_as!(

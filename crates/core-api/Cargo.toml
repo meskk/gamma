@@ -17,6 +17,7 @@ settlement = { path = "../settlement" }
 econ-params = { path = "../econ-params" }
 storage = { path = "../storage" }
 uuid.workspace = true
+redis.workspace = true
 thiserror.workspace = true
 axum.workspace = true
 tokio.workspace = true
