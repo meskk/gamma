@@ -18,8 +18,10 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 proptest = "1"
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "chrono"] }
 dotenvy = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+tower = { version = "0.5", features = ["util"] }
 
 # Faster, leaner release builds for the money-critical binaries.
 [profile.release]
