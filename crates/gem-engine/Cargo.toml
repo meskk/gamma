@@ -1,0 +1,12 @@
+[package]
+name = "gem-engine"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+domain = { path = "../domain" }
+econ-params = { path = "../econ-params" }
+
+[dev-dependencies]
+proptest.workspace = true

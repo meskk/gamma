@@ -1,0 +1,23 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Secrets / local env — never commit these
+.env
+.env.local
+*.pem
+*.key
+
+# Claude Code local settings (personal allowlist — not shared)
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Node (frontend, added later)
+node_modules/
+.next/
+dist/

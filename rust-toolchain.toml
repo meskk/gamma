@@ -1,0 +1,4 @@
+# Pin the toolchain so a clone on any machine builds identically (portability).
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
