@@ -12,6 +12,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use thiserror::Error;
 
+mod pg;
+pub use pg::PgLedger;
+
 #[derive(Debug, Error)]
 pub enum LedgerError {
     #[error("insufficient balance for user {0:?}")]

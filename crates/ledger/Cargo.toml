@@ -8,6 +8,7 @@ license.workspace = true
 domain = { path = "../domain" }
 async-trait.workspace = true
 thiserror.workspace = true
+sqlx.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true }
