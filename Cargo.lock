@@ -675,6 +675,7 @@ dependencies = [
  "settlement",
  "sqlx",
  "storage",
+ "thiserror 1.0.69",
  "tokio",
  "tower",
  "tracing",

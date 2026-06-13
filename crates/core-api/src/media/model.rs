@@ -40,6 +40,8 @@ pub struct MediaAsset {
     pub content_type: String,
     pub status: String,
     pub size_bytes: Option<i64>,
+    pub hls_manifest_key: Option<String>,
+    pub transcode_status: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -64,4 +66,7 @@ pub struct MediaAssetView {
     pub status: String,
     pub size_bytes: Option<i64>,
     pub playback_url: Option<String>,
+    /// True once an HLS rendition has been produced. (Serving HLS for playback is
+    /// the M3c CDN step; this flag reports that the rendition exists.)
+    pub hls_ready: bool,
 }

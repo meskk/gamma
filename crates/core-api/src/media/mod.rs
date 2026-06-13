@@ -10,5 +10,6 @@ pub mod handler;
 pub mod model;
 pub mod repository;
 pub mod service;
+mod transcode;
 
 pub use service::MediaService;

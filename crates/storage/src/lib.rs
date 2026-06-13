@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::presigning::PresigningConfig;
+use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client;
 use thiserror::Error;
 
@@ -127,6 +128,40 @@ impl Storage {
             .await
             .map_err(|e| StorageError::S3(e.to_string()))?;
         Ok(req.uri().to_string())
+    }
+
+    /// Download an object's bytes. Used by the transcoding worker to read a
+    /// source upload; not on any user request path.
+    pub async fn get_object(&self, key: &str) -> Result<Vec<u8>> {
+        let out = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| StorageError::S3(e.to_string()))?;
+        let data = out
+            .body
+            .collect()
+            .await
+            .map_err(|e| StorageError::S3(e.to_string()))?;
+        Ok(data.into_bytes().to_vec())
+    }
+
+    /// Upload bytes server-side (the worker writes HLS segments/manifest here).
+    /// User uploads use presigned PUT instead — this never runs on a request path.
+    pub async fn put_object(&self, key: &str, bytes: Vec<u8>, content_type: &str) -> Result<()> {
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .content_type(content_type)
+            .body(ByteStream::from(bytes))
+            .send()
+            .await
+            .map_err(|e| StorageError::S3(e.to_string()))?;
+        Ok(())
     }
 
     /// Object size in bytes if it exists, `None` if it doesn't — used to confirm

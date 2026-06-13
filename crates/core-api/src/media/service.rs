@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::error::ApiError;
 use crate::media::model::{MediaAsset, MediaAssetView, NewUpload, UploadTicket};
 use crate::media::repository::MediaRepository;
+use crate::media::transcode;
 use db::PgPool;
 
 /// How long an upload ticket is valid.
@@ -85,6 +86,37 @@ impl MediaService {
         self.view(asset).await
     }
 
+    /// Transcode a ready video/audio asset to HLS: download the source, run
+    /// ffmpeg, upload the manifest + segments under `<object_key>/hls/`, and
+    /// record the manifest key. Synchronous for now; M3b moves it to a worker.
+    pub async fn transcode(&self, asset_id: i64) -> Result<MediaAssetView, ApiError> {
+        let asset = self.repo.get(asset_id).await?.ok_or(ApiError::NotFound)?;
+        if asset.status != "ready" {
+            return Err(ApiError::Validation("not_ready"));
+        }
+        let is_video = asset.kind == "video";
+        if !is_video && asset.kind != "audio" {
+            return Err(ApiError::Validation("not_transcodable"));
+        }
+
+        let source = self.storage.get_object(&asset.object_key).await?;
+        let output = transcode::to_hls(&source, is_video)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        let prefix = format!("{}/hls", asset.object_key);
+        for file in &output.files {
+            let key = format!("{prefix}/{}", file.name);
+            self.storage
+                .put_object(&key, file.bytes.clone(), file.content_type)
+                .await?;
+        }
+
+        let manifest_key = format!("{prefix}/{}", output.manifest_name);
+        let updated = self.repo.set_hls(asset.id, &manifest_key).await?;
+        self.view(updated).await
+    }
+
     async fn view(&self, asset: MediaAsset) -> Result<MediaAssetView, ApiError> {
         let playback_url = if asset.status == "ready" {
             Some(
@@ -103,6 +135,7 @@ impl MediaService {
             status: asset.status,
             size_bytes: asset.size_bytes,
             playback_url,
+            hls_ready: asset.transcode_status == "done",
         })
     }
 }

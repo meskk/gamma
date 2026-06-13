@@ -13,6 +13,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/media", post(create_upload))
         .route("/media/:id/finalize", post(finalize))
+        .route("/media/:id/transcode", post(transcode))
         .route("/media/:id", get(get_media))
 }
 
@@ -29,6 +30,13 @@ async fn finalize(
     Path(id): Path<i64>,
 ) -> Result<Json<MediaAssetView>, ApiError> {
     Ok(Json(state.media.finalize(id).await?))
+}
+
+async fn transcode(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<MediaAssetView>, ApiError> {
+    Ok(Json(state.media.transcode(id).await?))
 }
 
 async fn get_media(

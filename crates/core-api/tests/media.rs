@@ -203,3 +203,121 @@ async fn unknown_owner_is_rejected(pool: PgPool) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+/// Generate a tiny real mp4 with ffmpeg so we can exercise the transcoder.
+async fn make_test_mp4() -> Vec<u8> {
+    let path = std::env::temp_dir().join(format!("gamma-src-{}.mp4", uuid_like()));
+    let status = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=2:size=128x128:rate=10",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&path)
+        .output()
+        .await
+        .expect("run ffmpeg");
+    assert!(status.status.success(), "ffmpeg gen failed");
+    let bytes = tokio::fs::read(&path).await.expect("read mp4");
+    let _ = tokio::fs::remove_file(&path).await;
+    bytes
+}
+
+fn uuid_like() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn transcode_produces_hls_in_storage(pool: PgPool) {
+    ensure_bucket().await;
+    let owner = verified_user(&pool).await;
+    let source = make_test_mp4().await;
+    let router = app(AppState::new(pool));
+
+    // Upload ticket.
+    let body =
+        serde_json::json!({ "owner_id": owner, "kind": "video", "content_type": "video/mp4" });
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/media")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let ticket: Value = serde_json::from_slice(&bytes).unwrap();
+    let asset_id = ticket["asset_id"].as_i64().unwrap();
+    let object_key = ticket["object_key"].as_str().unwrap().to_string();
+    let upload_url = ticket["upload_url"].as_str().unwrap();
+
+    // Upload + finalize.
+    reqwest::Client::new()
+        .put(upload_url)
+        .header("content-type", "video/mp4")
+        .body(source)
+        .send()
+        .await
+        .unwrap();
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/media/{asset_id}/finalize"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Transcode.
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/media/{asset_id}/transcode"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let view: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(view["hls_ready"], true);
+
+    // The manifest and at least one segment exist in the object store.
+    let store = Storage::new(StorageConfig::from_env());
+    assert!(
+        store
+            .head(&format!("{object_key}/hls/index.m3u8"))
+            .await
+            .unwrap()
+            .is_some(),
+        "HLS manifest should exist"
+    );
+    assert!(
+        store
+            .head(&format!("{object_key}/hls/seg_000.ts"))
+            .await
+            .unwrap()
+            .is_some(),
+        "at least one HLS segment should exist"
+    );
+}
