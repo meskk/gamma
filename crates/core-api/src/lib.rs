@@ -12,6 +12,7 @@ pub mod feed;
 pub mod follows;
 pub mod gems;
 pub mod interactions;
+pub mod media;
 pub mod posts;
 pub mod state;
 pub mod users;
@@ -32,5 +33,6 @@ pub fn app(state: AppState) -> Router {
         .merge(feed::handler::routes())
         .merge(interactions::handler::routes())
         .merge(gems::handler::routes())
+        .merge(media::handler::routes())
         .with_state(state)
 }

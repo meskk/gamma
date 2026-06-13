@@ -31,6 +31,23 @@ pub struct StorageConfig {
     pub secret_key: String,
 }
 
+impl StorageConfig {
+    /// Read from `S3_*` env vars, defaulting to the local MinIO from docker-compose.
+    pub fn from_env() -> Self {
+        Self {
+            endpoint: env_or("S3_ENDPOINT", "http://localhost:9000"),
+            region: env_or("S3_REGION", "us-east-1"),
+            bucket: env_or("S3_BUCKET", "gamma-media"),
+            access_key: env_or("S3_ACCESS_KEY", "gamma"),
+            secret_key: env_or("S3_SECRET_KEY", "gammasecret"),
+        }
+    }
+}
+
+fn env_or(key: &str, default: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
 #[derive(Clone)]
 pub struct Storage {
     client: Client,

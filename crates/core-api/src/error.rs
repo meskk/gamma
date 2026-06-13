@@ -38,6 +38,12 @@ impl From<settlement::SettlementError> for ApiError {
     }
 }
 
+impl From<storage::StorageError> for ApiError {
+    fn from(err: storage::StorageError) -> Self {
+        ApiError::Internal(err.to_string())
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorBody {
     error: &'static str,

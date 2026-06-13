@@ -24,6 +24,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tower = { version = "0.5", features = ["util"] }
 aws-sdk-s3 = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+uuid = { version = "1", features = ["v4"] }
 
 # Faster, leaner release builds for the money-critical binaries.
 [profile.release]
