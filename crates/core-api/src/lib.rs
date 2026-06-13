@@ -10,6 +10,7 @@
 pub mod error;
 pub mod feed;
 pub mod follows;
+pub mod interactions;
 pub mod posts;
 pub mod state;
 pub mod users;
@@ -28,5 +29,6 @@ pub fn app(state: AppState) -> Router {
         .merge(posts::handler::routes())
         .merge(follows::handler::routes())
         .merge(feed::handler::routes())
+        .merge(interactions::handler::routes())
         .with_state(state)
 }

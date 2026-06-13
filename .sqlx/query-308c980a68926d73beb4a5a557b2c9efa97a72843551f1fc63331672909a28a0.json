@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, actor_id, target_id, post_id, type AS type_code, weight, created_at, epoch_k\n            FROM interaction_events\n            WHERE epoch_k = $1\n            ORDER BY id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "actor_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "target_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "post_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "type_code",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 5,
+        "name": "weight",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "epoch_k",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "308c980a68926d73beb4a5a557b2c9efa97a72843551f1fc63331672909a28a0"
+}

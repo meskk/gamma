@@ -6,6 +6,7 @@
 
 use crate::feed::FeedService;
 use crate::follows::FollowService;
+use crate::interactions::InteractionService;
 use crate::posts::PostService;
 use crate::users::UserService;
 use db::PgPool;
@@ -17,6 +18,7 @@ pub struct AppState {
     pub posts: PostService,
     pub follows: FollowService,
     pub feed: FeedService,
+    pub interactions: InteractionService,
 }
 
 impl AppState {
@@ -25,12 +27,14 @@ impl AppState {
         let posts = PostService::new(pool.clone());
         let follows = FollowService::new(pool.clone());
         let feed = FeedService::new(pool.clone());
+        let interactions = InteractionService::new(pool.clone());
         Self {
             pool,
             users,
             posts,
             follows,
             feed,
+            interactions,
         }
     }
 }

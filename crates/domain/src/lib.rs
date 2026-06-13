@@ -19,6 +19,18 @@ pub struct PostId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Epoch(pub u64);
 
+/// Seconds in one UTC day — the epoch length (one epoch = one day).
+pub const EPOCH_SECONDS: i64 = 86_400;
+
+impl Epoch {
+    /// The daily epoch containing the given Unix timestamp (seconds). Used to
+    /// stamp interaction events live and to bound settlement. Kept dependency-free
+    /// (takes raw seconds) so `domain` needs no time crate.
+    pub fn from_unix_seconds(secs: i64) -> Epoch {
+        Epoch((secs.max(0) as u64) / EPOCH_SECONDS as u64)
+    }
+}
+
 /// BTC amount in satoshis. Integer — never a float.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 pub struct Sats(pub u64);
