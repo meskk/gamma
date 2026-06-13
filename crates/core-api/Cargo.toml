@@ -18,6 +18,10 @@ econ-params = { path = "../econ-params" }
 storage = { path = "../storage" }
 uuid.workspace = true
 redis.workspace = true
+argon2.workspace = true
+rand.workspace = true
+sha2.workspace = true
+hex.workspace = true
 thiserror.workspace = true
 axum.workspace = true
 tokio.workspace = true

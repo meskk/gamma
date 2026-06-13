@@ -4,6 +4,7 @@
 //! per domain. All fields are cheap to clone (`PgPool` is an Arc internally), so
 //! axum can clone the state per request.
 
+use crate::auth::AuthService;
 use crate::feed::FeedService;
 use crate::follows::FollowService;
 use crate::gems::SettlementService;
@@ -25,6 +26,7 @@ pub struct AppState {
     pub interactions: InteractionService,
     pub gems: SettlementService,
     pub media: MediaService,
+    pub auth: AuthService,
     /// Exposed so the binary can ensure the bucket exists on startup.
     pub storage: Storage,
 }
@@ -42,6 +44,7 @@ impl AppState {
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
         let queue = TranscodeQueue::new(&redis_url).expect("valid REDIS_URL");
         let media = MediaService::new(pool.clone(), storage.clone(), queue);
+        let auth = AuthService::new(pool.clone());
         Self {
             pool,
             users,
@@ -51,6 +54,7 @@ impl AppState {
             interactions,
             gems,
             media,
+            auth,
             storage,
         }
     }

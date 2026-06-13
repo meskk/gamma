@@ -7,6 +7,7 @@
 //! The app is a library; the binary (`src/main.rs`) is a thin bootstrap around
 //! it. That split lets integration tests drive the real router in-process.
 
+pub mod auth;
 pub mod error;
 pub mod feed;
 pub mod follows;
@@ -29,6 +30,7 @@ pub use state::AppState;
 pub fn app(state: AppState) -> Router {
     Router::new()
         .merge(health::routes())
+        .merge(auth::handler::routes())
         .merge(users::handler::routes())
         .merge(posts::handler::routes())
         .merge(follows::handler::routes())
