@@ -10,9 +10,11 @@ path = "src/main.rs"
 
 [dependencies]
 domain = { path = "../domain" }
+db = { path = "../db" }
 axum.workspace = true
 tokio.workspace = true
 serde.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
+dotenvy.workspace = true

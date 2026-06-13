@@ -7,10 +7,33 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Compile-time sqlx query checks use the committed .sqlx cache, not a live DB.
+  SQLX_OFFLINE: "true"
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+
+    # Real Postgres for the integration tests. #[sqlx::test] creates and drops
+    # isolated temporary databases on this server, so the default superuser is used.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gamma
+          POSTGRES_PASSWORD: gamma
+          POSTGRES_DB: gamma
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gamma"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://gamma:gamma@localhost:5432/gamma
+
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -24,5 +47,5 @@ jobs:
       - name: Lint (clippy, warnings = errors)
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Test (includes the settlement invariant tests)
+      - name: Test (unit + settlement invariants + DB integration)
         run: cargo test --all
