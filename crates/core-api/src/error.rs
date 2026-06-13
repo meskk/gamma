@@ -11,6 +11,9 @@ use serde::Serialize;
 pub enum ApiError {
     /// The requested resource does not exist → 404.
     NotFound,
+    /// The request was well-formed but invalid (e.g. empty body, unknown author)
+    /// → 400. Carries a stable machine-readable code.
+    Validation(&'static str),
     /// A database operation failed → 500 (details logged, not leaked to clients).
     Database(sqlx::Error),
 }
@@ -30,6 +33,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code) = match self {
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            ApiError::Validation(code) => (StatusCode::BAD_REQUEST, code),
             ApiError::Database(err) => {
                 // Log the real error; return an opaque code so we never leak SQL.
                 tracing::error!(%err, "database error");
