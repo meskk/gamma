@@ -4,6 +4,7 @@
 //! per domain. All fields are cheap to clone (`PgPool` is an Arc internally), so
 //! axum can clone the state per request.
 
+use crate::feed::FeedService;
 use crate::follows::FollowService;
 use crate::posts::PostService;
 use crate::users::UserService;
@@ -15,6 +16,7 @@ pub struct AppState {
     pub users: UserService,
     pub posts: PostService,
     pub follows: FollowService,
+    pub feed: FeedService,
 }
 
 impl AppState {
@@ -22,11 +24,13 @@ impl AppState {
         let users = UserService::new(pool.clone());
         let posts = PostService::new(pool.clone());
         let follows = FollowService::new(pool.clone());
+        let feed = FeedService::new(pool.clone());
         Self {
             pool,
             users,
             posts,
             follows,
+            feed,
         }
     }
 }
