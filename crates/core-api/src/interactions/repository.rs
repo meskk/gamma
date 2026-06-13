@@ -1,7 +1,7 @@
 //! Postgres-backed interaction repository — append-only writes plus an
 //! epoch-scoped read for building the interaction graph.
 
-use crate::interactions::model::InteractionEvent;
+use crate::interactions::model::{EpochEdge, InteractionEvent};
 use db::PgPool;
 
 #[derive(Clone)]
@@ -54,6 +54,30 @@ impl InteractionRepository {
             FROM interaction_events
             WHERE epoch_k = $1
             ORDER BY id
+            "#,
+            epoch_k
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    /// Resolved user→user edges for one epoch, ready for the gem engine. For a
+    /// post interaction with no explicit target, the post's author is the target
+    /// (LEFT JOIN on post_id). Events with no resolvable target and self-loops are
+    /// dropped here so the graph layer gets clean edges.
+    pub async fn edges_for_epoch(&self, epoch_k: i32) -> Result<Vec<EpochEdge>, sqlx::Error> {
+        sqlx::query_as!(
+            EpochEdge,
+            r#"
+            SELECT
+                ie.actor_id AS "actor_id!",
+                COALESCE(ie.target_id, p.author_id) AS "target_id!",
+                ie.weight AS "weight!"
+            FROM interaction_events ie
+            LEFT JOIN posts p ON p.id = ie.post_id
+            WHERE ie.epoch_k = $1
+              AND COALESCE(ie.target_id, p.author_id) IS NOT NULL
+              AND ie.actor_id <> COALESCE(ie.target_id, p.author_id)
             "#,
             epoch_k
         )

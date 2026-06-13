@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO epoch_settlements (epoch_k, emission, user_count)\n            VALUES ($1, $2, $3)\n            ON CONFLICT (epoch_k) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "17bcc398b3e78d8a9b960d820cf7818da9ed877b2cf488436feb0d52d269292d"
+}

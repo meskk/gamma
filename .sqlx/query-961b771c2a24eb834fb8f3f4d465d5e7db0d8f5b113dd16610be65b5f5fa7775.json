@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                ie.actor_id AS \"actor_id!\",\n                COALESCE(ie.target_id, p.author_id) AS \"target_id!\",\n                ie.weight AS \"weight!\"\n            FROM interaction_events ie\n            LEFT JOIN posts p ON p.id = ie.post_id\n            WHERE ie.epoch_k = $1\n              AND COALESCE(ie.target_id, p.author_id) IS NOT NULL\n              AND ie.actor_id <> COALESCE(ie.target_id, p.author_id)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "actor_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "target_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "weight!",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "961b771c2a24eb834fb8f3f4d465d5e7db0d8f5b113dd16610be65b5f5fa7775"
+}

@@ -16,11 +16,25 @@ pub enum ApiError {
     Validation(&'static str),
     /// A database operation failed → 500 (details logged, not leaked to clients).
     Database(sqlx::Error),
+    /// Any other internal failure → 500. Message is logged, not returned.
+    Internal(String),
 }
 
 impl From<sqlx::Error> for ApiError {
     fn from(err: sqlx::Error) -> Self {
         ApiError::Database(err)
+    }
+}
+
+impl From<ledger::LedgerError> for ApiError {
+    fn from(err: ledger::LedgerError) -> Self {
+        ApiError::Internal(err.to_string())
+    }
+}
+
+impl From<settlement::SettlementError> for ApiError {
+    fn from(err: settlement::SettlementError) -> Self {
+        ApiError::Internal(err.to_string())
     }
 }
 
@@ -37,6 +51,10 @@ impl IntoResponse for ApiError {
             ApiError::Database(err) => {
                 // Log the real error; return an opaque code so we never leak SQL.
                 tracing::error!(%err, "database error");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+            }
+            ApiError::Internal(msg) => {
+                tracing::error!(%msg, "internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
             }
         };

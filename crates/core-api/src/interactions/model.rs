@@ -81,6 +81,16 @@ pub struct InteractionEvent {
     pub epoch_k: i32,
 }
 
+/// A resolved user→user edge for one epoch, ready to feed the gem engine. The
+/// target is the other user directly, or (for a post interaction) the post's
+/// author. Self-loops are excluded at query time.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct EpochEdge {
+    pub actor_id: i64,
+    pub target_id: i64,
+    pub weight: f64,
+}
+
 /// API representation: typed `type`, no raw code, no internal timestamp noise.
 #[derive(Debug, Clone, Serialize)]
 pub struct InteractionView {

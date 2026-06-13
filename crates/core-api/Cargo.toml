@@ -11,6 +11,10 @@ path = "src/main.rs"
 [dependencies]
 domain = { path = "../domain" }
 db = { path = "../db" }
+ledger = { path = "../ledger" }
+gem-engine = { path = "../gem-engine" }
+settlement = { path = "../settlement" }
+econ-params = { path = "../econ-params" }
 axum.workspace = true
 tokio.workspace = true
 serde.workspace = true

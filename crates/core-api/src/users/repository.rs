@@ -47,4 +47,16 @@ impl UserRepository {
         .fetch_optional(&self.pool)
         .await
     }
+
+    /// Bot-gate (verified) flags for the given user ids — the gate `v_i` that the
+    /// gem engine applies. Missing ids simply don't appear in the result.
+    pub async fn verified_flags(&self, ids: &[i64]) -> Result<Vec<(i64, bool)>, sqlx::Error> {
+        let rows = sqlx::query!(
+            r#"SELECT id, bot_gate_v FROM users WHERE id = ANY($1)"#,
+            ids
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| (r.id, r.bot_gate_v)).collect())
+    }
 }
