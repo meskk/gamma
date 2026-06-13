@@ -6,6 +6,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
+use crate::auth::AuthUser;
 use crate::error::ApiError;
 use crate::posts::model::{NewPost, Post};
 use crate::state::AppState;
@@ -27,9 +28,11 @@ fn default_limit() -> i64 {
 }
 
 async fn create_post(
+    AuthUser(author_id): AuthUser,
     State(state): State<AppState>,
-    Json(body): Json<NewPost>,
+    Json(mut body): Json<NewPost>,
 ) -> Result<(StatusCode, Json<Post>), ApiError> {
+    body.author_id = author_id; // authenticated identity, not client-supplied
     let post = state.posts.create(body).await?;
     Ok((StatusCode::CREATED, Json(post)))
 }

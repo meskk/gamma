@@ -5,6 +5,7 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 
+use crate::auth::AuthUser;
 use crate::error::ApiError;
 use crate::interactions::model::{InteractionView, NewInteraction};
 use crate::state::AppState;
@@ -14,9 +15,11 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn record(
+    AuthUser(actor_id): AuthUser,
     State(state): State<AppState>,
-    Json(body): Json<NewInteraction>,
+    Json(mut body): Json<NewInteraction>,
 ) -> Result<(StatusCode, Json<InteractionView>), ApiError> {
+    body.actor_id = actor_id; // authenticated identity, not client-supplied
     let event = state.interactions.record(body).await?;
     Ok((
         StatusCode::CREATED,

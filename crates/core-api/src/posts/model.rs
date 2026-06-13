@@ -20,6 +20,9 @@ pub struct Post {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct NewPost {
+    /// Set by the server from the authenticated session — never read from the
+    /// request body (skip_deserializing), so a client can't post as someone else.
+    #[serde(skip_deserializing)]
     pub author_id: i64,
     #[serde(default)]
     pub category: Option<String>,

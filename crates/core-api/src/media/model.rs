@@ -24,6 +24,8 @@ impl MediaKind {
 /// Request to begin an upload.
 #[derive(Debug, Clone, Deserialize)]
 pub struct NewUpload {
+    /// Set by the server from the authenticated session (skip_deserializing).
+    #[serde(skip_deserializing)]
     pub owner_id: i64,
     pub kind: MediaKind,
     /// MIME type, e.g. "video/mp4". Its top-level type must match `kind`.

@@ -1,37 +1,38 @@
-//! HTTP layer for follows, nested under the user resource.
+//! HTTP layer for follows.
 //!
-//! The follower segment is named `:id` to match the users routes' `:id` — axum's
-//! router requires a consistent parameter name at the same path position.
+//! Following/unfollowing acts as the authenticated user (`/me/following/...`),
+//! so a client can't manage someone else's graph. The follow list of any user is
+//! public to read.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{get, put};
 use axum::{Json, Router};
 
+use crate::auth::AuthUser;
 use crate::error::ApiError;
 use crate::follows::model::Follow;
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route(
-            "/users/:id/following/:followee_id",
-            put(follow).delete(unfollow),
-        )
+        .route("/me/following/:followee_id", put(follow).delete(unfollow))
         .route("/users/:id/following", get(list_following))
 }
 
 async fn follow(
+    AuthUser(follower): AuthUser,
     State(state): State<AppState>,
-    Path((follower, followee)): Path<(i64, i64)>,
+    Path(followee): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     state.follows.follow(follower, followee).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn unfollow(
+    AuthUser(follower): AuthUser,
     State(state): State<AppState>,
-    Path((follower, followee)): Path<(i64, i64)>,
+    Path(followee): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     state.follows.unfollow(follower, followee).await?;
     Ok(StatusCode::NO_CONTENT)

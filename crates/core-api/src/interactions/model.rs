@@ -59,6 +59,8 @@ impl InteractionType {
 /// are optional — a like targets a post, a follow targets a user, etc.
 #[derive(Debug, Clone, Deserialize)]
 pub struct NewInteraction {
+    /// Set by the server from the authenticated session (skip_deserializing).
+    #[serde(skip_deserializing)]
     pub actor_id: i64,
     pub r#type: InteractionType,
     #[serde(default)]

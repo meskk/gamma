@@ -12,6 +12,8 @@ use axum::http::{Request, StatusCode};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
+mod common;
+
 async fn seed_user(pool: &PgPool) -> i64 {
     UserRepository::new(pool.clone())
         .create(&NewUser {
@@ -45,26 +47,26 @@ async fn follow_is_idempotent_and_listed(pool: PgPool) {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn http_follow_unfollow_roundtrip(pool: PgPool) {
-    let a = seed_user(&pool).await;
-    let b = seed_user(&pool).await;
-    let router = app(AppState::new(pool));
+    let router = app(AppState::new(pool.clone()));
+    let (token, a) = common::register(&router, &[]).await;
+    let b = seed_user(&pool).await; // the followee just needs to exist
 
-    let put = |router: axum::Router, follower: i64, followee: i64| async move {
-        router
-            .oneshot(
-                Request::builder()
-                    .method("PUT")
-                    .uri(format!("/users/{follower}/following/{followee}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-    };
-
-    let resp = put(router.clone(), a, b).await;
+    // Follow as the authenticated user via /me/following/:followee.
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/me/following/{b}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
+    // The follow list of any user is public to read.
     let resp = router
         .clone()
         .oneshot(
@@ -87,7 +89,8 @@ async fn http_follow_unfollow_roundtrip(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(format!("/users/{a}/following/{b}"))
+                .uri(format!("/me/following/{b}"))
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -97,15 +100,32 @@ async fn http_follow_unfollow_roundtrip(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn self_follow_is_rejected(pool: PgPool) {
-    let a = seed_user(&pool).await;
+async fn follow_requires_authentication(pool: PgPool) {
     let router = app(AppState::new(pool));
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/me/following/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn self_follow_is_rejected(pool: PgPool) {
+    let router = app(AppState::new(pool));
+    let (token, a) = common::register(&router, &[]).await;
 
     let resp = router
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri(format!("/users/{a}/following/{a}"))
+                .uri(format!("/me/following/{a}"))
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -116,14 +136,15 @@ async fn self_follow_is_rejected(pool: PgPool) {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn following_unknown_user_is_rejected(pool: PgPool) {
-    let a = seed_user(&pool).await;
     let router = app(AppState::new(pool));
+    let (token, _) = common::register(&router, &[]).await;
 
     let resp = router
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri(format!("/users/{a}/following/999999"))
+                .uri("/me/following/999999")
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )

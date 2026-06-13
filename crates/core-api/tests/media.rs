@@ -18,6 +18,8 @@ use sqlx::PgPool;
 use storage::{Storage, StorageConfig};
 use tower::ServiceExt;
 
+mod common;
+
 async fn ensure_bucket() {
     Storage::new(StorageConfig::from_env())
         .ensure_bucket()
@@ -39,12 +41,11 @@ async fn verified_user(pool: &PgPool) -> i64 {
 #[sqlx::test(migrations = "../../migrations")]
 async fn upload_finalize_playback_roundtrip(pool: PgPool) {
     ensure_bucket().await;
-    let owner = verified_user(&pool).await;
     let router = app(AppState::new(pool));
+    let (token, _owner) = common::register(&router, &[]).await;
 
-    // 1. Request an upload ticket.
-    let body =
-        serde_json::json!({ "owner_id": owner, "kind": "video", "content_type": "video/mp4" });
+    // 1. Request an upload ticket — owner comes from the session.
+    let body = serde_json::json!({ "kind": "video", "content_type": "video/mp4" });
     let resp = router
         .clone()
         .oneshot(
@@ -52,6 +53,7 @@ async fn upload_finalize_playback_roundtrip(pool: PgPool) {
                 .method("POST")
                 .uri("/media")
                 .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
                 .unwrap(),
         )
@@ -128,11 +130,10 @@ async fn upload_finalize_playback_roundtrip(pool: PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn finalize_without_upload_is_rejected(pool: PgPool) {
     ensure_bucket().await;
-    let owner = verified_user(&pool).await;
     let router = app(AppState::new(pool));
+    let (token, _) = common::register(&router, &[]).await;
 
-    let body =
-        serde_json::json!({ "owner_id": owner, "kind": "audio", "content_type": "audio/mpeg" });
+    let body = serde_json::json!({ "kind": "audio", "content_type": "audio/mpeg" });
     let resp = router
         .clone()
         .oneshot(
@@ -140,6 +141,7 @@ async fn finalize_without_upload_is_rejected(pool: PgPool) {
                 .method("POST")
                 .uri("/media")
                 .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
                 .unwrap(),
         )
@@ -168,18 +170,18 @@ async fn finalize_without_upload_is_rejected(pool: PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn content_type_must_match_kind(pool: PgPool) {
     ensure_bucket().await;
-    let owner = verified_user(&pool).await;
     let router = app(AppState::new(pool));
+    let (token, _) = common::register(&router, &[]).await;
 
     // kind video but an image content-type → 400.
-    let body =
-        serde_json::json!({ "owner_id": owner, "kind": "video", "content_type": "image/png" });
+    let body = serde_json::json!({ "kind": "video", "content_type": "image/png" });
     let resp = router
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/media")
                 .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
                 .unwrap(),
         )
@@ -189,12 +191,9 @@ async fn content_type_must_match_kind(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn unknown_owner_is_rejected(pool: PgPool) {
-    ensure_bucket().await;
+async fn create_media_requires_authentication(pool: PgPool) {
     let router = app(AppState::new(pool));
-
-    let body =
-        serde_json::json!({ "owner_id": 999999, "kind": "image", "content_type": "image/png" });
+    let body = serde_json::json!({ "kind": "image", "content_type": "image/png" });
     let resp = router
         .oneshot(
             Request::builder()
@@ -206,7 +205,24 @@ async fn unknown_owner_is_rejected(pool: PgPool) {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn unknown_owner_is_rejected_at_service_level(pool: PgPool) {
+    // Unreachable over HTTP now (owner comes from a valid session), but the
+    // service still maps the FK violation to a 400 for any internal caller.
+    let media = media_service(&pool);
+    let err = media
+        .create_upload(NewUpload {
+            owner_id: 999_999,
+            kind: MediaKind::Image,
+            content_type: "image/png".into(),
+            unlock_price: 0,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ApiError::Validation("unknown_owner")));
 }
 
 /// Generate a tiny real mp4 with ffmpeg so we can exercise the transcoder.
@@ -242,13 +258,12 @@ fn uuid_like() -> u128 {
 #[sqlx::test(migrations = "../../migrations")]
 async fn transcode_produces_hls_in_storage(pool: PgPool) {
     ensure_bucket().await;
-    let owner = verified_user(&pool).await;
     let source = make_test_mp4().await;
     let router = app(AppState::new(pool));
+    let (token, _owner) = common::register(&router, &[]).await;
 
-    // Upload ticket.
-    let body =
-        serde_json::json!({ "owner_id": owner, "kind": "video", "content_type": "video/mp4" });
+    // Upload ticket — owner from session.
+    let body = serde_json::json!({ "kind": "video", "content_type": "video/mp4" });
     let resp = router
         .clone()
         .oneshot(
@@ -256,6 +271,7 @@ async fn transcode_produces_hls_in_storage(pool: PgPool) {
                 .method("POST")
                 .uri("/media")
                 .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
                 .unwrap(),
         )
@@ -520,19 +536,36 @@ async fn unlock_without_enough_gems_fails_and_grants_nothing(pool: PgPool) {
 async fn http_manifest_is_402_until_unlocked(pool: PgPool) {
     ensure_bucket().await;
     let creator = verified_user(&pool).await;
-    let viewer = verified_user(&pool).await;
     let asset_id = make_paid_video(&pool, creator, 100).await;
 
     let router = app(AppState::new(pool));
+    let (token, _viewer) = common::register(&router, &[]).await;
+
+    // Authenticated viewer who hasn't paid → 402.
     let resp = router
+        .clone()
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/media/{asset_id}/manifest?viewer_id={viewer}"))
+                .uri(format!("/media/{asset_id}/manifest"))
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+
+    // No token at all → 401.
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{asset_id}/manifest"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }

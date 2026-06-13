@@ -14,6 +14,8 @@ use domain::Epoch;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
+mod common;
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn record_stamps_epoch_and_weight(pool: PgPool) {
     let service = InteractionService::new(pool.clone());
@@ -52,18 +54,17 @@ fn weights_order_like_below_comment_below_share() {
 #[sqlx::test(migrations = "../../migrations")]
 async fn http_record_returns_typed_view(pool: PgPool) {
     let router = app(AppState::new(pool));
+    let (token, actor) = common::register(&router, &[]).await;
 
-    let body = serde_json::json!({
-        "actor_id": 7,
-        "type": "share",
-        "post_id": 42
-    });
+    // No actor_id in the body — taken from the session.
+    let body = serde_json::json!({ "type": "share", "post_id": 42 });
     let resp = router
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/interactions")
                 .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
                 .unwrap(),
         )
@@ -76,7 +77,7 @@ async fn http_record_returns_typed_view(pool: PgPool) {
         .unwrap();
     let view: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(view["type"], "share");
-    assert_eq!(view["actor_id"], 7);
+    assert_eq!(view["actor_id"].as_i64().unwrap(), actor);
     assert_eq!(view["weight"], InteractionType::Share.weight());
     assert!(view["epoch_k"].as_i64().unwrap() > 0);
 }
