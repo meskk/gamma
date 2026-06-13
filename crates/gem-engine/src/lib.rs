@@ -9,6 +9,9 @@ use domain::{PtAmount, UserId};
 use econ_params::EconParams;
 use std::collections::BTreeMap;
 
+pub mod graph;
+pub use graph::{build_user_inputs, Edge, UserMeta};
+
 /// Per-user inputs for one epoch, already snapshotted from the interaction graph.
 #[derive(Debug, Clone)]
 pub struct UserInputs {

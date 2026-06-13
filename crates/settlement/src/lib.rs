@@ -112,4 +112,74 @@ mod tests {
         let y1 = emission_for(Epoch(365), &params).0;
         assert!(y1 < y0, "emission must taper year over year");
     }
+
+    /// End-to-end pure pipeline: interaction edges → build_user_inputs → settle.
+    /// Proves the whole gem path (graph → weights → ledger) conserves emission and
+    /// rewards a well-connected user over an isolated one.
+    #[tokio::test]
+    async fn settles_from_interaction_graph() {
+        use gem_engine::{build_user_inputs, Edge, UserMeta};
+
+        // Users 1,2,3 all engage user 1 (a hub); user 4 is verified but isolated.
+        let edges = vec![
+            Edge {
+                actor: UserId(2),
+                target: UserId(1),
+                weight: 5.0,
+            },
+            Edge {
+                actor: UserId(3),
+                target: UserId(1),
+                weight: 3.0,
+            },
+            Edge {
+                actor: UserId(1),
+                target: UserId(2),
+                weight: 1.0,
+            },
+        ];
+        let meta = vec![
+            UserMeta {
+                user: UserId(1),
+                verified: true,
+                account_burn_sats: 0,
+            },
+            UserMeta {
+                user: UserId(2),
+                verified: true,
+                account_burn_sats: 0,
+            },
+            UserMeta {
+                user: UserId(3),
+                verified: true,
+                account_burn_sats: 0,
+            },
+            UserMeta {
+                user: UserId(4),
+                verified: true,
+                account_burn_sats: 0,
+            },
+        ];
+        let params = EconParams::default();
+        let inputs = build_user_inputs(&edges, &meta, &params);
+
+        let ledger = OffChainLedger::default();
+        settle_epoch(&ledger, Epoch(0), &inputs, &params)
+            .await
+            .unwrap();
+
+        // Conservation: total minted == the epoch's emission.
+        assert_eq!(
+            ledger.total_supply().await.unwrap(),
+            emission_for(Epoch(0), &params)
+        );
+
+        // The hub (user 1) out-earns the isolated user (user 4).
+        let hub = ledger.balance(UserId(1)).await.unwrap().0;
+        let isolated = ledger.balance(UserId(4)).await.unwrap().0;
+        assert!(
+            hub > isolated,
+            "well-connected user should earn more than an isolated one"
+        );
+    }
 }
