@@ -14,6 +14,11 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
+    # The Rust workspace lives in backend/ (monorepo: backend/ + frontend/).
+    defaults:
+      run:
+        working-directory: backend
+
     # Real Postgres for the integration tests. #[sqlx::test] creates and drops
     # isolated temporary databases on this server, so the default superuser is used.
     services:
@@ -40,6 +45,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
 
       - name: Format
         run: cargo fmt --all -- --check

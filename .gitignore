@@ -1,9 +1,10 @@
-# Rust
-/target
+# Rust (workspace lives in backend/)
+target/
 **/*.rs.bk
 
 # Secrets / local env — never commit these
 .env
+**/.env
 .env.local
 *.pem
 *.key

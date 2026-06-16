@@ -85,18 +85,29 @@ When changing economics, change `econ-params` (bump `version`) and/or the
 - Decisions are recorded in `docs/adr/`. Add an ADR when you make an architectural
   call; read them to understand why things are the way they are.
 
+## Repository layout (monorepo)
+
+This is a **monorepo**: `backend/` (the Rust workspace — everything below) and
+`frontend/` (Next.js, for the designer; consumes `backend/bindings/*.ts`). Run all
+`cargo`/`docker compose` commands **from `backend/`**. Project-level docs
+(`CLAUDE.md`, `ARCHITECTURE.md`, `README.md`, `docs/`) and CI live at the root.
+
 ## How to run
 
 ```sh
+cd backend                     # the Rust workspace lives here
 docker compose up -d           # Postgres + Redis + MinIO (object storage)
 cargo test --all               # all tests (need the services running)
 cargo run -p core-api          # http://localhost:8080/health
-cargo run --bin transcode_worker  # async HLS transcode worker (separate process)
+cargo run --bin transcode_worker      # async HLS transcode worker (separate process)
+cargo run --bin settlement_scheduler  # auto-settles closed epochs (separate process)
 ```
 Builds/clippy work offline via the committed `.sqlx` cache (`SQLX_OFFLINE=true`);
 tests/runtime need the running services. Set `DATABASE_URL` (see `.env.example`).
 
 ## Where things are
+
+All Rust paths below are under `backend/`.
 
 - `crates/domain` — shared newtypes (the seam-free middle).
 - `crates/econ-params` — the knobs.
@@ -106,7 +117,8 @@ tests/runtime need the running services. Set `DATABASE_URL` (see `.env.example`)
 - `crates/core-api` — axum HTTP surface.
 - `crates/storage` — S3/MinIO client (presigned upload/download).
 - `migrations/` — SQL (forward-only). `0001_init.sql` includes interaction_events.
-- `ARCHITECTURE.md` — the fuller map and rationale.
+- `bindings/*.ts` — generated ts-rs frontend contract (consumed by `frontend/`).
+- `../docs/adr/` + `../ARCHITECTURE.md` — decisions + the fuller map (at repo root).
 
 ## Current status & next steps (snapshot 2026-06-16)
 
