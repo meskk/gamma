@@ -19,8 +19,10 @@ jobs:
       run:
         working-directory: backend
 
-    # Real Postgres for the integration tests. #[sqlx::test] creates and drops
-    # isolated temporary databases on this server, so the default superuser is used.
+    # Backing services for the integration tests. #[sqlx::test] creates and drops
+    # isolated temporary databases on Postgres; Redis backs the transcode/ingestion
+    # queues; MinIO (started as a step below — service containers can't override the
+    # image command MinIO needs) backs the media object store.
     services:
       postgres:
         image: postgres:16
@@ -35,9 +37,21 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
 
     env:
       DATABASE_URL: postgres://gamma:gamma@localhost:5432/gamma
+      REDIS_URL: redis://localhost:6379
+      # S3_* default (StorageConfig::from_env) to gamma/gammasecret @ localhost:9000,
+      # bucket gamma-media — matching the MinIO container below, so no overrides needed.
 
     steps:
       - uses: actions/checkout@v4
@@ -48,11 +62,25 @@ jobs:
         with:
           workspaces: backend
 
+      - name: System deps (ffmpeg — the transcode tests shell out to it)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Start MinIO (S3-compatible object store for the media tests)
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=gamma -e MINIO_ROOT_PASSWORD=gammasecret \
+            minio/minio server /data
+          echo "waiting for MinIO…"
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 1
+          done
+
       - name: Format
         run: cargo fmt --all -- --check
 
       - name: Lint (clippy, warnings = errors)
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Test (unit + settlement invariants + DB integration)
+      - name: Test (unit + settlement invariants + DB/Redis/MinIO integration)
         run: cargo test --all
