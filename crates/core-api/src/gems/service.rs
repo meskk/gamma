@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use db::PgPool;
-use domain::{Epoch, UserId};
+use domain::{Epoch, PtAmount, UserId};
 use gem_engine::{build_user_inputs, Edge, UserMeta};
 use ledger::{LedgerBackend, PgLedger};
 use settlement::{emission_for, settle_epoch};
@@ -68,14 +68,19 @@ impl SettlementService {
         let inputs = build_user_inputs(&edges, &meta, &params);
         let user_count = inputs.len() as i32;
         let has_participants = inputs.iter().any(|i| i.verified);
-        let emission = if has_participants {
-            // Checked: a future econ-params change can't silently wrap the
-            // conserved emission negative on the u128 → i64 boundary.
-            i64::try_from(emission_for(epoch, &params).0)
-                .map_err(|_| ApiError::Internal("emission exceeds i64".into()))?
+        // The epoch's mint amount. The CALLER decides the source: Phase 1a uses the
+        // fixed-schedule emission (points); v6 Phase 1b swaps in the demand-gated
+        // mint `(1 − skim) · advertiser_inflow` HERE (ADR 0007), with no change to
+        // the settlement worker that distributes it.
+        let emission_pt = if has_participants {
+            emission_for(epoch, &params)
         } else {
-            0
+            PtAmount(0)
         };
+        // Stored on the marker as i64; checked so a future param change can't wrap
+        // the conserved amount on the u128 → i64 boundary.
+        let emission = i64::try_from(emission_pt.0)
+            .map_err(|_| ApiError::Internal("emission exceeds i64".into()))?;
 
         // 4. Fast path: an epoch already settled needs no work.
         if gems.is_settled(epoch_k).await? {
@@ -94,7 +99,7 @@ impl SettlementService {
         //    under-paid epoch as done. (Earlier this was claim-then-mint, which on
         //    a mid-mint crash permanently under-paid the epoch.)
         if has_participants {
-            settle_epoch(&ledger, epoch, &inputs, &params).await?;
+            settle_epoch(&ledger, epoch, &inputs, &params, emission_pt).await?;
         }
         let first_time = gems.claim_epoch(epoch_k, emission, user_count).await?;
 

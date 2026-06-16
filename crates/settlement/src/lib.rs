@@ -44,16 +44,24 @@ pub fn emission_for(epoch: Epoch, params: &EconParams) -> PtAmount {
     PtAmount(emission)
 }
 
-/// Settle one epoch from snapshotted inputs. Returns once the ledger reflects the
-/// epoch's emission, or errors (fail-closed) if any checked invariant breaks.
+/// Settle one epoch from snapshotted inputs, minting `emission` PT and
+/// distributing it by weight. Returns once the ledger reflects it, or errors
+/// (fail-closed) if any checked invariant breaks.
+///
+/// `emission` is supplied by the CALLER — the settlement worker distributes the
+/// pot, it does not decide its size. The source is a phase/economics decision held
+/// outside this function: Phase 1a (points) passes the fixed-schedule
+/// `emission_for(epoch, params)`; v6 Phase 1b will pass the demand-gated mint
+/// `(1 − skim) · advertiser_inflow` (ADR 0007). This keeps the v5→v6 emission
+/// change a drop-in at the call site, not an edit here.
 pub async fn settle_epoch<L: LedgerBackend>(
     ledger: &L,
     epoch: Epoch,
     inputs: &[UserInputs],
     params: &EconParams,
+    emission: PtAmount,
 ) -> Result<(), SettlementError> {
     let supply_before = ledger.total_supply().await?.0;
-    let emission = emission_for(epoch, params);
 
     let payouts = compute_payouts(inputs, params, emission);
 
@@ -116,7 +124,8 @@ mod tests {
     async fn settles_and_conserves() {
         let ledger = OffChainLedger::default();
         let params = EconParams::default();
-        settle_epoch(&ledger, Epoch(0), &sample_inputs(10), &params)
+        let emission = emission_for(Epoch(0), &params);
+        settle_epoch(&ledger, Epoch(0), &sample_inputs(10), &params, emission)
             .await
             .unwrap();
         assert_eq!(
@@ -220,7 +229,8 @@ mod tests {
         let inputs = build_user_inputs(&edges, &meta, &params);
 
         let ledger = OffChainLedger::default();
-        settle_epoch(&ledger, Epoch(0), &inputs, &params)
+        let emission = emission_for(Epoch(0), &params);
+        settle_epoch(&ledger, Epoch(0), &inputs, &params, emission)
             .await
             .unwrap();
 
