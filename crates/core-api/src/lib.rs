@@ -22,9 +22,16 @@ pub mod worker;
 
 mod health;
 
+use axum::extract::DefaultBodyLimit;
 use axum::Router;
 
 pub use state::AppState;
+
+/// Max request body we accept. All bodies are small JSON (media bytes go directly
+/// to object storage via presigned URLs, never through the API), so a tight cap
+/// bounds memory and rejects oversized payloads early. Tighter than axum's 2 MB
+/// default, deliberately.
+const MAX_BODY_BYTES: usize = 256 * 1024;
 
 /// Build the full router with all routes mounted and state injected.
 pub fn app(state: AppState) -> Router {
@@ -38,5 +45,6 @@ pub fn app(state: AppState) -> Router {
         .merge(interactions::handler::routes())
         .merge(gems::handler::routes())
         .merge(media::handler::routes())
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
 }

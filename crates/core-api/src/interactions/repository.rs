@@ -14,8 +14,11 @@ impl InteractionRepository {
         Self { pool }
     }
 
-    /// Append one event. The column `type` is a SQL keyword, so it is aliased to
-    /// `type_code` on the way out to match the struct field.
+    /// Append one event, idempotently within an epoch. The unique index
+    /// (actor, type, epoch, target, post) means an identical repeat does NOT add
+    /// weight — so a spammer can't inflate their edges by re-liking. A repeat
+    /// returns the ALREADY-stored event rather than erroring. The column `type` is
+    /// a SQL keyword, so it is aliased to `type_code` on the way out.
     #[allow(clippy::too_many_arguments)]
     pub async fn record(
         &self,
@@ -26,11 +29,12 @@ impl InteractionRepository {
         weight: f64,
         epoch_k: i32,
     ) -> Result<InteractionEvent, sqlx::Error> {
-        sqlx::query_as!(
+        let inserted = sqlx::query_as!(
             InteractionEvent,
             r#"
             INSERT INTO interaction_events (actor_id, target_id, post_id, type, weight, epoch_k)
             VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT DO NOTHING
             RETURNING id, actor_id, target_id, post_id, type AS type_code, weight, created_at, epoch_k
             "#,
             actor_id,
@@ -38,6 +42,30 @@ impl InteractionRepository {
             post_id,
             type_code,
             weight,
+            epoch_k
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(event) = inserted {
+            return Ok(event);
+        }
+
+        // The tuple already exists this epoch — return the original event so the
+        // capture is idempotent (NULL target/post compared with IS NOT DISTINCT).
+        sqlx::query_as!(
+            InteractionEvent,
+            r#"
+            SELECT id, actor_id, target_id, post_id, type AS type_code, weight, created_at, epoch_k
+            FROM interaction_events
+            WHERE actor_id = $1 AND type = $4 AND epoch_k = $5
+              AND target_id IS NOT DISTINCT FROM $2
+              AND post_id IS NOT DISTINCT FROM $3
+            "#,
+            actor_id,
+            target_id,
+            post_id,
+            type_code,
             epoch_k
         )
         .fetch_one(&self.pool)

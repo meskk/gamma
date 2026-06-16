@@ -33,6 +33,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 dotenvy.workspace = true
+tower_governor = "0.4"
 
 [dev-dependencies]
 tower.workspace = true

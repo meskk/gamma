@@ -44,6 +44,45 @@ async fn record_stamps_epoch_and_weight(pool: PgPool) {
     assert_eq!(in_epoch[0].id, event.id);
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn duplicate_interaction_in_epoch_is_deduped(pool: PgPool) {
+    let svc = InteractionService::new(pool.clone());
+    let like = NewInteraction {
+        actor_id: 1,
+        r#type: InteractionType::Like,
+        target_id: None,
+        post_id: Some(10),
+    };
+
+    // The same like, twice, is idempotent — same row, no extra weight.
+    let first = svc.record(like.clone()).await.expect("first");
+    let again = svc.record(like).await.expect("repeat");
+    assert_eq!(
+        first.id, again.id,
+        "a repeated identical interaction is a no-op"
+    );
+
+    // A DIFFERENT type on the same post is a distinct edge.
+    let comment = svc
+        .record(NewInteraction {
+            actor_id: 1,
+            r#type: InteractionType::Comment,
+            target_id: None,
+            post_id: Some(10),
+        })
+        .await
+        .expect("distinct type");
+    assert_ne!(first.id, comment.id);
+
+    // Only two rows exist this epoch: the duplicate collapsed.
+    let epoch = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i32;
+    let all = InteractionRepository::new(pool)
+        .list_by_epoch(epoch)
+        .await
+        .expect("list");
+    assert_eq!(all.len(), 2, "the duplicate like did not add a second edge");
+}
+
 #[test]
 fn weights_order_like_below_comment_below_share() {
     // Pure check on the ω_type ordering the graph relies on — no DB needed.
