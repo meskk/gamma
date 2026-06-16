@@ -54,6 +54,52 @@ impl LedgerBackend for PgLedger {
         Ok(())
     }
 
+    async fn mint_epoch(&self, epoch: Epoch, payouts: &[(UserId, PtAmount)]) -> Result<PtAmount> {
+        // One transaction for the whole epoch: either every payout (balance + its
+        // journal entry) commits, or none does. The partial unique index
+        // (epoch_k, user_id) WHERE kind='mint' makes each mint idempotent, so a
+        // retry after a crash credits only the users still missing.
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        let mut minted: u128 = 0;
+        for (user, amount) in payouts {
+            if amount.0 == 0 {
+                continue;
+            }
+            let entry = sqlx::query!(
+                r#"
+                INSERT INTO ledger_entries (user_id, epoch_k, kind, amount, ref_type, ref_id)
+                VALUES ($1, $2, 'mint', $3, 'epoch', $2)
+                ON CONFLICT (epoch_k, user_id) WHERE kind = 'mint' DO NOTHING
+                "#,
+                user.0 as i64,
+                epoch.0 as i64,
+                amount.0 as i64,
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+
+            // Only move the balance if THIS call recorded the mint (idempotency).
+            if entry.rows_affected() == 1 {
+                sqlx::query!(
+                    r#"
+                    INSERT INTO gem_balances (user_id, balance) VALUES ($1, $2)
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET balance = gem_balances.balance + EXCLUDED.balance, updated_at = now()
+                    "#,
+                    user.0 as i64,
+                    amount.0 as i64,
+                )
+                .execute(&mut *tx)
+                .await
+                .map_err(backend)?;
+                minted += amount.0;
+            }
+        }
+        tx.commit().await.map_err(backend)?;
+        Ok(PtAmount(minted))
+    }
+
     async fn burn(&self, user: UserId, amount: PtAmount, _epoch: Epoch) -> Result<()> {
         // The `balance >= $2` guard makes the debit atomic: zero rows affected
         // means insufficient funds (also backstopped by the CHECK constraint).

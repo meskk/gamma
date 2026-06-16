@@ -30,6 +30,30 @@ async fn burn_below_balance_fails_and_otherwise_debits(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn mint_epoch_is_idempotent_per_epoch(pool: PgPool) {
+    let l = PgLedger::new(pool);
+    let payouts = [(UserId(1), PtAmount(100)), (UserId(2), PtAmount(50))];
+
+    l.mint_epoch(Epoch(7), &payouts).await.unwrap();
+    assert_eq!(l.balance(UserId(1)).await.unwrap(), PtAmount(100));
+    assert_eq!(l.total_supply().await.unwrap(), PtAmount(150));
+
+    // Re-running the SAME epoch credits nothing more — the journal's per-epoch
+    // mint uniqueness makes it idempotent (this is what makes a crashed
+    // settlement safely re-runnable).
+    l.mint_epoch(Epoch(7), &payouts).await.unwrap();
+    assert_eq!(l.balance(UserId(1)).await.unwrap(), PtAmount(100));
+    assert_eq!(l.total_supply().await.unwrap(), PtAmount(150));
+
+    // A different epoch mints again.
+    l.mint_epoch(Epoch(8), &[(UserId(1), PtAmount(10))])
+        .await
+        .unwrap();
+    assert_eq!(l.balance(UserId(1)).await.unwrap(), PtAmount(110));
+    assert_eq!(l.total_supply().await.unwrap(), PtAmount(160));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn transfer_is_atomic(pool: PgPool) {
     let l = PgLedger::new(pool);
     l.mint(UserId(1), PtAmount(100), Epoch(0)).await.unwrap();

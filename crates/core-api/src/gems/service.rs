@@ -74,9 +74,8 @@ impl SettlementService {
             0
         };
 
-        // 4. Claim the epoch (idempotency guard) BEFORE minting.
-        let claimed = gems.claim_epoch(epoch_k, emission, user_count).await?;
-        if !claimed {
+        // 4. Fast path: an epoch already settled needs no work.
+        if gems.is_settled(epoch_k).await? {
             return Ok(SettlementSummary {
                 epoch_k,
                 emission,
@@ -85,16 +84,22 @@ impl SettlementService {
             });
         }
 
-        // 5. Mint by weight — only when there is someone eligible to pay.
+        // 5. Mint by weight FIRST (atomic + idempotent per (epoch, user) at the
+        //    ledger level), THEN record the settlement marker. Minting before the
+        //    marker means a crash mid-settlement leaves NO marker, so a retry
+        //    re-mints idempotently and completes — the marker can never flag an
+        //    under-paid epoch as done. (Earlier this was claim-then-mint, which on
+        //    a mid-mint crash permanently under-paid the epoch.)
         if has_participants {
             settle_epoch(&ledger, epoch, &inputs, &params).await?;
         }
+        let first_time = gems.claim_epoch(epoch_k, emission, user_count).await?;
 
         Ok(SettlementSummary {
             epoch_k,
             emission,
             user_count,
-            already_settled: false,
+            already_settled: !first_time,
         })
     }
 

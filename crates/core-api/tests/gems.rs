@@ -143,6 +143,53 @@ async fn settles_epoch_mints_by_weight_and_is_idempotent(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn settlement_is_resumable_without_double_mint(pool: PgPool) {
+    let a = verified_user(&pool).await;
+    let b = verified_user(&pool).await;
+    InteractionService::new(pool.clone())
+        .record(NewInteraction {
+            actor_id: b,
+            r#type: InteractionType::Comment,
+            target_id: Some(a),
+            post_id: None,
+        })
+        .await
+        .unwrap();
+    let epoch_k = current_epoch();
+    let svc = SettlementService::new(pool.clone());
+
+    // First settlement mints and records the marker.
+    let first = svc.settle(epoch_k).await.unwrap();
+    assert!(!first.already_settled);
+    assert!(first.emission > 0);
+    let bal_a = svc.gem_balance(a).await.unwrap().balance;
+    assert!(bal_a > 0);
+
+    // Simulate a crash where the mints committed but the marker did NOT: drop it.
+    sqlx::query!("DELETE FROM epoch_settlements WHERE epoch_k = $1", epoch_k)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Re-running re-mints idempotently (no double-credit) and restores the marker.
+    let second = svc.settle(epoch_k).await.unwrap();
+    assert!(
+        !second.already_settled,
+        "marker was gone, so this run re-records it"
+    );
+    assert_eq!(
+        svc.gem_balance(a).await.unwrap().balance,
+        bal_a,
+        "a resumed settlement must not double-mint"
+    );
+
+    // With the marker back, a third run is a no-op.
+    let third = svc.settle(epoch_k).await.unwrap();
+    assert!(third.already_settled);
+    assert_eq!(svc.gem_balance(a).await.unwrap().balance, bal_a);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn empty_epoch_mints_nothing(pool: PgPool) {
     let svc = SettlementService::new(pool);
     let summary = svc.settle(123_456).await.unwrap();

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    INSERT INTO gem_balances (user_id, balance) VALUES ($1, $2)\n                    ON CONFLICT (user_id) DO UPDATE\n                    SET balance = gem_balances.balance + EXCLUDED.balance, updated_at = now()\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dde94777ae2e2c7f374bd9b646196c2d562a9bb761b4dbc854f277a11a99406c"
+}

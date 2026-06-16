@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM epoch_settlements WHERE epoch_k = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a3887944812e7d7da0cdc6890305fba5ae5533859a516ed1bf5b861242dd6784"
+}

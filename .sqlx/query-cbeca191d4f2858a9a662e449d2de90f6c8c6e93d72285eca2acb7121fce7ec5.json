@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO ledger_entries (user_id, epoch_k, kind, amount, ref_type, ref_id)\n                VALUES ($1, $2, 'mint', $3, 'epoch', $2)\n                ON CONFLICT (epoch_k, user_id) WHERE kind = 'mint' DO NOTHING\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cbeca191d4f2858a9a662e449d2de90f6c8c6e93d72285eca2acb7121fce7ec5"
+}

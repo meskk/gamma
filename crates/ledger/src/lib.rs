@@ -36,6 +36,17 @@ pub trait LedgerBackend: Send + Sync {
     /// Mint the day's emission share to a user. Settlement-only; never coupled to burns.
     async fn mint(&self, user: UserId, amount: PtAmount, epoch: Epoch) -> Result<()>;
 
+    /// Atomically mint a whole epoch's payouts. ALL-OR-NOTHING and idempotent per
+    /// (epoch, user): a retry after a partial failure mints only the users still
+    /// missing and can never double-credit. This is the settlement entry point —
+    /// it is what makes epoch settlement crash-safe, replacing a loop of separate
+    /// `mint` calls that could leave an epoch half-paid.
+    ///
+    /// Returns the total NEWLY minted this call (0 on a full idempotent replay),
+    /// so the caller can assert supply grew by exactly that — an invariant that
+    /// holds for a fresh settle, a partial resume, and a no-op replay alike.
+    async fn mint_epoch(&self, epoch: Epoch, payouts: &[(UserId, PtAmount)]) -> Result<PtAmount>;
+
     /// Burn PT against a user account (deflationary). Skim routing happens a layer up.
     async fn burn(&self, user: UserId, amount: PtAmount, epoch: Epoch) -> Result<()>;
 
@@ -62,6 +73,9 @@ pub struct OffChainLedger {
 struct Inner {
     balances: HashMap<UserId, u128>,
     supply: u128,
+    /// (epoch, user) pairs already minted — the in-memory mirror of the journal's
+    /// per-epoch mint uniqueness, so `mint_epoch` is idempotent here too.
+    minted: std::collections::HashSet<(u64, UserId)>,
 }
 
 #[async_trait]
@@ -76,6 +90,20 @@ impl LedgerBackend for OffChainLedger {
         *g.balances.entry(user).or_default() += amount.0;
         g.supply += amount.0;
         Ok(())
+    }
+
+    async fn mint_epoch(&self, epoch: Epoch, payouts: &[(UserId, PtAmount)]) -> Result<PtAmount> {
+        let mut g = self.inner.lock().unwrap();
+        let mut minted = 0u128;
+        for (user, amount) in payouts {
+            if amount.0 == 0 || !g.minted.insert((epoch.0, *user)) {
+                continue; // zero share, or already minted this epoch (idempotent)
+            }
+            *g.balances.entry(*user).or_default() += amount.0;
+            g.supply += amount.0;
+            minted += amount.0;
+        }
+        Ok(PtAmount(minted))
     }
 
     async fn burn(&self, user: UserId, amount: PtAmount, _epoch: Epoch) -> Result<()> {

@@ -54,18 +54,26 @@ pub async fn settle_epoch<L: LedgerBackend>(
         )));
     }
 
-    for (user, amount) in &payouts {
-        if amount.0 > 0 {
-            ledger.mint(*user, *amount, epoch).await?;
-        }
-    }
+    // Mint the whole epoch atomically: all payouts commit together or none do,
+    // and a retry after a crash completes only the missing mints (idempotent).
+    // This replaces a loop of separate, individually-committed mints that could
+    // leave an epoch half-paid. `minted` is what was NEWLY minted this call (0 on
+    // a full replay), which is what the supply invariant below checks against.
+    let payout_vec: Vec<_> = payouts
+        .iter()
+        .map(|(user, amount)| (*user, *amount))
+        .collect();
+    let minted = ledger.mint_epoch(epoch, &payout_vec).await?;
 
-    // Invariant (iii) Supply monotonicity: supply grew by EXACTLY the emission.
+    // Invariant (iii) Supply monotonicity: supply grew by EXACTLY what was minted.
+    // Conservation (above) already pins the epoch's full payout to the emission;
+    // this catches any supply the ledger added or dropped during minting, and
+    // holds for a fresh settle, a partial resume, and a no-op replay alike.
     let supply_after = ledger.total_supply().await?.0;
-    if supply_after != supply_before + emission.0 {
+    if supply_after != supply_before + minted.0 {
         return Err(SettlementError::Invariant(format!(
             "supply monotonicity: {supply_before} + {} != {supply_after}",
-            emission.0
+            minted.0
         )));
     }
 

@@ -12,9 +12,20 @@ impl GemRepository {
         Self { pool }
     }
 
-    /// Claim an epoch for settlement. Returns `true` if THIS call claimed it
-    /// (first time), `false` if it was already settled. The `ON CONFLICT DO
-    /// NOTHING` makes the claim atomic, so two concurrent workers can't both mint.
+    /// Whether this epoch has already been settled (the marker row exists). The
+    /// fast path: skip recomputing/minting an epoch that is already done.
+    pub async fn is_settled(&self, epoch_k: i64) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM epoch_settlements WHERE epoch_k = $1) AS "exists!""#,
+            epoch_k
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    /// Record that an epoch has been settled. Returns `true` if THIS call recorded
+    /// it (first time), `false` if a marker already existed. Written AFTER minting,
+    /// so the marker can never flag an under-paid epoch as done.
     pub async fn claim_epoch(
         &self,
         epoch_k: i64,
