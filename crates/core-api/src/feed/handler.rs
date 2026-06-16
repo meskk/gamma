@@ -6,6 +6,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 
+use crate::auth::Caller;
 use crate::error::ApiError;
 use crate::posts::model::Post;
 use crate::state::AppState;
@@ -24,11 +25,16 @@ fn default_limit() -> usize {
     50
 }
 
+/// A personalized feed is self-scoped: only its owner (or an operator) may read it.
 async fn feed(
+    Caller(caller): Caller,
     State(state): State<AppState>,
     Path(user_id): Path<i64>,
     Query(params): Query<FeedParams>,
 ) -> Result<Json<Vec<Post>>, ApiError> {
+    if !caller.can_act_as(user_id) {
+        return Err(ApiError::Forbidden);
+    }
     let posts = state.feed.personalized(user_id, params.limit).await?;
     Ok(Json(posts))
 }

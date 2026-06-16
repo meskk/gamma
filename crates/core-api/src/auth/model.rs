@@ -20,6 +20,15 @@ pub struct Principal {
     pub role: Role,
 }
 
+impl Principal {
+    /// May this caller read/act on a self-scoped resource owned by `target`?
+    /// True for the resource's owner or any operator. Used to gate self-scoped
+    /// reads (e.g. a user's own gem balance or feed).
+    pub fn can_act_as(&self, target: i64) -> bool {
+        self.user_id == target || self.role == Role::Operator
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RegisterRequest {
     pub email: String,

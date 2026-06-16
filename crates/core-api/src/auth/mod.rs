@@ -12,5 +12,5 @@ pub mod model;
 pub mod repository;
 pub mod service;
 
-pub use extract::{AdminUser, AuthUser};
+pub use extract::{AdminUser, AuthUser, Caller};
 pub use service::AuthService;

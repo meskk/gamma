@@ -244,12 +244,13 @@ async fn http_settle_is_operator_only_then_reads_balance(pool: PgPool) {
     let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(summary["emission"].as_i64().unwrap() > 0);
 
-    // Reading a balance is a public read (unchanged).
+    // A balance is self-scoped: the operator may read any user's.
     let resp = router
         .oneshot(
             Request::builder()
                 .method("GET")
                 .uri(format!("/users/{a}/gems"))
+                .header("authorization", format!("Bearer {op_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -261,4 +262,38 @@ async fn http_settle_is_operator_only_then_reads_balance(pool: PgPool) {
         .unwrap();
     let balance: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(balance["balance"].as_i64().unwrap() > 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn gem_balance_is_self_or_operator(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let (uid, token) = register(&router, "owner@example.com").await;
+    let (_other, other_token) = register(&router, "other@example.com").await;
+
+    let get = |auth: Option<String>| {
+        let router = router.clone();
+        async move {
+            let mut b = Request::builder()
+                .method("GET")
+                .uri(format!("/users/{uid}/gems"));
+            if let Some(t) = auth {
+                b = b.header("authorization", t);
+            }
+            router
+                .oneshot(b.body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+
+    // No token → 401; another user → 403; the owner → 200.
+    assert_eq!(get(None).await.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        get(Some(format!("Bearer {other_token}"))).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        get(Some(format!("Bearer {token}"))).await.status(),
+        StatusCode::OK
+    );
 }

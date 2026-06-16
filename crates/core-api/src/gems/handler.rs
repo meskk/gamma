@@ -6,7 +6,7 @@ use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
-use crate::auth::AdminUser;
+use crate::auth::{AdminUser, Caller};
 use crate::error::ApiError;
 use crate::gems::model::{GemBalance, SettlementSummary};
 use crate::state::AppState;
@@ -28,9 +28,14 @@ async fn settle(
     Ok(Json(state.gems.settle(epoch_k).await?))
 }
 
+/// A gem balance is self-scoped: readable by its owner or an operator only.
 async fn gem_balance(
+    Caller(caller): Caller,
     State(state): State<AppState>,
     Path(user_id): Path<i64>,
 ) -> Result<Json<GemBalance>, ApiError> {
+    if !caller.can_act_as(user_id) {
+        return Err(ApiError::Forbidden);
+    }
     Ok(Json(state.gems.gem_balance(user_id).await?))
 }

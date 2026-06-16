@@ -17,6 +17,11 @@ pub struct AuthUser(pub i64);
 /// (e.g. epoch settlement) instead of `AuthUser`.
 pub struct AdminUser(pub i64);
 
+/// The authenticated caller with their role. Use this (over `AuthUser`) when a
+/// handler must decide access against the role too — e.g. a self-scoped read the
+/// owner OR an operator may perform (`caller.0.can_act_as(id)`).
+pub struct Caller(pub Principal);
+
 /// Resolve the bearer token on the request to its principal, or 401 if the
 /// header is missing/malformed or the token is unknown/expired.
 async fn principal(parts: &mut Parts, state: &AppState) -> Result<Principal, ApiError> {
@@ -43,6 +48,18 @@ impl FromRequestParts<AppState> for AuthUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         Ok(AuthUser(principal(parts, state).await?.user_id))
+    }
+}
+
+#[axum::async_trait]
+impl FromRequestParts<AppState> for Caller {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Caller(principal(parts, state).await?))
     }
 }
 
