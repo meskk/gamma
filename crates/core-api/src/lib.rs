@@ -16,6 +16,7 @@ pub mod interactions;
 pub mod media;
 pub mod posts;
 pub mod queue;
+pub mod signals;
 pub mod state;
 pub mod users;
 pub mod worker;
@@ -45,6 +46,7 @@ pub fn app(state: AppState) -> Router {
         .merge(interactions::handler::routes())
         .merge(gems::handler::routes())
         .merge(media::handler::routes())
+        .merge(signals::handler::routes())
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
 }

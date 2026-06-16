@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT post_id, model_version, signals AS \"signals: Value\", updated_at\n            FROM content_signals\n            WHERE post_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "post_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "model_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "signals: Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 3,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "40defa4326474057eacb88c4bb80224a3db27dac10f67f864060de49cf6f1021"
+}

@@ -6,6 +6,7 @@ use core_api::error::ApiError;
 use core_api::posts::model::NewPost;
 use core_api::posts::repository::PostRepository;
 use core_api::posts::PostService;
+use core_api::queue::IngestionQueue;
 use core_api::users::model::NewUser;
 use core_api::users::repository::UserRepository;
 use core_api::{app, AppState};
@@ -147,4 +148,32 @@ async fn unknown_author_is_rejected_at_service_level(pool: PgPool) {
         .await
         .unwrap_err();
     assert!(matches!(err, ApiError::Validation("unknown_author")));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn create_offers_post_to_ingestion_queue(pool: PgPool) {
+    let author = seed_author(&pool).await;
+    // Isolated queue key so this test can't see other tests' jobs.
+    let key = format!("gamma:ingestion:test:{}", common::nanos());
+    let queue = IngestionQueue::with_key("redis://localhost:6379", key).unwrap();
+    let svc = PostService::with_ingestion(pool, queue.clone());
+
+    assert!(
+        queue.dequeue().await.unwrap().is_none(),
+        "the queue starts empty"
+    );
+    let post = svc
+        .create(NewPost {
+            author_id: author,
+            category: None,
+            body: "hello pipeline".into(),
+        })
+        .await
+        .expect("create");
+
+    assert_eq!(
+        queue.dequeue().await.unwrap(),
+        Some(post.id),
+        "the new post id is offered to the ingestion pipeline"
+    );
 }

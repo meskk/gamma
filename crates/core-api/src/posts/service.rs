@@ -4,6 +4,7 @@
 use crate::error::ApiError;
 use crate::posts::model::{NewPost, Post};
 use crate::posts::repository::PostRepository;
+use crate::queue::IngestionQueue;
 use db::PgPool;
 
 /// Hard cap on how many posts one list request can return.
@@ -12,12 +13,24 @@ const MAX_LIST_LIMIT: i64 = 200;
 #[derive(Clone)]
 pub struct PostService {
     repo: PostRepository,
+    /// Offers each new post to the AI ingestion pipeline. Optional so tests and
+    /// callers that don't need ingestion can skip Redis entirely.
+    ingestion: Option<IngestionQueue>,
 }
 
 impl PostService {
     pub fn new(pool: PgPool) -> Self {
         Self {
             repo: PostRepository::new(pool),
+            ingestion: None,
+        }
+    }
+
+    /// Wire the ingestion queue so created posts are offered to the pipeline.
+    pub fn with_ingestion(pool: PgPool, ingestion: IngestionQueue) -> Self {
+        Self {
+            repo: PostRepository::new(pool),
+            ingestion: Some(ingestion),
         }
     }
 
@@ -32,7 +45,18 @@ impl PostService {
             .map(|c| c.trim().to_lowercase())
             .filter(|c| !c.is_empty());
 
-        self.repo.create(&new).await.map_err(map_create_error)
+        let post = self.repo.create(&new).await.map_err(map_create_error)?;
+
+        // Offer the new post to the AI ingestion pipeline. Best-effort: a Redis
+        // hiccup must never fail a post (the post is the source of truth; the
+        // pipeline can also backfill). Mirrors media finalize → transcode enqueue.
+        if let Some(queue) = &self.ingestion {
+            if let Err(err) = queue.enqueue(post.id).await {
+                tracing::warn!(post_id = post.id, error = %err, "failed to enqueue ingestion job");
+            }
+        }
+
+        Ok(post)
     }
 
     pub async fn get(&self, id: i64) -> Result<Post, ApiError> {

@@ -11,7 +11,8 @@ use crate::gems::SettlementService;
 use crate::interactions::InteractionService;
 use crate::media::MediaService;
 use crate::posts::PostService;
-use crate::queue::TranscodeQueue;
+use crate::queue::{IngestionQueue, TranscodeQueue};
+use crate::signals::SignalService;
 use crate::users::UserService;
 use db::PgPool;
 use storage::{Storage, StorageConfig};
@@ -27,6 +28,7 @@ pub struct AppState {
     pub gems: SettlementService,
     pub media: MediaService,
     pub auth: AuthService,
+    pub signals: SignalService,
     /// Exposed so the binary can ensure the bucket exists on startup.
     pub storage: Storage,
 }
@@ -34,17 +36,19 @@ pub struct AppState {
 impl AppState {
     pub fn new(pool: PgPool) -> Self {
         let storage = Storage::new(StorageConfig::from_env());
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
         let users = UserService::new(pool.clone());
-        let posts = PostService::new(pool.clone());
+        let ingestion = IngestionQueue::new(&redis_url).expect("valid REDIS_URL");
+        let posts = PostService::with_ingestion(pool.clone(), ingestion);
         let follows = FollowService::new(pool.clone());
         let feed = FeedService::new(pool.clone());
         let interactions = InteractionService::new(pool.clone());
         let gems = SettlementService::new(pool.clone());
-        let redis_url =
-            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
         let queue = TranscodeQueue::new(&redis_url).expect("valid REDIS_URL");
         let media = MediaService::new(pool.clone(), storage.clone(), queue);
         let auth = AuthService::new(pool.clone());
+        let signals = SignalService::new(pool.clone());
         Self {
             pool,
             users,
@@ -55,6 +59,7 @@ impl AppState {
             gems,
             media,
             auth,
+            signals,
             storage,
         }
     }
