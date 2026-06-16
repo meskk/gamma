@@ -69,7 +69,10 @@ impl SettlementService {
         let user_count = inputs.len() as i32;
         let has_participants = inputs.iter().any(|i| i.verified);
         let emission = if has_participants {
-            emission_for(epoch, &params).0 as i64
+            // Checked: a future econ-params change can't silently wrap the
+            // conserved emission negative on the u128 → i64 boundary.
+            i64::try_from(emission_for(epoch, &params).0)
+                .map_err(|_| ApiError::Internal("emission exceeds i64".into()))?
         } else {
             0
         };

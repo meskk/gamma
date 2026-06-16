@@ -24,12 +24,24 @@ pub enum SettlementError {
 }
 
 /// Emission for an epoch on the FIXED schedule — never a function of burns or
-/// advertiser spend (invariant ii: emission independence). Daily decay derived
-/// from the 10%/yr annual taper.
+/// advertiser spend (invariant ii: emission independence).
+///
+/// Computed in INTEGER arithmetic only: no float touches this conserved quantity,
+/// so the minted total is bit-stable across platforms. The 10%/yr taper is a
+/// per-YEAR geometric step — emission is constant within a year and multiplied by
+/// `(10000 - emission_decay_bps)/10000` at each year boundary. (A continuous daily
+/// decay would require an irrational power and so couldn't be integer-exact.)
 pub fn emission_for(epoch: Epoch, params: &EconParams) -> PtAmount {
-    let years = epoch.0 as f64 / 365.0;
-    let decay = (1.0 - params.emission_decay_bps as f64 / 10_000.0).powf(years);
-    PtAmount((params.emission_day0_pt as f64 * decay) as u128)
+    let years = epoch.0 / 365;
+    let keep = 10_000u128.saturating_sub(params.emission_decay_bps as u128);
+    let mut emission = params.emission_day0_pt as u128;
+    for _ in 0..years {
+        emission = emission * keep / 10_000;
+        if emission == 0 {
+            break; // fully tapered; no point looping further
+        }
+    }
+    PtAmount(emission)
 }
 
 /// Settle one epoch from snapshotted inputs. Returns once the ledger reflects the
@@ -119,6 +131,42 @@ mod tests {
         let y0 = emission_for(Epoch(0), &params).0;
         let y1 = emission_for(Epoch(365), &params).0;
         assert!(y1 < y0, "emission must taper year over year");
+    }
+
+    #[test]
+    fn emission_is_integer_exact_per_year_step() {
+        let params = EconParams::default();
+        let day0 = params.emission_day0_pt as u128;
+        // Constant within a year; an exact integer 10% step at the year boundary.
+        assert_eq!(emission_for(Epoch(0), &params).0, day0);
+        assert_eq!(
+            emission_for(Epoch(364), &params).0,
+            day0,
+            "emission is constant within a year"
+        );
+        assert_eq!(emission_for(Epoch(365), &params).0, day0 * 9_000 / 10_000);
+        assert_eq!(
+            emission_for(Epoch(730), &params).0,
+            day0 * 9_000 / 10_000 * 9_000 / 10_000
+        );
+    }
+
+    #[test]
+    fn cumulative_emission_stays_under_21m_cap() {
+        let params = EconParams::default();
+        // Sum the entire schedule (emission floors to 0 within ~130 years) and
+        // assert it never exceeds the 21M PEER hard cap. This catches a future
+        // econ-params change that would silently breach the cap.
+        let cap = 21_000_000u128 * domain::PT_ONE;
+        let mut total = 0u128;
+        for year in 0..200u64 {
+            // Emission is constant within a year, so annual = 365 × the day rate.
+            total += emission_for(Epoch(year * 365), &params).0 * 365;
+        }
+        assert!(
+            total < cap,
+            "cumulative emission {total} must stay under the 21M cap {cap}"
+        );
     }
 
     /// End-to-end pure pipeline: interaction edges → build_user_inputs → settle.
