@@ -82,8 +82,16 @@ impl MediaService {
     }
 
     /// Confirm the upload landed (HEAD the object) and mark the asset ready.
-    pub async fn finalize(&self, asset_id: i64) -> Result<MediaAssetView, ApiError> {
+    /// Owner-only: only the uploader may finalize their own asset.
+    pub async fn finalize(
+        &self,
+        asset_id: i64,
+        requester_id: i64,
+    ) -> Result<MediaAssetView, ApiError> {
         let asset = self.repo.get(asset_id).await?.ok_or(ApiError::NotFound)?;
+        if asset.owner_id != requester_id {
+            return Err(ApiError::Forbidden);
+        }
 
         let size = self
             .storage
@@ -102,7 +110,8 @@ impl MediaService {
             }
         }
 
-        self.view(ready).await
+        // The owner just finalized their own asset, so they are entitled.
+        self.view(ready, true).await
     }
 
     /// Mark an asset's transcode as failed (used by the worker on ffmpeg errors).
@@ -111,15 +120,35 @@ impl MediaService {
         Ok(())
     }
 
-    /// Fetch an asset with a playback URL (present only once ready).
-    pub async fn get(&self, asset_id: i64) -> Result<MediaAssetView, ApiError> {
+    /// Fetch an asset. The raw `playback_url` (a presigned URL to the full-quality
+    /// original) is exposed ONLY to a viewer entitled to it — the owner, free
+    /// content, or someone who has unlocked it. Everyone else still sees metadata
+    /// (price, status) so a client can prompt an unlock, but never the raw file.
+    pub async fn get(&self, asset_id: i64, viewer_id: i64) -> Result<MediaAssetView, ApiError> {
         let asset = self.repo.get(asset_id).await?.ok_or(ApiError::NotFound)?;
-        self.view(asset).await
+        let entitled = self.is_entitled(&asset, viewer_id).await?;
+        self.view(asset, entitled).await
+    }
+
+    /// Owner-gated entry for the manual HTTP transcode trigger. The async worker
+    /// calls `transcode` directly (it is trusted, off-band); any HTTP caller must
+    /// own the asset.
+    pub async fn transcode_owned(
+        &self,
+        asset_id: i64,
+        requester_id: i64,
+    ) -> Result<MediaAssetView, ApiError> {
+        let asset = self.repo.get(asset_id).await?.ok_or(ApiError::NotFound)?;
+        if asset.owner_id != requester_id {
+            return Err(ApiError::Forbidden);
+        }
+        self.transcode(asset_id).await
     }
 
     /// Transcode a ready video/audio asset to HLS: download the source, run
     /// ffmpeg, upload the manifest + segments under `<object_key>/hls/`, and
-    /// record the manifest key. Synchronous for now; M3b moves it to a worker.
+    /// record the manifest key. Called by the worker (trusted) and, via
+    /// `transcode_owned`, by the owner's manual HTTP trigger.
     pub async fn transcode(&self, asset_id: i64) -> Result<MediaAssetView, ApiError> {
         let asset = self.repo.get(asset_id).await?.ok_or(ApiError::NotFound)?;
         if asset.status != "ready" {
@@ -145,7 +174,9 @@ impl MediaService {
 
         let manifest_key = format!("{prefix}/{}", output.manifest_name);
         let updated = self.repo.set_hls(asset.id, &manifest_key).await?;
-        self.view(updated).await
+        // Transcode is reached only by the owner (HTTP) or the trusted worker
+        // (result discarded); either way the raw URL is safe to include here.
+        self.view(updated, true).await
     }
 
     /// Pay to unlock an asset: split the price into creator share, company fee,
@@ -209,10 +240,7 @@ impl MediaService {
             _ => return Err(ApiError::Validation("not_transcoded")),
         };
 
-        let entitled = viewer_id == asset.owner_id
-            || asset.unlock_price <= 0
-            || self.repo.is_unlocked(viewer_id, asset_id).await?;
-        if !entitled {
+        if !self.is_entitled(&asset, viewer_id).await? {
             return Err(ApiError::PaymentRequired);
         }
 
@@ -237,8 +265,19 @@ impl MediaService {
         Ok(out)
     }
 
-    async fn view(&self, asset: MediaAsset) -> Result<MediaAssetView, ApiError> {
-        let playback_url = if asset.status == "ready" {
+    /// Whether `viewer` may access the asset's content: the owner, free content,
+    /// or a recorded unlock. Single source of truth for both the raw playback URL
+    /// (in `view`) and the HLS manifest gate (in `manifest`).
+    async fn is_entitled(&self, asset: &MediaAsset, viewer_id: i64) -> Result<bool, ApiError> {
+        Ok(viewer_id == asset.owner_id
+            || asset.unlock_price <= 0
+            || self.repo.is_unlocked(viewer_id, asset.id).await?)
+    }
+
+    /// Build the public view. `entitled` gates the raw `playback_url`: a presigned
+    /// URL to the full-quality original is included only for an entitled viewer.
+    async fn view(&self, asset: MediaAsset, entitled: bool) -> Result<MediaAssetView, ApiError> {
+        let playback_url = if asset.status == "ready" && entitled {
             Some(
                 self.storage
                     .presign_get(&asset.object_key, PLAYBACK_TTL)

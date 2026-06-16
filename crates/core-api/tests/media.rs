@@ -78,13 +78,14 @@ async fn upload_finalize_playback_roundtrip(pool: PgPool) {
         .unwrap();
     assert!(put.status().is_success(), "upload failed: {}", put.status());
 
-    // 3. Finalize → asset becomes ready with the right size.
+    // 3. Finalize → asset becomes ready with the right size (owner-only).
     let resp = router
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri(format!("/media/{asset_id}/finalize"))
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -98,12 +99,13 @@ async fn upload_finalize_playback_roundtrip(pool: PgPool) {
     assert_eq!(view["status"], "ready");
     assert_eq!(view["size_bytes"].as_i64().unwrap(), payload.len() as i64);
 
-    // 4. GET returns a playback URL that actually serves the bytes.
+    // 4. GET (as the entitled owner) returns a playback URL that serves the bytes.
     let resp = router
         .oneshot(
             Request::builder()
                 .method("GET")
                 .uri(format!("/media/{asset_id}"))
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -159,6 +161,7 @@ async fn finalize_without_upload_is_rejected(pool: PgPool) {
             Request::builder()
                 .method("POST")
                 .uri(format!("/media/{asset_id}/finalize"))
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -299,18 +302,20 @@ async fn transcode_produces_hls_in_storage(pool: PgPool) {
             Request::builder()
                 .method("POST")
                 .uri(format!("/media/{asset_id}/finalize"))
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
 
-    // Transcode.
+    // Transcode (owner-only).
     let resp = router
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri(format!("/media/{asset_id}/transcode"))
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -392,13 +397,13 @@ async fn worker_transcodes_an_enqueued_asset(pool: PgPool) {
         .send()
         .await
         .unwrap();
-    media.finalize(ticket.asset_id).await.unwrap();
+    media.finalize(ticket.asset_id, owner).await.unwrap();
 
     // The worker picks up the job and transcodes it.
     let processed = process_one(&media, &queue).await;
     assert_eq!(processed, Some(ticket.asset_id));
 
-    let view = media.get(ticket.asset_id).await.unwrap();
+    let view = media.get(ticket.asset_id, owner).await.unwrap();
     assert!(
         view.hls_ready,
         "asset should be HLS-ready after the worker runs"
@@ -453,7 +458,7 @@ async fn make_paid_video(pool: &PgPool, owner: i64, price: i64) -> i64 {
         .send()
         .await
         .unwrap();
-    media.finalize(ticket.asset_id).await.unwrap();
+    media.finalize(ticket.asset_id, owner).await.unwrap();
     media.transcode(ticket.asset_id).await.unwrap();
     ticket.asset_id
 }
@@ -568,4 +573,111 @@ async fn http_manifest_is_402_until_unlocked(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+async fn get_media_json(router: &axum::Router, id: i64, token: &str) -> Value {
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn get_media_requires_auth_and_gates_raw_url(pool: PgPool) {
+    ensure_bucket().await;
+    let router = app(AppState::new(pool.clone()));
+    let (creator_token, creator) = common::register(&router, &[]).await;
+    let price = 100;
+    let asset_id = make_paid_video(&pool, creator, price).await;
+
+    // No token → 401 (the raw file is never reachable anonymously).
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/media/{asset_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // A stranger (authenticated, not owner, not unlocked) sees metadata but NO raw URL.
+    let (stranger_token, stranger) = common::register(&router, &[]).await;
+    let view = get_media_json(&router, asset_id, &stranger_token).await;
+    assert_eq!(view["unlock_price"].as_i64().unwrap(), price);
+    assert!(
+        view["playback_url"].is_null(),
+        "paid content must not hand the raw file to an unentitled viewer"
+    );
+
+    // The owner is entitled → raw URL present.
+    let view = get_media_json(&router, asset_id, &creator_token).await;
+    assert!(view["playback_url"].is_string(), "owner sees the raw URL");
+
+    // After paying to unlock, the stranger becomes entitled and sees the raw URL.
+    give_gems(&pool, stranger, price).await;
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/media/{asset_id}/unlock"))
+                .header("authorization", format!("Bearer {stranger_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let view = get_media_json(&router, asset_id, &stranger_token).await;
+    assert!(
+        view["playback_url"].is_string(),
+        "an unlocked viewer is entitled to the raw URL"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn finalize_and_transcode_are_owner_only(pool: PgPool) {
+    ensure_bucket().await;
+    let router = app(AppState::new(pool.clone()));
+    let creator = verified_user(&pool).await;
+    let asset_id = make_paid_video(&pool, creator, 100).await;
+
+    // A different authenticated user cannot finalize or transcode someone else's asset.
+    let (attacker_token, _) = common::register(&router, &[]).await;
+    for action in ["finalize", "transcode"] {
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/media/{asset_id}/{action}"))
+                    .header("authorization", format!("Bearer {attacker_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "{action} must be owner-only"
+        );
+    }
 }

@@ -1,7 +1,9 @@
 //! HTTP layer for media. Issue an upload ticket, finalize after upload, read back.
 //!
-//! Upload, unlock and manifest derive the acting user from the authenticated
-//! session (`AuthUser`); finalize/transcode/get are keyed by asset id.
+//! EVERY route derives the acting user from the authenticated session
+//! (`AuthUser`). finalize/transcode are owner-only; get exposes the raw playback
+//! URL only to an entitled viewer (owner / free / unlocked); unlock and manifest
+//! are gated as before. The raw object is never handed to an unentitled caller.
 
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
@@ -35,17 +37,19 @@ async fn create_upload(
 }
 
 async fn finalize(
+    AuthUser(owner_id): AuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<MediaAssetView>, ApiError> {
-    Ok(Json(state.media.finalize(id).await?))
+    Ok(Json(state.media.finalize(id, owner_id).await?))
 }
 
 async fn transcode(
+    AuthUser(requester_id): AuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<MediaAssetView>, ApiError> {
-    Ok(Json(state.media.transcode(id).await?))
+    Ok(Json(state.media.transcode_owned(id, requester_id).await?))
 }
 
 /// Spend the authenticated viewer's gems to unlock the asset.
@@ -72,8 +76,9 @@ async fn manifest(
 }
 
 async fn get_media(
+    AuthUser(viewer_id): AuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<MediaAssetView>, ApiError> {
-    Ok(Json(state.media.get(id).await?))
+    Ok(Json(state.media.get(id, viewer_id).await?))
 }
