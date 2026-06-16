@@ -1,6 +1,7 @@
 //! Auth request/response shapes.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// A user's authorization role. Maps 1:1 to the Postgres `user_role` enum.
 /// `User` is the default (non-privileged); `Operator` may run admin actions
@@ -29,7 +30,8 @@ impl Principal {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct RegisterRequest {
     pub email: String,
     pub password: String,
@@ -37,14 +39,16 @@ pub struct RegisterRequest {
     pub declared_categories: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
 }
 
 /// Returned on register/login. The token is shown ONCE; only its hash is stored.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct AuthResponse {
     pub token: String,
     pub user_id: i64,

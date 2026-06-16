@@ -1,9 +1,11 @@
 //! Response shapes for the gems/settlement endpoints.
 
 use serde::Serialize;
+use ts_rs::TS;
 
 /// Outcome of settling (or attempting to settle) one epoch.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct SettlementSummary {
     pub epoch_k: i64,
     /// PT base units minted this epoch (0 if there were no eligible participants).
@@ -15,7 +17,8 @@ pub struct SettlementSummary {
 }
 
 /// A user's current off-chain gem balance.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct GemBalance {
     pub user_id: i64,
     /// PT base units.

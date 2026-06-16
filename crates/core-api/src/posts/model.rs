@@ -6,8 +6,10 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct Post {
     pub id: i64,
     pub author_id: i64,
@@ -18,11 +20,14 @@ pub struct Post {
     pub popularity_score: f64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct NewPost {
     /// Set by the server from the authenticated session — never read from the
     /// request body (skip_deserializing), so a client can't post as someone else.
+    /// Omitted from the TS contract: the frontend never sends it.
     #[serde(skip_deserializing)]
+    #[ts(skip)]
     pub author_id: i64,
     #[serde(default)]
     pub category: Option<String>,

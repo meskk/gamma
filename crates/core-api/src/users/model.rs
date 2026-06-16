@@ -6,8 +6,10 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct User {
     pub id: i64,
     pub created_at: DateTime<Utc>,
@@ -30,7 +32,8 @@ pub struct NewUser {
 /// Operator-only request to set a user's bot-gate (verified) flag. The gate is
 /// the hard veto that decides who earns gems, so it is mutable ONLY through the
 /// operator endpoint — never self-asserted at registration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct VerificationRequest {
     pub verified: bool,
 }

@@ -8,8 +8,10 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 #[serde(rename_all = "lowercase")]
 pub enum InteractionType {
     Like,
@@ -57,10 +59,13 @@ impl InteractionType {
 
 /// Request to record an interaction. `target_id` (the other user) and `post_id`
 /// are optional — a like targets a post, a follow targets a user, etc.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct NewInteraction {
     /// Set by the server from the authenticated session (skip_deserializing).
+    /// Omitted from the TS contract: the frontend never sends it.
     #[serde(skip_deserializing)]
+    #[ts(skip)]
     pub actor_id: i64,
     pub r#type: InteractionType,
     #[serde(default)]
@@ -94,7 +99,8 @@ pub struct EpochEdge {
 }
 
 /// API representation: typed `type`, no raw code, no internal timestamp noise.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct InteractionView {
     pub id: i64,
     pub actor_id: i64,

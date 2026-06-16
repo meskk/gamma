@@ -2,8 +2,10 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 #[serde(rename_all = "lowercase")]
 pub enum MediaKind {
     Image,
@@ -22,10 +24,13 @@ impl MediaKind {
 }
 
 /// Request to begin an upload.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct NewUpload {
     /// Set by the server from the authenticated session (skip_deserializing).
+    /// Omitted from the TS contract: the frontend never sends it.
     #[serde(skip_deserializing)]
+    #[ts(skip)]
     pub owner_id: i64,
     pub kind: MediaKind,
     /// MIME type, e.g. "video/mp4". Its top-level type must match `kind`.
@@ -52,7 +57,8 @@ pub struct MediaAsset {
 }
 
 /// What the client needs to upload directly to the object store.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct UploadTicket {
     pub asset_id: i64,
     pub object_key: String,
@@ -63,7 +69,8 @@ pub struct UploadTicket {
 
 /// Public view of an asset. `object_key` is internal and omitted; `playback_url`
 /// is a presigned GET URL, present only once the asset is ready.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct MediaAssetView {
     pub id: i64,
     pub owner_id: i64,
@@ -79,7 +86,8 @@ pub struct MediaAssetView {
 }
 
 /// Result of a paid unlock — the split is reported for transparency.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct UnlockSummary {
     pub asset_id: i64,
     pub viewer_id: i64,
