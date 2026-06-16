@@ -71,10 +71,13 @@ When changing economics, change `econ-params` (bump `version`) and/or the
 ## How to run
 
 ```sh
-docker compose up -d        # Postgres + Redis
-cargo test --all            # includes the settlement invariant tests
-cargo run -p core-api       # http://localhost:8080/health
+docker compose up -d           # Postgres + Redis + MinIO (object storage)
+cargo test --all               # all tests (need the services running)
+cargo run -p core-api          # http://localhost:8080/health
+cargo run --bin transcode_worker  # async HLS transcode worker (separate process)
 ```
+Builds/clippy work offline via the committed `.sqlx` cache (`SQLX_OFFLINE=true`);
+tests/runtime need the running services. Set `DATABASE_URL` (see `.env.example`).
 
 ## Where things are
 
@@ -84,5 +87,40 @@ cargo run -p core-api       # http://localhost:8080/health
 - `crates/gem-engine` — pure weight/PageRank/apportionment math.
 - `crates/settlement` — epoch worker + invariants.
 - `crates/core-api` — axum HTTP surface.
+- `crates/storage` — S3/MinIO client (presigned upload/download).
 - `migrations/` — SQL (forward-only). `0001_init.sql` includes interaction_events.
 - `ARCHITECTURE.md` — the fuller map and rationale.
+
+## Current status & next steps (snapshot 2026-06-16)
+
+Phase 1a is well underway. Everything below is built and green (tests + fmt +
+clippy), each a committed checkpoint — see `git log` for the full progression.
+
+Done:
+- Core domains (handler→service→repository, Postgres via sqlx): users, posts,
+  follows, cold-start feed (Appendix A.2 bounded candidate query), and
+  append-only interaction-graph capture.
+- Gem economy: `gem-engine` (graph → PageRank → log-space weights), `settlement`
+  worker with fail-closed conservation invariants, Postgres-backed ledger
+  (`PgLedger`), off-chain epoch settlement (`POST /epochs/:k/settle`,
+  `GET /users/:id/gems`).
+- Media: object storage (MinIO/S3, presigned direct upload/download), async
+  HLS transcoding (Redis queue + `transcode_worker` binary), paid content
+  unlock in PT (creator/company-fee/burn split via `econ-params`) with an
+  access-controlled HLS manifest (402 until unlocked).
+- Auth: register/login (argon2 + opaque bearer sessions), `AuthUser` extractor;
+  all write/spend/paid-access endpoints derive identity from the session.
+
+Next steps (rough priority):
+1. **Role-based admin auth** — lock down `POST /epochs/:k/settle` (operator-only)
+   and future admin actions; it is currently unauthenticated.
+2. **Harden remaining public reads** (GET feed / gems balance / profiles) to the
+   authenticated user where they are self-scoped.
+3. **Multi-bitrate HLS ladder** (master playlist) + decide prod HLS delivery
+   (CDN signed cookies vs. presigned segments — see media service comments).
+4. **Periodic settlement scheduler** (cron) so epochs settle automatically.
+5. **Frontend** (Next.js) once the API contract is exercised end to end.
+
+Working style: deliberate, ONE reviewable step at a time; verify (tests + fmt +
+clippy green) before moving on; commit each checkpoint. Tokenomics knobs are in
+flux by design — keep them in `econ-params`, never hardcoded.
