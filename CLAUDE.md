@@ -128,18 +128,19 @@ found the foundation strong but several launch-blocking gaps; fixed:
   a crash can't under-pay; unlock routed through the ledger seam with the burn
   recorded. ADR 0004.
 
+Audit follow-up also done (2026-06-16): self-scoped reads (`GET /users/:id/gems`,
+`/users/:id/feed`) now require the session and are owner-or-operator (`Caller`
+extractor); the emission schedule is integer-exact (per-year step, no f64 on the
+conserved amount) with a checked u128→i64 cast and a 21M-cap test.
+
 Next steps (rough priority):
-1. **Harden remaining self-scoped reads** — `GET /users/:id/gems` and
-   `GET /users/:id/feed` are still unauthenticated/world-readable; require the
-   session and assert path id == caller (or operator).
-2. **AI ingestion service** (`services/ingestion`, Python) behind the Redis queue,
+1. **AI ingestion service** (`services/ingestion`, Python) behind the Redis queue,
    and a real cold-start feed signal — both named as 1a deliverables but absent.
-3. **Frontend API contract**: generate the typed contract (ts-rs / OpenAPI) so the
+2. **Frontend API contract**: generate the typed contract (ts-rs / OpenAPI) so the
    "types break the frontend at compile time" claim is real, before the frontend.
-4. **Periodic settlement scheduler** (cron) so epochs settle automatically.
-5. **Multi-bitrate HLS ladder** + prod HLS delivery decision (already past 1a MVP).
-6. **Smaller, tracked**: integer/fixed-point emission (no f64 on the conserved
-   amount) + a 21M-cap test; apply `time_decay_lambda` (or document it deferred);
+3. **Periodic settlement scheduler** (cron) so epochs settle automatically.
+4. **Multi-bitrate HLS ladder** + prod HLS delivery decision (already past 1a MVP).
+5. **Smaller, tracked**: apply `time_decay_lambda` (or document it deferred);
    add `/v1` API prefix; request-tracing/metrics; FKs on `interaction_events`;
    provision MinIO+Redis in CI so the payment/media tests run there.
 
