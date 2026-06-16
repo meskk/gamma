@@ -29,6 +29,15 @@ impl UserService {
     pub async fn get(&self, id: i64) -> Result<User, ApiError> {
         self.repo.get(id).await?.ok_or(ApiError::NotFound)
     }
+
+    /// Set a user's bot-gate (verified) flag. Operator-only at the HTTP layer.
+    /// 404 if the user does not exist.
+    pub async fn set_verification(&self, id: i64, verified: bool) -> Result<User, ApiError> {
+        self.repo
+            .set_bot_gate(id, verified)
+            .await?
+            .ok_or(ApiError::NotFound)
+    }
 }
 
 /// Trim, lowercase, drop empties, and de-duplicate while preserving first-seen order.

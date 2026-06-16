@@ -48,6 +48,23 @@ impl UserRepository {
         .await
     }
 
+    /// Set a user's bot-gate (verified) flag. Returns the updated row, or `None`
+    /// if no such user exists. Operator-only at the HTTP layer.
+    pub async fn set_bot_gate(&self, id: i64, verified: bool) -> Result<Option<User>, sqlx::Error> {
+        sqlx::query_as!(
+            User,
+            r#"
+            UPDATE users SET bot_gate_v = $2
+            WHERE id = $1
+            RETURNING id, created_at, declared_categories, bot_gate_v
+            "#,
+            id,
+            verified
+        )
+        .fetch_optional(&self.pool)
+        .await
+    }
+
     /// Bot-gate (verified) flags for the given user ids — the gate `v_i` that the
     /// gem engine applies. Missing ids simply don't appear in the result.
     pub async fn verified_flags(&self, ids: &[i64]) -> Result<Vec<(i64, bool)>, sqlx::Error> {

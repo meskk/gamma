@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE users SET bot_gate_v = $2\n            WHERE id = $1\n            RETURNING id, created_at, declared_categories, bot_gate_v\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "declared_categories",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 3,
+        "name": "bot_gate_v",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "17509f025783d557dc380f1aa3b6c47130789fe2000b31617b685a8d54387207"
+}
