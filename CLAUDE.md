@@ -134,8 +134,12 @@ extractor); the emission schedule is integer-exact (per-year step, no f64 on the
 conserved amount) with a checked u128→i64 cast and a 21M-cap test.
 
 Next steps (rough priority):
-1. **AI ingestion service** (`services/ingestion`, Python) behind the Redis queue,
-   and a real cold-start feed signal — both named as 1a deliverables but absent.
+1. **AI ingestion service** (`services/ingestion`, Python) — the Rust SEAM now
+   exists (ADR 0006): new posts are offered on the `gamma:ingestion` Redis queue,
+   and signals are written back via operator-only `PUT /posts/:id/signals` into
+   `content_signals` (JSONB). Still to do: the Python consumer itself (on the Mac
+   Studio), and wiring the feed ranker to read `content_signals` (deferred until
+   the signal shape is settled — no speculative ranking yet).
 2. **Frontend API contract**: generate the typed contract (ts-rs / OpenAPI) so the
    "types break the frontend at compile time" claim is real, before the frontend.
 3. **Periodic settlement scheduler** (cron) so epochs settle automatically.
