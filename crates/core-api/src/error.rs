@@ -18,6 +18,8 @@ pub enum ApiError {
     PaymentRequired,
     /// Missing or invalid authentication → 401.
     Unauthorized,
+    /// Authenticated but lacking the required role/permission → 403.
+    Forbidden,
     /// A conflicting resource already exists (e.g. email taken) → 409.
     Conflict(&'static str),
     /// A database operation failed → 500 (details logged, not leaked to clients).
@@ -62,6 +64,7 @@ impl IntoResponse for ApiError {
             ApiError::Validation(code) => (StatusCode::BAD_REQUEST, code),
             ApiError::PaymentRequired => (StatusCode::PAYMENT_REQUIRED, "payment_required"),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            ApiError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             ApiError::Conflict(code) => (StatusCode::CONFLICT, code),
             ApiError::Database(err) => {
                 // Log the real error; return an opaque code so we never leak SQL.

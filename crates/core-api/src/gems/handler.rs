@@ -6,6 +6,7 @@ use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
+use crate::auth::AdminUser;
 use crate::error::ApiError;
 use crate::gems::model::{GemBalance, SettlementSummary};
 use crate::state::AppState;
@@ -16,7 +17,11 @@ pub fn routes() -> Router<AppState> {
         .route("/users/:id/gems", get(gem_balance))
 }
 
+/// Operator-only: minting an epoch's gems must not be caller-triggerable by
+/// anyone. The `AdminUser` extractor rejects non-operators (403) and the
+/// unauthenticated (401) before this runs.
 async fn settle(
+    _admin: AdminUser,
     State(state): State<AppState>,
     Path(epoch_k): Path<i64>,
 ) -> Result<Json<SettlementSummary>, ApiError> {

@@ -3,6 +3,8 @@
 use chrono::{DateTime, Utc};
 use db::PgPool;
 
+use crate::auth::model::Role;
+
 #[derive(Clone)]
 pub struct AuthRepository {
     pool: PgPool,
@@ -67,13 +69,24 @@ impl AuthRepository {
         Ok(())
     }
 
-    /// The user id for a live (unexpired) session token hash.
-    pub async fn user_for_session(&self, token_hash: &str) -> Result<Option<i64>, sqlx::Error> {
-        sqlx::query_scalar!(
-            r#"SELECT user_id FROM sessions WHERE token_hash = $1 AND expires_at > now()"#,
+    /// The (user id, role) behind a live (unexpired) session token hash, or
+    /// `None` if the token is unknown or expired. Joins `users` so a role check
+    /// needs no second query.
+    pub async fn principal_for_session(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<(i64, Role)>, sqlx::Error> {
+        let row = sqlx::query!(
+            r#"
+            SELECT u.id, u.role AS "role: Role"
+            FROM sessions s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.token_hash = $1 AND s.expires_at > now()
+            "#,
             token_hash
         )
         .fetch_optional(&self.pool)
-        .await
+        .await?;
+        Ok(row.map(|r| (r.id, r.role)))
     }
 }

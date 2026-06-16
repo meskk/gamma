@@ -33,6 +33,52 @@ fn current_epoch() -> i64 {
     Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i64
 }
 
+/// Register a credentialed account via the HTTP API; returns (user_id, token).
+async fn register(router: &axum::Router, email: &str) -> (i64, String) {
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/register")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "email": email, "password": "supersecret" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    (
+        v["user_id"].as_i64().unwrap(),
+        v["token"].as_str().unwrap().to_string(),
+    )
+}
+
+/// POST a settle request, optionally bearing a session token.
+async fn settle_request(
+    router: &axum::Router,
+    epoch_k: i64,
+    token: Option<&str>,
+) -> axum::http::Response<Body> {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(format!("/epochs/{epoch_k}/settle"));
+    if let Some(t) = token {
+        builder = builder.header("authorization", format!("Bearer {t}"));
+    }
+    router
+        .clone()
+        .oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn settles_epoch_mints_by_weight_and_is_idempotent(pool: PgPool) {
     let a = verified_user(&pool).await; // hub (receives engagement)
@@ -106,7 +152,7 @@ async fn empty_epoch_mints_nothing(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn http_settle_then_read_balance(pool: PgPool) {
+async fn http_settle_is_operator_only_then_reads_balance(pool: PgPool) {
     let a = verified_user(&pool).await;
     let b = verified_user(&pool).await;
     InteractionService::new(pool.clone())
@@ -119,19 +165,31 @@ async fn http_settle_then_read_balance(pool: PgPool) {
         .await
         .unwrap();
     let epoch_k = current_epoch();
-    let router = app(AppState::new(pool));
+    let router = app(AppState::new(pool.clone()));
 
-    let resp = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/epochs/{epoch_k}/settle"))
-                .body(Body::empty())
-                .unwrap(),
-        )
+    // A normal account and an operator account (promoted directly in the DB —
+    // there is no admin promotion endpoint in Phase 1a).
+    let (_user_id, user_token) = register(&router, "user@example.com").await;
+    let (op_id, op_token) = register(&router, "op@example.com").await;
+    sqlx::query!("UPDATE users SET role = 'operator' WHERE id = $1", op_id)
+        .execute(&pool)
         .await
         .unwrap();
+
+    // Unauthenticated → 401, authenticated non-operator → 403. Neither settles.
+    assert_eq!(
+        settle_request(&router, epoch_k, None).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        settle_request(&router, epoch_k, Some(&user_token))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // Operator → 200 and the epoch mints.
+    let resp = settle_request(&router, epoch_k, Some(&op_token)).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
@@ -139,6 +197,7 @@ async fn http_settle_then_read_balance(pool: PgPool) {
     let summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(summary["emission"].as_i64().unwrap() > 0);
 
+    // Reading a balance is a public read (unchanged).
     let resp = router
         .oneshot(
             Request::builder()

@@ -6,7 +6,7 @@ use chrono::{Duration, Utc};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
-use crate::auth::model::{AuthResponse, LoginRequest, RegisterRequest};
+use crate::auth::model::{AuthResponse, LoginRequest, Principal, RegisterRequest};
 use crate::auth::repository::AuthRepository;
 use crate::error::ApiError;
 use db::PgPool;
@@ -61,9 +61,14 @@ impl AuthService {
         self.issue_session(user_id).await
     }
 
-    /// Resolve a bearer token to a user id, or `None` if invalid/expired.
-    pub async fn authenticate(&self, token: &str) -> Result<Option<i64>, ApiError> {
-        Ok(self.repo.user_for_session(&hash_token(token)).await?)
+    /// Resolve a bearer token to the authenticated principal (id + role), or
+    /// `None` if the token is invalid/expired.
+    pub async fn authenticate(&self, token: &str) -> Result<Option<Principal>, ApiError> {
+        Ok(self
+            .repo
+            .principal_for_session(&hash_token(token))
+            .await?
+            .map(|(user_id, role)| Principal { user_id, role }))
     }
 
     async fn issue_session(&self, user_id: i64) -> Result<AuthResponse, ApiError> {
