@@ -6,19 +6,33 @@ project is and how it is built without re-deriving it from scratch.
 
 ## What this project is
 
-A rebuild of **Peer Network**, a social platform implementing the **Gamma**
-protocol: a social-mining economy where genuine social interaction (not
-proof-of-work) earns a daily-minted token (PT / "PEER"). The authoritative
-planning document is `Peer Network — Consolidated Rebuild Dossier v5.pdf` (not
-in this repo; in the owner's Downloads). Key facts:
+A rebuild of **Peer Network**, an ad-and-creativity-funded social platform that
+pays its users, implementing the **Gamma** protocol. The authoritative planning
+document is **`Peer Network — Consolidated Rebuild Dossier v6 (Pol B).md`**
+(`~/Desktop/Dokuwar/`, not in this repo). **The project is committed to the v6
+economic spine; it supersedes v5 — see ADR 0007.** Key facts:
 
-- **Daily epochs** mint PT on a fixed schedule (21M cap, 10%/yr taper) and
-  distribute it by a **log-space social-weight score** (PageRank + concave burn
-  multiplier + audience term, gated by a hard bot gate).
-- **Advertisers** are the primary money inflow: they buy PT and burn it (98%
-  destroyed, 2% to the company). PT floats against BTC on a constant-product LP.
-- **Theorem 8.1:** mean user income ≤ advertiser spend. Redistribution can't
-  enlarge the pie.
+- **Two money rails.** (1) A **creative marketplace**: users sell/gate content and
+  tip each other, paid in stablecoin (USDC); the company takes a marketplace fee
+  (~10% gross). Live from day one; no token. (2) An **ad-revenue token (PEER)**:
+  when advertisers pay, the platform mints a **fully-backed, DEMAND-GATED** token
+  against that realized money (no fixed schedule, no cap; `A_d = 0 ⇒ no mint`,
+  2% company skim) and distributes it by a **log-space social-weight score**
+  (PageRank + concave burn multiplier + audience term, gated by a hard bot gate
+  `v_i`). PEER is **non-tradable closed-loop credit**, redeemable 1:1 from the
+  reserve — no LP, no float, no genesis seed.
+- **The honesty floor (`[proven]`):** PEER in circulation ≤ reserve at every
+  epoch's end (mint only against money already in reserve). Conservation defeats
+  the closed-loop self-dealer for free but is **SILENT on the open-loop bot
+  harvest** of honest inflow — the venture's hardest unsolved risk; the bot gate
+  `v_i` is its veto and is itself unsolved.
+
+> v5→v6 is the predicted "tokenomics WILL change" event, and it lands almost
+> entirely in the isolated economic layer (`econ-params` + `LedgerBackend` + the
+> emission rule). The product, weight math (`gem-engine`), settlement engineering,
+> phasing, and 1a code carry over unchanged — v6 itself "keeps" them. Most of the
+> v6 delta (demand-gated mint vs. fixed schedule, full-reserve USDC backing,
+> redemption, advertiser sweep) is Phase 1b, not yet built. See ADR 0007.
 
 ## Phases (build order)
 
@@ -26,8 +40,11 @@ in this repo; in the owner's Downloads). Key facts:
   is what we build first. (Core API, AI ingestion, cold-start feed, gem math
   against an off-chain ledger.)
 - **Phase 1a-β** — small closed beta with capped real cash-out value.
-- **Phase 1b** — real money on Solana (SPL token, LP, custody, advertiser API).
-  GATED by Gate A (legal) + Gate B (audit). Not date-committed.
+- **Phase 1b** — real money: a **full-reserve USDC reserve**, **demand-gated
+  closed-loop PEER** (mint against realized advertiser money, redeem 1:1), and an
+  advertiser API + minimal attribution. On Solana, custody hot/cold + multisig.
+  GATED by Gate A (legal) + Gate B (audit). Not date-committed. (v6 removes v5's
+  BTC unit, floating LP, and genesis seed.)
 - **Phase 2** — scale, ZK targeting, formal KYC, user wallets, chat.
 
 ## The one architectural idea that matters most
