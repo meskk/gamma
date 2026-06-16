@@ -190,6 +190,39 @@ async fn settlement_is_resumable_without_double_mint(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn scheduler_settles_closed_epochs_idempotently(pool: PgPool) {
+    let a = verified_user(&pool).await;
+    let b = verified_user(&pool).await;
+    InteractionService::new(pool.clone())
+        .record(NewInteraction {
+            actor_id: b,
+            r#type: InteractionType::Comment,
+            target_id: Some(a),
+            post_id: None,
+        })
+        .await
+        .unwrap();
+    let epoch_k = current_epoch();
+    let svc = SettlementService::new(pool.clone());
+
+    // As of "now = epoch_k + 1", epoch_k is closed and gets settled by the window.
+    let summaries = svc.settle_closed_epochs(epoch_k + 1, 2).await.unwrap();
+    assert!(
+        summaries
+            .iter()
+            .any(|s| s.epoch_k == epoch_k && !s.already_settled && s.emission > 0),
+        "the just-closed epoch was settled"
+    );
+    let bal = svc.gem_balance(a).await.unwrap().balance;
+    assert!(bal > 0);
+
+    // Re-running the same window is a no-op (idempotent) — no double-mint.
+    let again = svc.settle_closed_epochs(epoch_k + 1, 2).await.unwrap();
+    assert!(again.iter().all(|s| s.already_settled));
+    assert_eq!(svc.gem_balance(a).await.unwrap().balance, bal);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn empty_epoch_mints_nothing(pool: PgPool) {
     let svc = SettlementService::new(pool);
     let summary = svc.settle(123_456).await.unwrap();

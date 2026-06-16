@@ -106,6 +106,24 @@ impl SettlementService {
         })
     }
 
+    /// Settle every CLOSED epoch in the window `[current_epoch - lookback,
+    /// current_epoch - 1]` (the current epoch is still open, so it is excluded).
+    /// Idempotent — safe to run every scheduler tick and to catch up epochs missed
+    /// during downtime. Returns a summary per epoch, oldest first.
+    pub async fn settle_closed_epochs(
+        &self,
+        current_epoch: i64,
+        lookback: i64,
+    ) -> Result<Vec<SettlementSummary>, ApiError> {
+        let lookback = lookback.max(1);
+        let start = (current_epoch - lookback).max(0);
+        let mut summaries = Vec::new();
+        for epoch_k in start..current_epoch {
+            summaries.push(self.settle(epoch_k).await?);
+        }
+        Ok(summaries)
+    }
+
     /// A user's current off-chain gem balance.
     pub async fn gem_balance(&self, user_id: i64) -> Result<GemBalance, ApiError> {
         let ledger = PgLedger::new(self.pool.clone());
