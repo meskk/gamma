@@ -519,6 +519,61 @@ async fn paid_unlock_splits_payment_and_grants_access(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn unlock_journals_every_leg_including_burn(pool: PgPool) {
+    ensure_bucket().await;
+    let creator = verified_user(&pool).await;
+    let viewer = verified_user(&pool).await;
+    let price = 1000;
+    give_gems(&pool, viewer, price).await;
+    let asset_id = make_paid_video(&pool, creator, price).await;
+
+    media_service(&pool).unlock(asset_id, viewer).await.unwrap();
+
+    // Every leg is recorded in the ledger journal under this unlock.
+    let rows = sqlx::query!(
+        r#"SELECT kind, amount, user_id FROM ledger_entries
+           WHERE ref_type = 'unlock' AND ref_id = $1 ORDER BY id"#,
+        asset_id
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let debit = rows
+        .iter()
+        .find(|r| r.kind == "unlock_debit")
+        .expect("debit");
+    assert_eq!(debit.amount, -price);
+    assert_eq!(debit.user_id, Some(viewer));
+
+    // The burn is explicitly recorded (it used to be silently dropped).
+    let burn = rows
+        .iter()
+        .find(|r| r.kind == "unlock_burn")
+        .expect("burn recorded");
+    assert_eq!(burn.amount, -20);
+    assert!(burn.user_id.is_none(), "a burn has no holder");
+
+    let credits: i64 = rows
+        .iter()
+        .filter(|r| r.kind == "unlock_credit")
+        .map(|r| r.amount)
+        .sum();
+    assert_eq!(credits, 980, "creator 960 + company 20");
+
+    // Entries that touch a balance (non-null user) net to the supply change = -burn.
+    let supply_delta: i64 = rows
+        .iter()
+        .filter(|r| r.user_id.is_some())
+        .map(|r| r.amount)
+        .sum();
+    assert_eq!(
+        supply_delta, -20,
+        "circulating supply fell by exactly the burn"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn unlock_without_enough_gems_fails_and_grants_nothing(pool: PgPool) {
     ensure_bucket().await;
     let creator = verified_user(&pool).await;

@@ -3,6 +3,8 @@
 
 use std::time::Duration;
 
+use chrono::Utc;
+use domain::Epoch;
 use storage::Storage;
 use uuid::Uuid;
 
@@ -202,6 +204,9 @@ impl MediaService {
         let company_fee = price * params.content_fee_bps as i64 / 10_000;
         let burned = price * params.transfer_burn_bps as i64 / 10_000;
         let creator_received = price - company_fee - burned;
+        // Stamp the journal entries with the current epoch (unlocks aren't
+        // epoch-scoped, but the journal records when value moved).
+        let epoch_k = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i64;
 
         let outcome = self
             .repo
@@ -213,6 +218,8 @@ impl MediaService {
                 price,
                 creator_received,
                 company_fee,
+                burned,
+                epoch_k,
             )
             .await
             .map_err(map_unlock_error)?;

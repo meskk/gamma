@@ -130,11 +130,15 @@ impl MediaRepository {
 
     /// Pay to unlock, atomically (Phase 1a off-chain content payment): record the
     /// entitlement, debit the viewer the full price, credit the creator and the
-    /// company, and let the burn amount be destroyed (not credited anywhere).
+    /// company, and record the burned remainder as a destruction.
     ///
-    /// Entitlement is claimed first, so a repeat unlock is a no-charge no-op. Any
-    /// failure rolls the whole thing back — the viewer never loses gems without
-    /// gaining access. Phase 1b moves this to on-chain transfers.
+    /// All money movement goes through the ledger crate's transaction-scoped
+    /// primitives (debit/credit/burn), so `gem_balances` mutation lives in the
+    /// ledger seam — not hand-written here — and every leg (including the burn) is
+    /// journaled in `ledger_entries`. Entitlement is claimed first, so a repeat
+    /// unlock is a no-charge no-op; any failure rolls the whole transaction back,
+    /// so the viewer never loses gems without gaining access. Phase 1b swaps the
+    /// ledger backing with no change to this composition.
     #[allow(clippy::too_many_arguments)]
     pub async fn unlock(
         &self,
@@ -145,6 +149,8 @@ impl MediaRepository {
         price: i64,
         creator_amount: i64,
         company_fee: i64,
+        burned: i64,
+        epoch_k: i64,
     ) -> Result<UnlockOutcome, UnlockError> {
         let mut tx = self.pool.begin().await?;
 
@@ -164,31 +170,34 @@ impl MediaRepository {
         }
 
         // Debit the full price from the viewer (guarded → insufficient funds).
-        let debited = sqlx::query!(
-            r#"UPDATE gem_balances SET balance = balance - $2, updated_at = now()
-               WHERE user_id = $1 AND balance >= $2"#,
-            viewer_id,
-            price
-        )
-        .execute(&mut *tx)
-        .await?;
-        if debited.rows_affected() == 0 {
+        if !ledger::debit_tx(&mut tx, viewer_id, price, epoch_k, "unlock_debit", asset_id).await? {
             return Err(UnlockError::InsufficientFunds);
         }
-
-        // Credit creator and company; the remaining (burn) amount is destroyed.
-        for (account, amount) in [(creator_id, creator_amount), (company_id, company_fee)] {
-            if amount > 0 {
-                sqlx::query!(
-                    r#"INSERT INTO gem_balances (user_id, balance) VALUES ($1, $2)
-                       ON CONFLICT (user_id) DO UPDATE
-                       SET balance = gem_balances.balance + EXCLUDED.balance, updated_at = now()"#,
-                    account,
-                    amount
-                )
-                .execute(&mut *tx)
-                .await?;
-            }
+        // Credit creator and company; record the destroyed remainder as a burn.
+        if creator_amount > 0 {
+            ledger::credit_tx(
+                &mut tx,
+                creator_id,
+                creator_amount,
+                epoch_k,
+                "unlock_credit",
+                asset_id,
+            )
+            .await?;
+        }
+        if company_fee > 0 {
+            ledger::credit_tx(
+                &mut tx,
+                company_id,
+                company_fee,
+                epoch_k,
+                "unlock_credit",
+                asset_id,
+            )
+            .await?;
+        }
+        if burned > 0 {
+            ledger::burn_tx(&mut tx, burned, epoch_k, asset_id).await?;
         }
 
         tx.commit().await?;

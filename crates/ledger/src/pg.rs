@@ -7,9 +7,107 @@
 
 use async_trait::async_trait;
 use domain::{Epoch, PtAmount, UserId};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 use crate::{LedgerBackend, LedgerError, Result};
+
+// --- Transaction-scoped money primitives (Phase 1a, Postgres) -----------------
+//
+// These move PT *inside a transaction the caller owns*, journaling every leg, so
+// a multi-leg operation (e.g. a paid content unlock) stays atomic AND goes through
+// the ledger crate rather than hand-written SQL elsewhere. They keep `gem_balances`
+// mutation in ONE place — the seam — so Phase 1b can swap the backing here. They
+// work in DB-native i64 because the unlock split is computed in i64 upstream.
+
+/// Credit a user and journal it, within the caller's transaction.
+pub async fn credit_tx(
+    conn: &mut PgConnection,
+    user_id: i64,
+    amount: i64,
+    epoch_k: i64,
+    kind: &str,
+    ref_id: i64,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"INSERT INTO ledger_entries (user_id, epoch_k, kind, amount, ref_type, ref_id)
+           VALUES ($1, $2, $3, $4, 'unlock', $5)"#,
+        user_id,
+        epoch_k,
+        kind,
+        amount,
+        ref_id
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        r#"INSERT INTO gem_balances (user_id, balance) VALUES ($1, $2)
+           ON CONFLICT (user_id) DO UPDATE
+           SET balance = gem_balances.balance + EXCLUDED.balance, updated_at = now()"#,
+        user_id,
+        amount
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Debit a user (guarded) and journal it. Returns `false` if the balance is too
+/// low — the caller should abort (roll back) the transaction.
+pub async fn debit_tx(
+    conn: &mut PgConnection,
+    user_id: i64,
+    amount: i64,
+    epoch_k: i64,
+    kind: &str,
+    ref_id: i64,
+) -> std::result::Result<bool, sqlx::Error> {
+    let debited = sqlx::query!(
+        r#"UPDATE gem_balances SET balance = balance - $2, updated_at = now()
+           WHERE user_id = $1 AND balance >= $2"#,
+        user_id,
+        amount
+    )
+    .execute(&mut *conn)
+    .await?;
+    if debited.rows_affected() == 0 {
+        return Ok(false);
+    }
+    sqlx::query!(
+        r#"INSERT INTO ledger_entries (user_id, epoch_k, kind, amount, ref_type, ref_id)
+           VALUES ($1, $2, $3, $4, 'unlock', $5)"#,
+        user_id,
+        epoch_k,
+        kind,
+        -amount,
+        ref_id
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(true)
+}
+
+/// Record a burn (destruction with no holder) for audit, within the caller's
+/// transaction. No balance moves — the destroyed amount is the part of a debit
+/// that was never credited; this entry makes that destruction explicit. It has
+/// `user_id = NULL`, so balance reconstruction (sum over non-null users) excludes
+/// it and isn't double-counted.
+pub async fn burn_tx(
+    conn: &mut PgConnection,
+    amount: i64,
+    epoch_k: i64,
+    ref_id: i64,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"INSERT INTO ledger_entries (user_id, epoch_k, kind, amount, ref_type, ref_id)
+           VALUES (NULL, $1, 'unlock_burn', $2, 'unlock', $3)"#,
+        epoch_k,
+        -amount,
+        ref_id
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
 
 pub struct PgLedger {
     pool: PgPool,

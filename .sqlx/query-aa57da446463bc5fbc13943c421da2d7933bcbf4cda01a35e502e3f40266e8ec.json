@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE gem_balances SET balance = balance - $2, updated_at = now()\n           WHERE user_id = $1 AND balance >= $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "aa57da446463bc5fbc13943c421da2d7933bcbf4cda01a35e502e3f40266e8ec"
+}

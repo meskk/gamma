@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO ledger_entries (user_id, epoch_k, kind, amount, ref_type, ref_id)\n           VALUES (NULL, $1, 'unlock_burn', $2, 'unlock', $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "63b9cf8a6fc9b550eef674503ae8d10f7d2d2d9b5ec24379752e91e44d2e3f3a"
+}
