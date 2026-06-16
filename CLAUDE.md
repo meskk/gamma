@@ -110,16 +110,38 @@ Done:
   access-controlled HLS manifest (402 until unlocked).
 - Auth: register/login (argon2 + opaque bearer sessions), `AuthUser` extractor;
   all write/spend/paid-access endpoints derive identity from the session.
+- Roles: `Role` enum + `AdminUser` extractor; `POST /epochs/:k/settle` is
+  operator-only (401/403/200). See ADR 0004/0005.
+
+Audit remediation (2026-06-16, all committed + green) — a multi-agent review
+found the foundation strong but several launch-blocking gaps; fixed:
+- **Bot gate wired + secured**: removed the unauthenticated `POST /users`
+  self-verify hole; the gate is now operator-only (`PUT /users/:id/verification`).
+  ADR 0005.
+- **Media access control**: `GET /media/:id` now gates the raw URL by entitlement
+  (owner/free/unlocked); finalize/transcode are owner-only — closed a paywall
+  bypass + IDOR.
+- **Anti-abuse**: per-(actor,type,epoch,target,post) interaction dedup; 256 KiB
+  body limit; per-IP rate limit (tower_governor, in `main.rs` only).
+- **Atomic, crash-safe settlement + money journal**: `ledger_entries` append-only
+  journal; `mint_epoch` (atomic, idempotent per (epoch,user)); mint-then-mark so
+  a crash can't under-pay; unlock routed through the ledger seam with the burn
+  recorded. ADR 0004.
 
 Next steps (rough priority):
-1. **Role-based admin auth** — lock down `POST /epochs/:k/settle` (operator-only)
-   and future admin actions; it is currently unauthenticated.
-2. **Harden remaining public reads** (GET feed / gems balance / profiles) to the
-   authenticated user where they are self-scoped.
-3. **Multi-bitrate HLS ladder** (master playlist) + decide prod HLS delivery
-   (CDN signed cookies vs. presigned segments — see media service comments).
+1. **Harden remaining self-scoped reads** — `GET /users/:id/gems` and
+   `GET /users/:id/feed` are still unauthenticated/world-readable; require the
+   session and assert path id == caller (or operator).
+2. **AI ingestion service** (`services/ingestion`, Python) behind the Redis queue,
+   and a real cold-start feed signal — both named as 1a deliverables but absent.
+3. **Frontend API contract**: generate the typed contract (ts-rs / OpenAPI) so the
+   "types break the frontend at compile time" claim is real, before the frontend.
 4. **Periodic settlement scheduler** (cron) so epochs settle automatically.
-5. **Frontend** (Next.js) once the API contract is exercised end to end.
+5. **Multi-bitrate HLS ladder** + prod HLS delivery decision (already past 1a MVP).
+6. **Smaller, tracked**: integer/fixed-point emission (no f64 on the conserved
+   amount) + a 21M-cap test; apply `time_decay_lambda` (or document it deferred);
+   add `/v1` API prefix; request-tracing/metrics; FKs on `interaction_events`;
+   provision MinIO+Redis in CI so the payment/media tests run there.
 
 Working style: deliberate, ONE reviewable step at a time; verify (tests + fmt +
 clippy green) before moving on; commit each checkpoint. Tokenomics knobs are in
