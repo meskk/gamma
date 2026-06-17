@@ -24,9 +24,30 @@ pub mod worker;
 mod health;
 
 use axum::extract::DefaultBodyLimit;
+use axum::http::Request;
 use axum::Router;
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 pub use state::AppState;
+
+/// One tracing span per HTTP request, carrying the method, path, and the
+/// `x-request-id` (set by `SetRequestIdLayer` just outside this) so every log line
+/// for a request — and the `x-request-id` echoed on the response — correlate.
+fn request_span<B>(req: &Request<B>) -> tracing::Span {
+    let request_id = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-");
+    tracing::info_span!(
+        "http",
+        method = %req.method(),
+        path = %req.uri().path(),
+        request_id = %request_id,
+    )
+}
 
 /// Max request body we accept. All bodies are small JSON (media bytes go directly
 /// to object storage via presigned URLs, never through the API), so a tight cap
@@ -53,9 +74,20 @@ pub fn app(state: AppState) -> Router {
         .merge(media::handler::routes())
         .merge(signals::handler::routes());
 
+    // Layers wrap outermost-last. Order on a request: assign x-request-id → open
+    // the trace span (reads that id) → propagate the id onto the response →
+    // body-limit → routes. So every request is logged (method/path/status/latency,
+    // at INFO) under a span tagged with its id, and the response carries the id.
     Router::new()
         .merge(health::routes())
         .nest("/v1", v1)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        .layer(PropagateRequestIdLayer::x_request_id())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(request_span)
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
+        .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .with_state(state)
 }
