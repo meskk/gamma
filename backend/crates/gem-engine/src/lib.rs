@@ -18,7 +18,9 @@ pub struct UserInputs {
     pub user: UserId,
     /// Hard bot gate v_i: false ⇒ weight 0, unconditionally.
     pub verified: bool,
-    /// Decayed interaction volume Σ ω_type · e^{-λτ}.
+    /// Decayed interaction volume Σ ω_type · e^{-λτ}. The `e^{-λτ}` time-decay is
+    /// applied to each edge's weight by the caller (settlement) before it reaches
+    /// the engine — the engine sums the weights it is given.
     pub interaction_volume: f64,
     /// Node score NS_i (PageRank), strictly positive for connected users.
     pub node_score: f64,

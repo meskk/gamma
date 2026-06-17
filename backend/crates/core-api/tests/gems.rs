@@ -222,6 +222,47 @@ async fn scheduler_settles_closed_epochs_idempotently(pool: PgPool) {
     assert_eq!(svc.gem_balance(a).await.unwrap().balance, bal);
 }
 
+/// Insert a Like (ω=1) directly with a controlled `created_at`, so a test can set
+/// the interaction's age within an epoch (the normal record() stamps "now").
+async fn insert_like_at(pool: &PgPool, actor: i64, target: i64, epoch_k: i64, created_secs: i64) {
+    sqlx::query(
+        "INSERT INTO interaction_events (actor_id, target_id, post_id, type, weight, epoch_k, created_at)
+         VALUES ($1, $2, NULL, 0, 1.0, $3, to_timestamp($4))",
+    )
+    .bind(actor)
+    .bind(target)
+    .bind(epoch_k as i32)
+    .bind(created_secs as f64)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn older_interactions_decay_and_earn_less(pool: PgPool) {
+    let a = verified_user(&pool).await; // actor
+    let b = verified_user(&pool).await; // engaged early in the day → older → more decay
+    let c = verified_user(&pool).await; // engaged late in the day → newer → less decay
+    let epoch_k = current_epoch();
+    let day_start = epoch_k * 86_400;
+
+    // Two identical likes from A this epoch — only the timing differs.
+    insert_like_at(&pool, a, b, epoch_k, day_start + 3_600).await; // ~start of day
+    insert_like_at(&pool, a, c, epoch_k, day_start + 82_800).await; // ~end of day
+
+    let svc = SettlementService::new(pool.clone());
+    let summary = svc.settle(epoch_k).await.unwrap();
+    assert!(summary.emission > 0);
+
+    let bal_b = svc.gem_balance(b).await.unwrap().balance;
+    let bal_c = svc.gem_balance(c).await.unwrap().balance;
+    assert!(bal_b > 0 && bal_c > 0);
+    assert!(
+        bal_c > bal_b,
+        "the more recent interaction's target earns more (less time-decay): C={bal_c} B={bal_b}"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn empty_epoch_mints_nothing(pool: PgPool) {
     let svc = SettlementService::new(pool);

@@ -100,7 +100,8 @@ impl InteractionRepository {
             SELECT
                 ie.actor_id AS "actor_id!",
                 COALESCE(ie.target_id, p.author_id) AS "target_id!",
-                ie.weight AS "weight!"
+                ie.weight AS "weight!",
+                ie.created_at AS "created_at!"
             FROM interaction_events ie
             LEFT JOIN posts p ON p.id = ie.post_id
             WHERE ie.epoch_k = $1

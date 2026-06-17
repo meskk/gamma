@@ -179,15 +179,17 @@ Next steps (rough priority):
    `cargo test`, so CI can diff for drift). Remaining: stand up the frontend repo
    and consume `bindings/`.
 3. **Multi-bitrate HLS ladder** + prod HLS delivery decision (already past 1a MVP).
-4. **Smaller, tracked**: apply `time_decay_lambda` (or document it deferred); a
-   Prometheus `/metrics` endpoint; FKs on `interaction_events`.
+4. **Smaller, tracked**: a Prometheus `/metrics` endpoint; FKs on
+   `interaction_events`.
 
 Done since the audit follow-up: MinIO+Redis+ffmpeg in CI (full media/payment path
 now runs in CI); the API is versioned under `/v1` (health/ready stay unversioned);
 minimal moderation (report + operator takedown/restore, soft-hide drops posts from
 feed/reads); HTTP observability (tower-http TraceLayer access logs + `x-request-id`
-set/propagated, correlated in the span). The repo is a private GitHub remote
-`meskk/gamma` (monorepo backend/ + frontend/).
+set/propagated, correlated in the span); `time_decay_lambda` wired — interaction
+edge weights are recency-decayed `e^(−λτ)` at settlement (τ = event age at epoch
+close; engine stays pure; λ=0 recovers no-decay). The repo is a private GitHub
+remote `meskk/gamma` (monorepo backend/ + frontend/).
 
 Working style: deliberate, ONE reviewable step at a time; verify (tests + fmt +
 clippy green) before moving on; commit each checkpoint. Tokenomics knobs are in

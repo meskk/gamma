@@ -90,12 +90,14 @@ pub struct InteractionEvent {
 
 /// A resolved user→user edge for one epoch, ready to feed the gem engine. The
 /// target is the other user directly, or (for a post interaction) the post's
-/// author. Self-loops are excluded at query time.
+/// author. Self-loops are excluded at query time. `created_at` is carried so
+/// settlement can apply the time-decay weight e^(−λτ) by the event's age.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct EpochEdge {
     pub actor_id: i64,
     pub target_id: i64,
     pub weight: f64,
+    pub created_at: DateTime<Utc>,
 }
 
 /// API representation: typed `type`, no raw code, no internal timestamp noise.

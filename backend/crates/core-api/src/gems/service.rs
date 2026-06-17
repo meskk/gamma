@@ -55,12 +55,23 @@ impl SettlementService {
                 account_burn_sats: 0,
             })
             .collect();
+        // Recency-weight each interaction by e^(−λ·τ): τ = the event's age in days
+        // at the epoch's CLOSE (deterministic, not wall-clock, so settlement stays
+        // replayable), so newer interactions count for more. Applied here at the
+        // seam — the engine stays pure on the weights it's given. λ = 0 ⇒ no decay,
+        // recovering the prior behaviour. (Effect is intra-epoch and mild while
+        // settlement is daily; the λ half-life bites once windows span days.)
+        let epoch_end_secs = ((epoch_k + 1) * 86_400) as f64;
         let edges: Vec<Edge> = raw_edges
             .iter()
-            .map(|e| Edge {
-                actor: UserId(e.actor_id as u64),
-                target: UserId(e.target_id as u64),
-                weight: e.weight,
+            .map(|e| {
+                let tau_days =
+                    ((epoch_end_secs - e.created_at.timestamp() as f64) / 86_400.0).max(0.0);
+                Edge {
+                    actor: UserId(e.actor_id as u64),
+                    target: UserId(e.target_id as u64),
+                    weight: e.weight * recency_factor(params.time_decay_lambda, tau_days),
+                }
             })
             .collect();
 
@@ -134,5 +145,28 @@ impl SettlementService {
         let ledger = PgLedger::new(self.pool.clone());
         let balance = ledger.balance(UserId(user_id as u64)).await?.0 as i64;
         Ok(GemBalance { user_id, balance })
+    }
+}
+
+/// Interaction recency weight `e^(−λ·τ)` for an event `τ` days old at epoch close
+/// (Dossier §4.3 `Σ ω·e^(−λτ)`). Monotonically decreasing in age; `λ = 0 ⇒ 1`
+/// (no decay). The `time_decay_lambda` default (0.099/day) is a ~7-day half-life.
+fn recency_factor(lambda: f64, tau_days: f64) -> f64 {
+    (-lambda * tau_days.max(0.0)).exp()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recency_factor;
+
+    #[test]
+    fn recency_factor_decays_with_age() {
+        // Brand-new interaction → full weight; λ=0 → no decay regardless of age.
+        assert!((recency_factor(0.099, 0.0) - 1.0).abs() < 1e-12);
+        assert_eq!(recency_factor(0.0, 5.0), 1.0);
+        // ~7-day half-life at the default λ.
+        assert!((recency_factor(0.099, 7.0) - 0.5).abs() < 0.01);
+        // Strictly less weight the older the interaction is.
+        assert!(recency_factor(0.099, 10.0) < recency_factor(0.099, 1.0));
     }
 }
