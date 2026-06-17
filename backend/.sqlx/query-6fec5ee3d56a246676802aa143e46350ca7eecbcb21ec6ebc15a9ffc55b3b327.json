@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, author_id, category, body, created_at, popularity_score\n            FROM posts\n            ORDER BY created_at DESC\n            LIMIT $1\n            ",
+  "query": "\n            UPDATE posts SET hidden_at = $2\n            WHERE id = $1\n            RETURNING id, author_id, category, body, created_at, popularity_score\n            ",
   "describe": {
     "columns": [
       {
@@ -36,7 +36,8 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Timestamptz"
       ]
     },
     "nullable": [
@@ -48,5 +49,5 @@
       false
     ]
   },
-  "hash": "71751d5f8cbe4ca884647ab7b749624158bcd7ca8348e1cfe359f9a65866de8f"
+  "hash": "6fec5ee3d56a246676802aa143e46350ca7eecbcb21ec6ebc15a9ffc55b3b327"
 }

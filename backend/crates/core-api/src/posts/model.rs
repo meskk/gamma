@@ -33,3 +33,18 @@ pub struct NewPost {
     pub category: Option<String>,
     pub body: String,
 }
+
+/// A user's report of a post (moderation). The reporter is the session user.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct ReportRequest {
+    pub reason: String,
+}
+
+/// Operator review row: a reported post with how many reports it has.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReportedPost {
+    pub post_id: i64,
+    pub report_count: i64,
+    pub hidden: bool,
+}

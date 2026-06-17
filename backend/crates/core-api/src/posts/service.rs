@@ -1,14 +1,18 @@
 //! Post business logic: validate and normalise input, and translate database
 //! constraint violations into meaningful API errors.
 
+use chrono::Utc;
+
 use crate::error::ApiError;
-use crate::posts::model::{NewPost, Post};
+use crate::posts::model::{NewPost, Post, ReportedPost};
 use crate::posts::repository::PostRepository;
 use crate::queue::IngestionQueue;
 use db::PgPool;
 
 /// Hard cap on how many posts one list request can return.
 const MAX_LIST_LIMIT: i64 = 200;
+/// Hard cap on a report reason's length.
+const MAX_REASON_LEN: usize = 500;
 
 #[derive(Clone)]
 pub struct PostService {
@@ -67,6 +71,54 @@ impl PostService {
         let limit = limit.clamp(1, MAX_LIST_LIMIT);
         Ok(self.repo.list_recent(limit).await?)
     }
+
+    /// Record a user's report of a post. Idempotent per (post, reporter). 404 if
+    /// the post does not exist.
+    pub async fn report(
+        &self,
+        post_id: i64,
+        reporter_id: i64,
+        reason: String,
+    ) -> Result<(), ApiError> {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err(ApiError::Validation("empty_reason"));
+        }
+        if reason.len() > MAX_REASON_LEN {
+            return Err(ApiError::Validation("reason_too_long"));
+        }
+        self.repo
+            .report(post_id, reporter_id, reason)
+            .await
+            .map_err(map_report_error)?;
+        Ok(())
+    }
+
+    /// Operator action: take a post down (hide it) or restore it. 404 if no such
+    /// post. A hidden post drops out of the feed and public reads.
+    pub async fn set_visibility(&self, post_id: i64, hidden: bool) -> Result<Post, ApiError> {
+        let hidden_at = hidden.then(Utc::now);
+        self.repo
+            .set_hidden(post_id, hidden_at)
+            .await?
+            .ok_or(ApiError::NotFound)
+    }
+
+    /// Operator review queue: reported posts with their report counts.
+    pub async fn list_reported(&self, limit: i64) -> Result<Vec<ReportedPost>, ApiError> {
+        let limit = limit.clamp(1, MAX_LIST_LIMIT);
+        Ok(self.repo.list_reported(limit).await?)
+    }
+}
+
+/// A report of a non-existent post hits the FK — a client error (404), not a fault.
+fn map_report_error(err: sqlx::Error) -> ApiError {
+    if let Some(db_err) = err.as_database_error() {
+        if matches!(db_err.kind(), sqlx::error::ErrorKind::ForeignKeyViolation) {
+            return ApiError::NotFound;
+        }
+    }
+    ApiError::Database(err)
 }
 
 /// A post for a non-existent author hits the FK constraint — that's a client

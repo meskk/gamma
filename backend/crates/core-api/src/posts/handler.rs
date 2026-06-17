@@ -6,15 +6,20 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::auth::AuthUser;
+use crate::auth::{AdminUser, AuthUser};
 use crate::error::ApiError;
-use crate::posts::model::{NewPost, Post};
+use crate::posts::model::{NewPost, Post, ReportRequest, ReportedPost};
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/posts", post(create_post).get(list_posts))
         .route("/posts/:id", get(get_post))
+        // Moderation: any user reports; operators take down / restore / review.
+        .route("/posts/:id/report", post(report))
+        .route("/posts/:id/takedown", post(takedown))
+        .route("/posts/:id/restore", post(restore))
+        .route("/reports", get(list_reports))
 }
 
 #[derive(Deserialize)]
@@ -51,4 +56,41 @@ async fn list_posts(
 ) -> Result<Json<Vec<Post>>, ApiError> {
     let posts = state.posts.list_recent(params.limit).await?;
     Ok(Json(posts))
+}
+
+/// Any authenticated user can report a post (idempotent per reporter).
+async fn report(
+    AuthUser(reporter_id): AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(body): Json<ReportRequest>,
+) -> Result<StatusCode, ApiError> {
+    state.posts.report(id, reporter_id, body.reason).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Operator-only: take a post down (it drops out of the feed and public reads).
+async fn takedown(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Post>, ApiError> {
+    Ok(Json(state.posts.set_visibility(id, true).await?))
+}
+
+/// Operator-only: restore a previously taken-down post.
+async fn restore(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Post>, ApiError> {
+    Ok(Json(state.posts.set_visibility(id, false).await?))
+}
+
+/// Operator-only review queue: reported posts with their report counts.
+async fn list_reports(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ReportedPost>>, ApiError> {
+    Ok(Json(state.posts.list_reported(100).await?))
 }

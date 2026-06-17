@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO post_reports (post_id, reporter_id, reason)\n            VALUES ($1, $2, $3)\n            ON CONFLICT (post_id, reporter_id) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ba3657fbbb9cec6f3a652638b3d8af430869fdba6005a2df0e00367578539370"
+}

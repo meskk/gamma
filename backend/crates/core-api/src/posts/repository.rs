@@ -2,7 +2,9 @@
 //! Same shape as the users repository (concrete struct, `query_as!` checked
 //! queries). Adds `list_recent` to show the multi-row (`fetch_all`) template.
 
-use crate::posts::model::{NewPost, Post};
+use chrono::{DateTime, Utc};
+
+use crate::posts::model::{NewPost, Post, ReportedPost};
 use db::PgPool;
 
 #[derive(Clone)]
@@ -31,13 +33,14 @@ impl PostRepository {
         .await
     }
 
+    /// A single post — but not if it has been taken down (hidden_at set).
     pub async fn get(&self, id: i64) -> Result<Option<Post>, sqlx::Error> {
         sqlx::query_as!(
             Post,
             r#"
             SELECT id, author_id, category, body, created_at, popularity_score
             FROM posts
-            WHERE id = $1
+            WHERE id = $1 AND hidden_at IS NULL
             "#,
             id
         )
@@ -45,14 +48,82 @@ impl PostRepository {
         .await
     }
 
-    /// Most recent posts first, capped by `limit` (the caller clamps the bound).
+    /// Most recent visible posts first, capped by `limit` (the caller clamps it).
     pub async fn list_recent(&self, limit: i64) -> Result<Vec<Post>, sqlx::Error> {
         sqlx::query_as!(
             Post,
             r#"
             SELECT id, author_id, category, body, created_at, popularity_score
             FROM posts
+            WHERE hidden_at IS NULL
             ORDER BY created_at DESC
+            LIMIT $1
+            "#,
+            limit
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    /// Record a report of a post. Idempotent per (post, reporter) — re-reporting
+    /// is a no-op (returns `false`), not amplification. A non-existent post hits
+    /// the FK and surfaces as a 404 at the service.
+    pub async fn report(
+        &self,
+        post_id: i64,
+        reporter_id: i64,
+        reason: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query!(
+            r#"
+            INSERT INTO post_reports (post_id, reporter_id, reason)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (post_id, reporter_id) DO NOTHING
+            "#,
+            post_id,
+            reporter_id,
+            reason
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// Take down (`hidden_at = now()`) or restore (`hidden_at = NULL`) a post.
+    /// Returns the row, or `None` if no such post.
+    pub async fn set_hidden(
+        &self,
+        id: i64,
+        hidden_at: Option<DateTime<Utc>>,
+    ) -> Result<Option<Post>, sqlx::Error> {
+        sqlx::query_as!(
+            Post,
+            r#"
+            UPDATE posts SET hidden_at = $2
+            WHERE id = $1
+            RETURNING id, author_id, category, body, created_at, popularity_score
+            "#,
+            id,
+            hidden_at
+        )
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    /// Reported posts with their report counts, most-reported first (operator
+    /// review queue).
+    pub async fn list_reported(&self, limit: i64) -> Result<Vec<ReportedPost>, sqlx::Error> {
+        sqlx::query_as!(
+            ReportedPost,
+            r#"
+            SELECT
+                p.id AS "post_id!",
+                COUNT(r.id) AS "report_count!",
+                (p.hidden_at IS NOT NULL) AS "hidden!"
+            FROM posts p
+            JOIN post_reports r ON r.post_id = p.id
+            GROUP BY p.id
+            ORDER BY COUNT(r.id) DESC, p.id
             LIMIT $1
             "#,
             limit

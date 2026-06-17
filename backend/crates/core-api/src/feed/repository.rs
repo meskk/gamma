@@ -36,6 +36,7 @@ impl FeedRepository {
                 FROM posts p
                 JOIN follows f ON f.followee_id = p.author_id
                 WHERE f.follower_id = $1 AND p.created_at > (SELECT t FROM cutoff)
+                  AND p.hidden_at IS NULL
                 ORDER BY p.created_at DESC
                 LIMIT 800
             ),
@@ -43,6 +44,7 @@ impl FeedRepository {
                 SELECT id, author_id, category, body, created_at, popularity_score
                 FROM posts
                 WHERE category = ANY($2) AND created_at > (SELECT t FROM cutoff)
+                  AND hidden_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT 800
             ),
@@ -50,6 +52,7 @@ impl FeedRepository {
                 SELECT id, author_id, category, body, created_at, popularity_score
                 FROM posts
                 WHERE created_at > (SELECT t FROM cutoff)
+                  AND hidden_at IS NULL
                 ORDER BY popularity_score DESC
                 LIMIT 400
             ),
