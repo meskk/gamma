@@ -35,9 +35,14 @@ pub use state::AppState;
 const MAX_BODY_BYTES: usize = 256 * 1024;
 
 /// Build the full router with all routes mounted and state injected.
+///
+/// The API surface is versioned under `/v1` so the frontend and the (Phase-1b)
+/// advertiser API can rely on stable paths — a breaking change ships as `/v2`
+/// rather than a coordinated deploy. `/health` and `/ready` stay UNVERSIONED:
+/// they are operational probes (load balancers / orchestrators) that belong at a
+/// fixed path.
 pub fn app(state: AppState) -> Router {
-    Router::new()
-        .merge(health::routes())
+    let v1 = Router::new()
         .merge(auth::handler::routes())
         .merge(users::handler::routes())
         .merge(posts::handler::routes())
@@ -46,7 +51,11 @@ pub fn app(state: AppState) -> Router {
         .merge(interactions::handler::routes())
         .merge(gems::handler::routes())
         .merge(media::handler::routes())
-        .merge(signals::handler::routes())
+        .merge(signals::handler::routes());
+
+    Router::new()
+        .merge(health::routes())
+        .nest("/v1", v1)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
 }

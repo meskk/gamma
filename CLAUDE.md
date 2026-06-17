@@ -180,8 +180,11 @@ Next steps (rough priority):
    and consume `bindings/`.
 3. **Multi-bitrate HLS ladder** + prod HLS delivery decision (already past 1a MVP).
 4. **Smaller, tracked**: apply `time_decay_lambda` (or document it deferred);
-   add `/v1` API prefix; request-tracing/metrics; FKs on `interaction_events`;
-   provision MinIO+Redis in CI so the payment/media tests run there.
+   request-tracing/metrics; FKs on `interaction_events`.
+
+Done since the audit follow-up: MinIO+Redis+ffmpeg in CI (full media/payment path
+now runs in CI); the API is versioned under `/v1` (health/ready stay unversioned).
+The repo is a private GitHub remote `meskk/gamma` (monorepo backend/ + frontend/).
 
 Working style: deliberate, ONE reviewable step at a time; verify (tests + fmt +
 clippy green) before moving on; commit each checkpoint. Tokenomics knobs are in

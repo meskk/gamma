@@ -51,7 +51,7 @@ async fn upload_finalize_playback_roundtrip(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/media")
+                .uri("/v1/media")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
@@ -84,7 +84,7 @@ async fn upload_finalize_playback_roundtrip(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/media/{asset_id}/finalize"))
+                .uri(format!("/v1/media/{asset_id}/finalize"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -104,7 +104,7 @@ async fn upload_finalize_playback_roundtrip(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/media/{asset_id}"))
+                .uri(format!("/v1/media/{asset_id}"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -141,7 +141,7 @@ async fn finalize_without_upload_is_rejected(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/media")
+                .uri("/v1/media")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
@@ -160,7 +160,7 @@ async fn finalize_without_upload_is_rejected(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/media/{asset_id}/finalize"))
+                .uri(format!("/v1/media/{asset_id}/finalize"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -182,7 +182,7 @@ async fn content_type_must_match_kind(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/media")
+                .uri("/v1/media")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
@@ -201,7 +201,7 @@ async fn create_media_requires_authentication(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/media")
+                .uri("/v1/media")
                 .header("content-type", "application/json")
                 .body(Body::from(body.to_string()))
                 .unwrap(),
@@ -272,7 +272,7 @@ async fn transcode_produces_hls_in_storage(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/media")
+                .uri("/v1/media")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
@@ -301,7 +301,7 @@ async fn transcode_produces_hls_in_storage(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/media/{asset_id}/finalize"))
+                .uri(format!("/v1/media/{asset_id}/finalize"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -314,7 +314,7 @@ async fn transcode_produces_hls_in_storage(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/media/{asset_id}/transcode"))
+                .uri(format!("/v1/media/{asset_id}/transcode"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -607,7 +607,7 @@ async fn http_manifest_is_402_until_unlocked(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/media/{asset_id}/manifest"))
+                .uri(format!("/v1/media/{asset_id}/manifest"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -621,7 +621,7 @@ async fn http_manifest_is_402_until_unlocked(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/media/{asset_id}/manifest"))
+                .uri(format!("/v1/media/{asset_id}/manifest"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -636,7 +636,7 @@ async fn get_media_json(router: &axum::Router, id: i64, token: &str) -> Value {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/media/{id}"))
+                .uri(format!("/v1/media/{id}"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -664,7 +664,7 @@ async fn get_media_requires_auth_and_gates_raw_url(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/media/{asset_id}"))
+                .uri(format!("/v1/media/{asset_id}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -692,7 +692,7 @@ async fn get_media_requires_auth_and_gates_raw_url(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/media/{asset_id}/unlock"))
+                .uri(format!("/v1/media/{asset_id}/unlock"))
                 .header("authorization", format!("Bearer {stranger_token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -722,7 +722,7 @@ async fn finalize_and_transcode_are_owner_only(pool: PgPool) {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(format!("/media/{asset_id}/{action}"))
+                    .uri(format!("/v1/media/{asset_id}/{action}"))
                     .header("authorization", format!("Bearer {attacker_token}"))
                     .body(Body::empty())
                     .unwrap(),

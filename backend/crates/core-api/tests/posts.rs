@@ -63,7 +63,7 @@ async fn http_create_uses_authenticated_author(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/posts")
+                .uri("/v1/posts")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
@@ -86,7 +86,7 @@ async fn http_create_uses_authenticated_author(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/posts/{id}"))
+                .uri(format!("/v1/posts/{id}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -103,7 +103,7 @@ async fn create_post_requires_authentication(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/posts")
+                .uri("/v1/posts")
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::json!({ "body": "hi" }).to_string()))
                 .unwrap(),
@@ -123,7 +123,7 @@ async fn empty_body_is_rejected(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/posts")
+                .uri("/v1/posts")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))

@@ -83,7 +83,7 @@ async fn http_feed_boosts_category_match(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/users/{viewer}/feed"))
+                .uri(format!("/v1/users/{viewer}/feed"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -125,7 +125,7 @@ async fn feed_is_self_or_operator(pool: PgPool) {
         async move {
             let mut b = Request::builder()
                 .method("GET")
-                .uri(format!("/users/{viewer}/feed"));
+                .uri(format!("/v1/users/{viewer}/feed"));
             if let Some(t) = auth {
                 b = b.header("authorization", t);
             }

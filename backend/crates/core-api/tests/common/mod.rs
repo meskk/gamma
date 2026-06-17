@@ -29,7 +29,7 @@ pub async fn register(router: &Router, categories: &[&str]) -> (String, i64) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/auth/register")
+                .uri("/v1/auth/register")
                 .header("content-type", "application/json")
                 .body(Body::from(body.to_string()))
                 .unwrap(),

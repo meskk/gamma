@@ -101,7 +101,7 @@ async fn http_record_returns_typed_view(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/interactions")
+                .uri("/v1/interactions")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))

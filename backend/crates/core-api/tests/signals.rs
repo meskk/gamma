@@ -44,7 +44,7 @@ async fn put_signals(
 ) -> axum::http::Response<Body> {
     let mut b = Request::builder()
         .method("PUT")
-        .uri(format!("/posts/{post_id}/signals"))
+        .uri(format!("/v1/posts/{post_id}/signals"))
         .header("content-type", "application/json");
     if let Some(t) = token {
         b = b.header("authorization", format!("Bearer {t}"));

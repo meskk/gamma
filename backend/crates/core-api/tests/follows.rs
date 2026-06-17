@@ -57,7 +57,7 @@ async fn http_follow_unfollow_roundtrip(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri(format!("/me/following/{b}"))
+                .uri(format!("/v1/me/following/{b}"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -72,7 +72,7 @@ async fn http_follow_unfollow_roundtrip(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/users/{a}/following"))
+                .uri(format!("/v1/users/{a}/following"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -89,7 +89,7 @@ async fn http_follow_unfollow_roundtrip(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("DELETE")
-                .uri(format!("/me/following/{b}"))
+                .uri(format!("/v1/me/following/{b}"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -106,7 +106,7 @@ async fn follow_requires_authentication(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri("/me/following/1")
+                .uri("/v1/me/following/1")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -124,7 +124,7 @@ async fn self_follow_is_rejected(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri(format!("/me/following/{a}"))
+                .uri(format!("/v1/me/following/{a}"))
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -143,7 +143,7 @@ async fn following_unknown_user_is_rejected(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("PUT")
-                .uri("/me/following/999999")
+                .uri("/v1/me/following/999999")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),

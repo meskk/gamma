@@ -44,7 +44,7 @@ async fn register(router: &axum::Router, email: &str) -> (i64, String) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/auth/register")
+                .uri("/v1/auth/register")
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::json!({ "email": email, "password": "supersecret" }).to_string(),
@@ -70,7 +70,7 @@ async fn get_user(router: &axum::Router, id: i64) -> axum::http::Response<Body> 
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/users/{id}"))
+                .uri(format!("/v1/users/{id}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -86,7 +86,7 @@ async fn set_verification(
 ) -> axum::http::Response<Body> {
     let mut builder = Request::builder()
         .method("PUT")
-        .uri(format!("/users/{id}/verification"))
+        .uri(format!("/v1/users/{id}/verification"))
         .header("content-type", "application/json");
     if let Some(t) = token {
         builder = builder.header("authorization", format!("Bearer {t}"));

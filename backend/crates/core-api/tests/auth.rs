@@ -38,7 +38,7 @@ async fn register_login_and_authenticated_me(pool: PgPool) {
     // Register.
     let resp = post_json(
         &router,
-        "/auth/register",
+        "/v1/auth/register",
         serde_json::json!({ "email": "Alice@example.com", "password": "supersecret" }),
     )
     .await;
@@ -53,7 +53,7 @@ async fn register_login_and_authenticated_me(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/auth/me")
+                .uri("/v1/auth/me")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -66,7 +66,7 @@ async fn register_login_and_authenticated_me(pool: PgPool) {
     // Login (email is normalised to lowercase) returns a working token too.
     let resp = post_json(
         &router,
-        "/auth/login",
+        "/v1/auth/login",
         serde_json::json!({ "email": "alice@example.com", "password": "supersecret" }),
     )
     .await;
@@ -76,7 +76,7 @@ async fn register_login_and_authenticated_me(pool: PgPool) {
     // Wrong password → 401.
     let resp = post_json(
         &router,
-        "/auth/login",
+        "/v1/auth/login",
         serde_json::json!({ "email": "alice@example.com", "password": "wrong" }),
     )
     .await;
@@ -89,13 +89,13 @@ async fn duplicate_email_conflicts(pool: PgPool) {
     let body = serde_json::json!({ "email": "bob@example.com", "password": "supersecret" });
 
     assert_eq!(
-        post_json(&router, "/auth/register", body.clone())
+        post_json(&router, "/v1/auth/register", body.clone())
             .await
             .status(),
         StatusCode::CREATED
     );
     assert_eq!(
-        post_json(&router, "/auth/register", body).await.status(),
+        post_json(&router, "/v1/auth/register", body).await.status(),
         StatusCode::CONFLICT
     );
 }
@@ -107,7 +107,7 @@ async fn weak_password_and_bad_email_rejected(pool: PgPool) {
     assert_eq!(
         post_json(
             &router,
-            "/auth/register",
+            "/v1/auth/register",
             serde_json::json!({ "email": "c@example.com", "password": "short" }),
         )
         .await
@@ -117,7 +117,7 @@ async fn weak_password_and_bad_email_rejected(pool: PgPool) {
     assert_eq!(
         post_json(
             &router,
-            "/auth/register",
+            "/v1/auth/register",
             serde_json::json!({ "email": "notanemail", "password": "supersecret" }),
         )
         .await
@@ -136,7 +136,7 @@ async fn me_without_or_with_bad_token_is_401(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/auth/me")
+                .uri("/v1/auth/me")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -149,7 +149,7 @@ async fn me_without_or_with_bad_token_is_401(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/auth/me")
+                .uri("/v1/auth/me")
                 .header("authorization", "Bearer deadbeef")
                 .body(Body::empty())
                 .unwrap(),

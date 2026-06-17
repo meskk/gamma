@@ -14,6 +14,11 @@ npm run typecheck    # tsc --noEmit — fails if the backend contract changed un
 
 The backend API runs separately (see `../backend`): `cd ../backend && docker compose up -d && cargo run -p core-api` → http://localhost:8080.
 
+**API base path:** all endpoints are versioned under **`/v1`** (e.g.
+`POST http://localhost:8080/v1/auth/register`). Only `/health` and `/ready` are
+unversioned. Build requests against `/v1` so a future breaking change can ship as
+`/v2` without touching this app.
+
 ## The typed contract (why this is a monorepo)
 
 The backend generates TypeScript types from its Rust request/response types

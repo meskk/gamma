@@ -40,7 +40,7 @@ async fn register(router: &axum::Router, email: &str) -> (i64, String) {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/auth/register")
+                .uri("/v1/auth/register")
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::json!({ "email": email, "password": "supersecret" }).to_string(),
@@ -68,7 +68,7 @@ async fn settle_request(
 ) -> axum::http::Response<Body> {
     let mut builder = Request::builder()
         .method("POST")
-        .uri(format!("/epochs/{epoch_k}/settle"));
+        .uri(format!("/v1/epochs/{epoch_k}/settle"));
     if let Some(t) = token {
         builder = builder.header("authorization", format!("Bearer {t}"));
     }
@@ -282,7 +282,7 @@ async fn http_settle_is_operator_only_then_reads_balance(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(format!("/users/{a}/gems"))
+                .uri(format!("/v1/users/{a}/gems"))
                 .header("authorization", format!("Bearer {op_token}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -308,7 +308,7 @@ async fn gem_balance_is_self_or_operator(pool: PgPool) {
         async move {
             let mut b = Request::builder()
                 .method("GET")
-                .uri(format!("/users/{uid}/gems"));
+                .uri(format!("/v1/users/{uid}/gems"));
             if let Some(t) = auth {
                 b = b.header("authorization", t);
             }
