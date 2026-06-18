@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
     let database_url = std::env::var("DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("DATABASE_URL must be set (see .env.example)"))?;
     let pool = db::connect(&database_url, 5).await?;
-    let settlement = SettlementService::new(pool);
+    let settlement = SettlementService::with_econ(pool, core_api::load_econ_params());
 
     tracing::info!("settlement scheduler started (lookback {LOOKBACK} epochs)");
     loop {

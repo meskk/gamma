@@ -26,11 +26,39 @@ mod health;
 use axum::extract::DefaultBodyLimit;
 use axum::http::Request;
 use axum::Router;
+use econ_params::EconParams;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 pub use state::AppState;
+
+/// Load the economic parameters from the TOML file at `$GAMMA_ECON_PARAMS`, or the
+/// built-in defaults if it is unset. Loaded ONCE at startup and threaded into the
+/// services that need it, so a deployment can ship a versioned parameter set
+/// without a code change (ADR 0003) — this is what makes "the knobs are config,
+/// not hardcoded constants" true at runtime rather than aspirational.
+pub fn load_econ_params() -> EconParams {
+    match std::env::var("GAMMA_ECON_PARAMS") {
+        Ok(path) => {
+            let toml = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("GAMMA_ECON_PARAMS={path}: cannot read: {e}"));
+            let params = EconParams::from_toml_str(&toml)
+                .unwrap_or_else(|e| panic!("GAMMA_ECON_PARAMS={path}: invalid: {e}"));
+            tracing::info!(
+                path,
+                version = params.version,
+                "loaded econ params from file"
+            );
+            params
+        }
+        Err(_) => {
+            let params = EconParams::default();
+            tracing::info!(version = params.version, "using default econ params");
+            params
+        }
+    }
+}
 
 /// One tracing span per HTTP request, carrying the method, path, and the
 /// `x-request-id` (set by `SetRequestIdLayer` just outside this) so every log line

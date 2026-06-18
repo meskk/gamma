@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use domain::Epoch;
+use econ_params::EconParams;
 use storage::Storage;
 use uuid::Uuid;
 
@@ -32,14 +33,28 @@ pub struct MediaService {
     repo: MediaRepository,
     storage: Storage,
     queue: TranscodeQueue,
+    econ: EconParams,
 }
 
 impl MediaService {
+    /// Construct with the default economic parameters (tests, workers).
     pub fn new(pool: PgPool, storage: Storage, queue: TranscodeQueue) -> Self {
+        Self::with_econ(pool, storage, queue, EconParams::default())
+    }
+
+    /// Construct with a specific (e.g. config-loaded) parameter set — used by the
+    /// API so the unlock split honours the configured knobs, not the inline default.
+    pub fn with_econ(
+        pool: PgPool,
+        storage: Storage,
+        queue: TranscodeQueue,
+        econ: EconParams,
+    ) -> Self {
         Self {
             repo: MediaRepository::new(pool),
             storage,
             queue,
+            econ,
         }
     }
 
@@ -197,9 +212,9 @@ impl MediaService {
             return Err(ApiError::Validation("owner_already_entitled"));
         }
 
-        // Split per the versioned knobs (content fee + fixed burn); the creator
+        // Split per the configured knobs (content fee + fixed burn); the creator
         // gets the remainder so creator + fee + burn == price exactly.
-        let params = econ_params::EconParams::default();
+        let params = &self.econ;
         let price = asset.unlock_price;
         let company_fee = price * params.content_fee_bps as i64 / 10_000;
         let burned = price * params.transfer_burn_bps as i64 / 10_000;

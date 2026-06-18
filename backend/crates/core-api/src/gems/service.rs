@@ -3,8 +3,10 @@
 
 use std::collections::BTreeSet;
 
+use chrono::Utc;
 use db::PgPool;
 use domain::{Epoch, PtAmount, UserId};
+use econ_params::EconParams;
 use gem_engine::{build_user_inputs, Edge, UserMeta};
 use ledger::{LedgerBackend, PgLedger};
 use settlement::{emission_for, settle_epoch};
@@ -18,21 +20,35 @@ use crate::users::repository::UserRepository;
 #[derive(Clone)]
 pub struct SettlementService {
     pool: PgPool,
+    econ: EconParams,
 }
 
 impl SettlementService {
+    /// Construct with the default economic parameters (tests, workers).
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self::with_econ(pool, EconParams::default())
+    }
+
+    /// Construct with a specific (e.g. config-loaded) parameter set.
+    pub fn with_econ(pool: PgPool, econ: EconParams) -> Self {
+        Self { pool, econ }
     }
 
     /// Settle one epoch. Idempotent: a second call for the same epoch is a no-op.
     pub async fn settle(&self, epoch_k: i64) -> Result<SettlementSummary, ApiError> {
+        // Only CLOSED epochs settle. The current epoch is allowed (it is re-run each
+        // tick and again once it's past), but a FUTURE epoch has had nothing happen
+        // in it — reject it so an operator can't settle a not-yet-real epoch.
+        let current = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i64;
+        if epoch_k > current {
+            return Err(ApiError::Validation("epoch_not_closed"));
+        }
+
         let interactions = InteractionRepository::new(self.pool.clone());
         let users = UserRepository::new(self.pool.clone());
         let gems = GemRepository::new(self.pool.clone());
         let ledger = PgLedger::new(self.pool.clone());
-        // Calibration defaults for now; later loaded from the versioned econ-params.
-        let params = econ_params::EconParams::default();
+        let params = &self.econ;
         let epoch = Epoch(epoch_k as u64);
 
         // 1. Resolved user→user edges for this epoch.
@@ -76,7 +92,7 @@ impl SettlementService {
             .collect();
 
         // 3. Build inputs and decide eligibility.
-        let inputs = build_user_inputs(&edges, &meta, &params);
+        let inputs = build_user_inputs(&edges, &meta, params);
         let user_count = inputs.len() as i32;
         let has_participants = inputs.iter().any(|i| i.verified);
         // The epoch's mint amount. The CALLER decides the source: Phase 1a uses the
@@ -84,7 +100,7 @@ impl SettlementService {
         // mint `(1 − skim) · advertiser_inflow` HERE (ADR 0007), with no change to
         // the settlement worker that distributes it.
         let emission_pt = if has_participants {
-            emission_for(epoch, &params)
+            emission_for(epoch, params)
         } else {
             PtAmount(0)
         };
@@ -110,7 +126,7 @@ impl SettlementService {
         //    under-paid epoch as done. (Earlier this was claim-then-mint, which on
         //    a mid-mint crash permanently under-paid the epoch.)
         if has_participants {
-            settle_epoch(&ledger, epoch, &inputs, &params, emission_pt).await?;
+            settle_epoch(&ledger, epoch, &inputs, params, emission_pt).await?;
         }
         let first_time = gems.claim_epoch(epoch_k, emission, user_count).await?;
 

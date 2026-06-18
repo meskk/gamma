@@ -2,6 +2,7 @@
 //! settle the epoch, and verify gems are minted by weight, conserved, and
 //! idempotent.
 
+use core_api::error::ApiError;
 use core_api::gems::service::SettlementService;
 use core_api::interactions::model::{InteractionType, NewInteraction};
 use core_api::interactions::service::InteractionService;
@@ -266,10 +267,19 @@ async fn older_interactions_decay_and_earn_less(pool: PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn empty_epoch_mints_nothing(pool: PgPool) {
     let svc = SettlementService::new(pool);
-    let summary = svc.settle(123_456).await.unwrap();
+    // A long-past epoch with no interactions: settles, mints nothing.
+    let summary = svc.settle(1).await.unwrap();
     assert_eq!(summary.user_count, 0);
     assert_eq!(summary.emission, 0);
     assert!(!summary.already_settled);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn future_epoch_is_rejected(pool: PgPool) {
+    let svc = SettlementService::new(pool);
+    // An epoch that hasn't happened yet can't be settled (nothing occurred in it).
+    let err = svc.settle(current_epoch() + 365).await.unwrap_err();
+    assert!(matches!(err, ApiError::Validation("epoch_not_closed")));
 }
 
 #[sqlx::test(migrations = "../../migrations")]

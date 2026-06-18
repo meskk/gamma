@@ -38,15 +38,19 @@ impl AppState {
         let storage = Storage::new(StorageConfig::from_env());
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+        // Loaded once from config (or defaults) and threaded into the services that
+        // spend/mint, so the running app uses the configured knobs — not an inline
+        // default (ADR 0003).
+        let econ = crate::load_econ_params();
         let users = UserService::new(pool.clone());
         let ingestion = IngestionQueue::new(&redis_url).expect("valid REDIS_URL");
         let posts = PostService::with_ingestion(pool.clone(), ingestion);
         let follows = FollowService::new(pool.clone());
         let feed = FeedService::new(pool.clone());
         let interactions = InteractionService::new(pool.clone());
-        let gems = SettlementService::new(pool.clone());
+        let gems = SettlementService::with_econ(pool.clone(), econ.clone());
         let queue = TranscodeQueue::new(&redis_url).expect("valid REDIS_URL");
-        let media = MediaService::new(pool.clone(), storage.clone(), queue);
+        let media = MediaService::with_econ(pool.clone(), storage.clone(), queue, econ);
         let auth = AuthService::new(pool.clone());
         let signals = SignalService::new(pool.clone());
         Self {
