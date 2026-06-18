@@ -1,7 +1,14 @@
 -- Append-only money journal. `gem_balances` is a mutable running total and can't
 -- answer "how did this balance get here", reconstruct supply, or be reconciled —
--- which the project's own "auditable" value requires. Every supply mutation now
--- also writes one immutable row here.
+-- which the project's own "auditable" value requires.
+--
+-- The PRODUCTION supply-moving paths write one immutable row here: settlement
+-- (`LedgerBackend::mint_epoch`) and the paid-content unlock (the `credit_tx` /
+-- `debit_tx` / `burn_tx` primitives). NOTE: the bare `LedgerBackend::mint`/`burn`/
+-- `transfer` trait methods are low-level helpers used only by ledger unit tests and
+-- do NOT journal — production never calls them directly. (If they ever gain a
+-- production caller, make them journal too, or route through mint_epoch / the tx
+-- primitives.)
 --
 -- `amount` is SIGNED: positive for a credit/mint, negative for a debit/burn.
 -- `user_id` is NULL only for a pure burn (destruction with no holder).

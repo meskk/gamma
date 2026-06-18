@@ -5,7 +5,12 @@
 //! This is the crate that makes Antonio's "must survive tokenomics changes"
 //! requirement true. See docs/adr/0003-economic-params-are-config.md.
 //!
-//! Defaults are the proposed values from Rebuild Dossier v5 §10. Nothing is locked.
+//! The project targets the v6 economic spine (ADR 0007); v6 KEEPS the 1a weight
+//! math + take-rates and only changes the money rail in Phase 1b. So most defaults
+//! below carry over unchanged, while a few knobs are v5/Phase-1b artifacts not used
+//! by the 1a code yet — `genesis_seed_target_sats` (v5 LP seed; v6 removes it) and
+//! the BTC-sats `burn_scale_sats`/`*_burn` framing — kept until the 1b rebuild
+//! lands. Nothing is locked; a change is a `version` bump, not a code rewrite.
 
 use domain::PT_ONE;
 use serde::{Deserialize, Serialize};

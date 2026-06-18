@@ -84,3 +84,9 @@ jobs:
 
       - name: Test (unit + settlement invariants + DB/Redis/MinIO integration)
         run: cargo test --all
+
+      # `cargo test` regenerates the ts-rs frontend contract (the export_bindings
+      # tests). If the committed bindings drifted from the Rust types, fail — the
+      # contract must be regenerated and committed alongside the API change.
+      - name: Frontend contract is in sync (bindings not drifted)
+        run: git diff --exit-code bindings
