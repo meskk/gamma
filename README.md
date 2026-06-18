@@ -15,7 +15,9 @@ ARCHITECTURE.md, CLAUDE.md   the map + the project model & conventions
 ```
 
 New here? Read **`ARCHITECTURE.md`** for the map and **`CLAUDE.md`** for the
-project model and conventions.
+project model and conventions. **Evaluating this repo?** Start with **`REVIEW.md`**
+— an honest framing of what's built/verified, what's deliberately deferred, and the
+known limitations.
 
 ## Backend (`backend/`)
 
