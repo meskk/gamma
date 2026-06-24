@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::auth::{AdminUser, AuthUser};
 use crate::error::ApiError;
 use crate::posts::model::{NewPost, Post, ReportRequest, ReportedPost};
-use crate::posts::service::BackfillResult;
+use crate::posts::service::{BackfillResult, IngestionStatus};
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
@@ -23,6 +23,8 @@ pub fn routes() -> Router<AppState> {
         .route("/reports", get(list_reports))
         // Operator-only: sweep the existing corpus into the ingestion pipeline.
         .route("/admin/ingestion/backfill", post(backfill_ingestion))
+        // Operator-only: how much of the corpus has been analysed (and by which model).
+        .route("/admin/ingestion/status", get(ingestion_status))
 }
 
 #[derive(Deserialize)]
@@ -126,4 +128,13 @@ async fn backfill_ingestion(
             .backfill_unanalyzed(params.after, params.limit)
             .await?,
     ))
+}
+
+/// Operator-only: a read-only snapshot of ingestion progress over the corpus
+/// (analysed vs not, and a breakdown by model version). No enqueue, no signal shape.
+async fn ingestion_status(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+) -> Result<Json<IngestionStatus>, ApiError> {
+    Ok(Json(state.posts.ingestion_status().await?))
 }
