@@ -1,6 +1,8 @@
 //! Post business logic: validate and normalise input, and translate database
 //! constraint violations into meaningful API errors.
 
+use std::collections::BTreeMap;
+
 use chrono::Utc;
 use serde::Serialize;
 
@@ -23,6 +25,18 @@ const MAX_BACKFILL_LIMIT: i64 = 1000;
 pub struct BackfillResult {
     pub enqueued: i64,
     pub last_id: i64,
+}
+
+/// A snapshot of how far ingestion analysis has progressed over the corpus. Pure
+/// observability for an operator sizing a backfill or watching a re-analysis sweep.
+#[derive(Debug, Serialize)]
+pub struct IngestionStatus {
+    /// Posts that have a `content_signals` row.
+    pub analyzed: i64,
+    /// Visible posts with no signals row yet (what a full backfill would enqueue).
+    pub unanalyzed: i64,
+    /// Analysed-post counts keyed by the model version that produced them.
+    pub by_model_version: BTreeMap<String, i64>,
 }
 
 #[derive(Clone)]
@@ -151,6 +165,21 @@ impl PostService {
             last_id = id;
         }
         Ok(BackfillResult { enqueued, last_id })
+    }
+
+    /// Read-only ingestion progress over the corpus: how many posts are analysed
+    /// vs not, and the analysed counts broken down by model version. Touches no
+    /// signal payload and enqueues nothing (ADR 0006).
+    pub async fn ingestion_status(&self) -> Result<IngestionStatus, ApiError> {
+        let unanalyzed = self.repo.count_unanalyzed_posts().await?;
+        let rows = self.repo.signals_count_by_model_version().await?;
+        let analyzed = rows.iter().map(|(_, count)| count).sum();
+        let by_model_version = rows.into_iter().collect();
+        Ok(IngestionStatus {
+            analyzed,
+            unanalyzed,
+            by_model_version,
+        })
     }
 }
 

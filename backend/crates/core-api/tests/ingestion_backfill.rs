@@ -1,6 +1,7 @@
-//! Tests for the operator-only ingestion backfill endpoint and its query: it
-//! enqueues posts that have no `content_signals` row yet, excludes analysed and
-//! taken-down posts, paginates by id cursor, and is gated to operators.
+//! Tests for the operator-only ingestion admin endpoints: the backfill sweep
+//! (enqueue posts with no `content_signals` row, excluding analysed + taken-down
+//! posts, id-cursor-paged) and the read-only status snapshot (analysed vs not,
+//! broken down by model version). Both are operator-gated.
 
 use core_api::posts::model::NewPost;
 use core_api::posts::repository::PostRepository;
@@ -137,4 +138,72 @@ async fn backfill_endpoint_is_operator_only_and_reports_counts(pool: PgPool) {
     // Resuming past the last id drains the sweep (0 enqueued).
     let body = json_body(backfill(&router, Some(&op_token), &format!("?after={p1}")).await).await;
     assert_eq!(body["enqueued"].as_i64().unwrap(), 0);
+}
+
+async fn status(router: &Router, token: Option<&str>) -> Response<Body> {
+    let mut b = Request::builder()
+        .method("GET")
+        .uri("/v1/admin/ingestion/status");
+    if let Some(t) = token {
+        b = b.header("authorization", format!("Bearer {t}"));
+    }
+    router
+        .clone()
+        .oneshot(b.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+/// The status endpoint is operator-only and reports analysed/unanalysed counts and
+/// a per-model-version breakdown.
+#[sqlx::test(migrations = "../../migrations")]
+async fn status_reports_counts_and_model_version_breakdown(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+
+    let (op_token, op_id) = common::register(&router, &[]).await;
+    sqlx::query!("UPDATE users SET role = 'operator' WHERE id = $1", op_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (user_token, _) = common::register(&router, &[]).await;
+
+    let author = new_author(&pool).await;
+    let p1 = new_post(&pool, author, "a").await;
+    let p2 = new_post(&pool, author, "b").await;
+    let _p3 = new_post(&pool, author, "c").await; // left unanalysed
+
+    let signals = ContentSignalRepository::new(pool.clone());
+    signals
+        .upsert(p1, "heuristic-v0", &json!({}))
+        .await
+        .unwrap();
+    signals
+        .upsert(p2, "real-model-v1", &json!({}))
+        .await
+        .unwrap();
+
+    // Unauthenticated → 401; authenticated non-operator → 403.
+    assert_eq!(
+        status(&router, None).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        status(&router, Some(&user_token)).await.status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // Operator → 200 with the progress snapshot.
+    let resp = status(&router, Some(&op_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
+    assert_eq!(body["analyzed"].as_i64().unwrap(), 2);
+    assert_eq!(body["unanalyzed"].as_i64().unwrap(), 1);
+    assert_eq!(
+        body["by_model_version"]["heuristic-v0"].as_i64().unwrap(),
+        1
+    );
+    assert_eq!(
+        body["by_model_version"]["real-model-v1"].as_i64().unwrap(),
+        1
+    );
 }

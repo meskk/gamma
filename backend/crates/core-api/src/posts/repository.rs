@@ -137,6 +137,41 @@ impl PostRepository {
         .await
     }
 
+    /// How many visible posts have NO `content_signals` row yet — i.e. exactly what
+    /// a full backfill sweep would enqueue. Read-only count for operator status.
+    pub async fn count_unanalyzed_posts(&self) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) AS "count!"
+            FROM posts p
+            LEFT JOIN content_signals cs ON cs.post_id = p.id
+            WHERE cs.post_id IS NULL AND p.hidden_at IS NULL
+            "#
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    /// Count of analysed posts grouped by the `model_version` that produced them.
+    /// Lets an operator watch a re-analysis sweep migrate the corpus from one model
+    /// version to the next. Read-only — counts rows, never reads the signals payload.
+    pub async fn signals_count_by_model_version(&self) -> Result<Vec<(String, i64)>, sqlx::Error> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT model_version, COUNT(*) AS "count!"
+            FROM content_signals
+            GROUP BY model_version
+            ORDER BY model_version
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.model_version, r.count))
+            .collect())
+    }
+
     /// Reported posts with their report counts, most-reported first (operator
     /// review queue).
     pub async fn list_reported(&self, limit: i64) -> Result<Vec<ReportedPost>, sqlx::Error> {
