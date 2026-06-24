@@ -1,4 +1,8 @@
-from gamma_ingestion.analyzer import analyze
+from gamma_ingestion.analyzer import HeuristicAnalyzer
+
+
+def analyze(post: dict) -> dict:
+    return HeuristicAnalyzer().analyze(post)
 
 
 def test_empty_body_is_inert():
@@ -40,3 +44,9 @@ def test_missing_keys_default_safely():
     s = analyze({"id": 5})
     assert s["has_body"] is False
     assert s["declared_category"] is None
+
+
+def test_model_version_is_owned_by_the_analyzer():
+    assert HeuristicAnalyzer().model_version == "heuristic-v0"
+    # Overridable, so the future real model declares its own version intrinsically.
+    assert HeuristicAnalyzer(model_version="real-model-v1").model_version == "real-model-v1"

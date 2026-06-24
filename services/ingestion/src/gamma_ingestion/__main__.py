@@ -10,6 +10,7 @@ import signal
 import sys
 import threading
 
+from .analyzer import HeuristicAnalyzer
 from .api_client import ApiClient
 from .config import Config, ConfigError
 from .queue import IngestionQueue
@@ -34,7 +35,10 @@ def main() -> int:
 
     queue = IngestionQueue(config.redis_url, config.queue_key)
     client = ApiClient(config.api_base_url, config.request_timeout_seconds)
-    worker = Worker(config, queue, client)
+    # The heuristic placeholder for now; P2 replaces this line with a config-driven
+    # factory (GAMMA_ANALYZER=heuristic|model) that selects the real model.
+    analyzer = HeuristicAnalyzer(model_version=config.model_version)
+    worker = Worker(config, queue, client, analyzer)
     try:
         worker.run(stop.is_set)
     finally:
