@@ -90,3 +90,25 @@ jobs:
       # contract must be regenerated and committed alongside the API change.
       - name: Frontend contract is in sync (bindings not drifted)
         run: git diff --exit-code bindings
+
+  # The Python AI-ingestion service (services/ingestion). Its tests are pure —
+  # httpx MockTransport + fakes, no Redis/Postgres — so this job needs no backing
+  # services and runs independently of the Rust workspace above.
+  ingestion-python:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: services/ingestion
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install (editable + dev deps)
+        run: pip install -e '.[dev]'
+
+      - name: Test (pytest)
+        run: pytest -q
