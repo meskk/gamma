@@ -2,6 +2,7 @@
 //! constraint violations into meaningful API errors.
 
 use chrono::Utc;
+use serde::Serialize;
 
 use crate::error::ApiError;
 use crate::posts::model::{NewPost, Post, ReportedPost};
@@ -13,6 +14,16 @@ use db::PgPool;
 const MAX_LIST_LIMIT: i64 = 200;
 /// Hard cap on a report reason's length.
 const MAX_REASON_LEN: usize = 500;
+/// Hard cap on how many posts one backfill page enqueues (the operator paginates).
+const MAX_BACKFILL_LIMIT: i64 = 1000;
+
+/// Result of one backfill page: how many ids were enqueued, and the cursor to
+/// resume from (`?after=`). `enqueued == 0` means the sweep is drained.
+#[derive(Debug, Serialize)]
+pub struct BackfillResult {
+    pub enqueued: i64,
+    pub last_id: i64,
+}
 
 #[derive(Clone)]
 pub struct PostService {
@@ -108,6 +119,38 @@ impl PostService {
     pub async fn list_reported(&self, limit: i64) -> Result<Vec<ReportedPost>, ApiError> {
         let limit = limit.clamp(1, MAX_LIST_LIMIT);
         Ok(self.repo.list_reported(limit).await?)
+    }
+
+    /// Enqueue a page of not-yet-analysed posts so the ingestion pipeline can sweep
+    /// the existing corpus — which it otherwise never sees, since `create` is the
+    /// only other producer. ENQUEUE-ONLY: it never writes `content_signals` and
+    /// never reads signal contents, so no signal shape is touched and the API still
+    /// owns the database (ADR 0006). Safe to repeat: already-analysed posts are
+    /// filtered out and duplicate enqueues are harmless (the consumer upserts).
+    /// Paginate with the returned `last_id` (as `after`) until `enqueued == 0`.
+    pub async fn backfill_unanalyzed(
+        &self,
+        after_id: i64,
+        limit: i64,
+    ) -> Result<BackfillResult, ApiError> {
+        let queue = self
+            .ingestion
+            .as_ref()
+            .ok_or_else(|| ApiError::Internal("ingestion queue not configured".into()))?;
+        let limit = limit.clamp(1, MAX_BACKFILL_LIMIT);
+        let ids = self.repo.unanalyzed_post_ids(after_id, limit).await?;
+
+        let mut enqueued = 0i64;
+        let mut last_id = after_id;
+        for id in ids {
+            queue
+                .enqueue(id)
+                .await
+                .map_err(|err| ApiError::Internal(format!("backfill enqueue failed: {err}")))?;
+            enqueued += 1;
+            last_id = id;
+        }
+        Ok(BackfillResult { enqueued, last_id })
     }
 }
 
