@@ -56,6 +56,77 @@ async fn put_signals(
         .unwrap()
 }
 
+async fn get_signals(
+    router: &axum::Router,
+    post_id: i64,
+    token: Option<&str>,
+) -> axum::http::Response<Body> {
+    let mut b = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/posts/{post_id}/signals"));
+    if let Some(t) = token {
+        b = b.header("authorization", format!("Bearer {t}"));
+    }
+    router
+        .clone()
+        .oneshot(b.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn signals_read_back_is_operator_only(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let post_id = seed_post(&pool).await;
+
+    let (op_token, op_id) = common::register(&router, &[]).await;
+    sqlx::query!("UPDATE users SET role = 'operator' WHERE id = $1", op_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (user_token, _) = common::register(&router, &[]).await;
+
+    // No signals yet → 404 (even for the operator).
+    assert_eq!(
+        get_signals(&router, post_id, Some(&op_token))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // Write some, then read them back.
+    put_signals(
+        &router,
+        post_id,
+        Some(&op_token),
+        json!({ "model_version": "heuristic-v0", "signals": { "word_count": 7 } }),
+    )
+    .await;
+
+    // Unauthenticated → 401; non-operator → 403.
+    assert_eq!(
+        get_signals(&router, post_id, None).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get_signals(&router, post_id, Some(&user_token))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // Operator → 200 with the stored row.
+    let resp = get_signals(&router, post_id, Some(&op_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["post_id"].as_i64().unwrap(), post_id);
+    assert_eq!(v["model_version"], "heuristic-v0");
+    assert_eq!(v["signals"]["word_count"].as_i64().unwrap(), 7);
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn signals_writeback_is_operator_only_and_round_trips(pool: PgPool) {
     let router = app(AppState::new(pool.clone()));
