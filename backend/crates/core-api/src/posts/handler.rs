@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::auth::{AdminUser, AuthUser};
 use crate::error::ApiError;
 use crate::posts::model::{NewPost, Post, ReportRequest, ReportedPost};
+use crate::posts::service::BackfillResult;
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
@@ -20,6 +21,21 @@ pub fn routes() -> Router<AppState> {
         .route("/posts/:id/takedown", post(takedown))
         .route("/posts/:id/restore", post(restore))
         .route("/reports", get(list_reports))
+        // Operator-only: sweep the existing corpus into the ingestion pipeline.
+        .route("/admin/ingestion/backfill", post(backfill_ingestion))
+}
+
+#[derive(Deserialize)]
+struct BackfillParams {
+    /// Resume cursor: only posts with id greater than this are considered.
+    #[serde(default)]
+    after: i64,
+    #[serde(default = "default_backfill_limit")]
+    limit: i64,
+}
+
+fn default_backfill_limit() -> i64 {
+    500
 }
 
 #[derive(Deserialize)]
@@ -93,4 +109,21 @@ async fn list_reports(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ReportedPost>>, ApiError> {
     Ok(Json(state.posts.list_reported(100).await?))
+}
+
+/// Operator-only: enqueue not-yet-analysed posts so the ingestion pipeline sweeps
+/// the existing corpus. Paginate by calling with `?after=<last_id>` until the
+/// response reports `enqueued == 0`. Enqueue-only — it never touches the signal
+/// shape or the feed (ADR 0006).
+async fn backfill_ingestion(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+    Query(params): Query<BackfillParams>,
+) -> Result<Json<BackfillResult>, ApiError> {
+    Ok(Json(
+        state
+            .posts
+            .backfill_unanalyzed(params.after, params.limit)
+            .await?,
+    ))
 }

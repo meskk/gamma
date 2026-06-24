@@ -110,6 +110,33 @@ impl PostRepository {
         .await
     }
 
+    /// Post ids with NO `content_signals` row yet (and not taken down), id-ordered,
+    /// after a cursor, capped by `limit`. The backfill producer: the existing corpus
+    /// is otherwise invisible to the ingestion pipeline, which only sees NEW posts.
+    /// Read-only — it selects ids; it never touches the signals payload or the feed.
+    pub async fn unanalyzed_post_ids(
+        &self,
+        after_id: i64,
+        limit: i64,
+    ) -> Result<Vec<i64>, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT p.id AS "id!"
+            FROM posts p
+            LEFT JOIN content_signals cs ON cs.post_id = p.id
+            WHERE cs.post_id IS NULL
+              AND p.hidden_at IS NULL
+              AND p.id > $1
+            ORDER BY p.id
+            LIMIT $2
+            "#,
+            after_id,
+            limit
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
     /// Reported posts with their report counts, most-reported first (operator
     /// review queue).
     pub async fn list_reported(&self, limit: i64) -> Result<Vec<ReportedPost>, sqlx::Error> {
