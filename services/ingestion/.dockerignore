@@ -1,0 +1,13 @@
+# Keep the build context small and reproducible (deps come from requirements.lock).
+.venv/
+.venv-verify/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+.git/
+tests/
+RUNBOOK.md
