@@ -15,10 +15,14 @@ from typing import Callable
 from .analyzer import Analyzer
 from .api_client import ApiClient, AuthError
 from .config import Config
+from .metrics import Metrics
 from .queue import IngestionQueue
 from .retry import retry_transient
 
 log = logging.getLogger("gamma_ingestion")
+
+# Emit a metrics summary log every this many processed posts (plus once at shutdown).
+_SUMMARY_EVERY = 100
 
 
 def process_post(client: ApiClient, post_id: int, analyzer: Analyzer, token: str) -> str:
@@ -50,6 +54,7 @@ class Worker:
         self._client = client
         self._analyzer = analyzer
         self._token: str | None = None
+        self.metrics = Metrics()
 
     def _ensure_token(self) -> str:
         if self._token is None:
@@ -102,14 +107,20 @@ class Worker:
                 continue  # idle timeout — re-check the stop flag and block again
             try:
                 outcome = self.process(post_id)
+                self.metrics.record_outcome(outcome)
                 log.info("post %s: %s", post_id, outcome)
             except Exception as exc:  # noqa: BLE001 — one bad post must not kill the loop
                 # Quarantine, don't silently drop: the post is already off the main
                 # LIST, so without this it would be lost with no record.
                 log.exception("post %s: processing failed; dead-lettering", post_id)
+                dead_lettered = False
                 try:
                     self._queue.dead_letter(post_id, repr(exc))
+                    dead_lettered = True
                 except Exception:  # noqa: BLE001 — dead-letter is itself best-effort
                     log.exception("post %s: failed to dead-letter", post_id)
+                self.metrics.record_failure(dead_lettered=dead_lettered)
             processed += 1
-        log.info("ingestion worker stopped (processed %d posts this run)", processed)
+            if processed % _SUMMARY_EVERY == 0:
+                log.info("ingestion metrics: %s", self.metrics.as_dict())
+        log.info("ingestion worker stopped; metrics: %s", self.metrics.as_dict())

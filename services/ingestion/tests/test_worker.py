@@ -168,3 +168,24 @@ def test_run_finishes_in_flight_post_then_stops():
 
     assert 5 in client.signals_written  # in-flight post completed, not lost
     assert 6 not in client.signals_written  # no new post started after stop
+
+
+def test_run_counts_written_and_skipped_in_metrics():
+    client = FakeClient({5: {"id": 5, "body": "hi", "category": None}})  # post 6 absent
+    queue = FakeQueue([5, 6])
+    worker = Worker(make_config(), queue, client, HeuristicAnalyzer())
+    worker.run(queue.drained)
+    assert worker.metrics.written == 1
+    assert worker.metrics.skipped_missing == 1  # post 6 was gone
+    assert worker.metrics.failed == 0
+    assert worker.metrics.total == 2
+
+
+def test_run_counts_dead_lettered_in_metrics():
+    client = FakeClient({5: {"id": 5, "body": "hi", "category": None}}, fail_permanent=True)
+    queue = FakeQueue([5])
+    worker = Worker(make_config(), queue, client, HeuristicAnalyzer())
+    worker.run(queue.drained)
+    assert worker.metrics.failed == 1
+    assert worker.metrics.dead_lettered == 1
+    assert worker.metrics.written == 0
