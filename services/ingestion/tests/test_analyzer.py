@@ -1,8 +1,25 @@
-from gamma_ingestion.analyzer import HeuristicAnalyzer
+import pytest
+
+from gamma_ingestion.analyzer import HeuristicAnalyzer, make_analyzer
+from gamma_ingestion.config import Config, ConfigError
 
 
 def analyze(post: dict) -> dict:
     return HeuristicAnalyzer().analyze(post)
+
+
+def _config(analyzer: str = "heuristic", model_version: str = "heuristic-v0") -> Config:
+    return Config(
+        redis_url="redis://x",
+        queue_key="gamma:ingestion",
+        api_base_url="http://x/v1",
+        operator_email="op@example.com",
+        operator_password="pw",
+        model_version=model_version,
+        poll_timeout_seconds=1.0,
+        request_timeout_seconds=1.0,
+        analyzer=analyzer,
+    )
 
 
 def test_empty_body_is_inert():
@@ -50,3 +67,19 @@ def test_model_version_is_owned_by_the_analyzer():
     assert HeuristicAnalyzer().model_version == "heuristic-v0"
     # Overridable, so the future real model declares its own version intrinsically.
     assert HeuristicAnalyzer(model_version="real-model-v1").model_version == "real-model-v1"
+
+
+def test_factory_builds_heuristic_with_configured_version():
+    a = make_analyzer(_config(analyzer="heuristic", model_version="heuristic-v0"))
+    assert isinstance(a, HeuristicAnalyzer)
+    assert a.model_version == "heuristic-v0"
+
+
+def test_factory_model_branch_fails_fast_until_built():
+    with pytest.raises(NotImplementedError):
+        make_analyzer(_config(analyzer="model"))
+
+
+def test_factory_rejects_unknown_analyzer():
+    with pytest.raises(ConfigError):
+        make_analyzer(_config(analyzer="bogus"))

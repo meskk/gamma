@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from typing import Protocol
 
+from .config import Config, ConfigError
+
 
 class Analyzer(Protocol):
     """A content analyser: derives signals from a post and names its own version.
@@ -77,3 +79,24 @@ class HeuristicAnalyzer:
             # heuristic does not infer topics — that's the real model's job, later.
             "declared_category": post.get("category"),
         }
+
+
+def make_analyzer(config: Config) -> Analyzer:
+    """Select the analyser implementation from config (``GAMMA_ANALYZER``).
+
+    THE SWAP POINT. Flipping ``GAMMA_ANALYZER=model`` — once the model-runtime layer
+    exists (P18) — replaces the heuristic with the real model and the worker never
+    changes. The heuristic takes its label from ``GAMMA_MODEL_VERSION``; the real
+    model will declare its own intrinsically, so selector and label can't drift.
+    """
+    choice = config.analyzer
+    if choice == "heuristic":
+        return HeuristicAnalyzer(model_version=config.model_version)
+    if choice == "model":
+        raise NotImplementedError(
+            "GAMMA_ANALYZER=model: the real model analyser is not built yet. This is "
+            "the single seam the Mac Studio / rented GPU fills (P18) — construct the "
+            "model here (weights path, device, batch size) as an Analyzer impl that "
+            "declares its own model_version. Until then run with GAMMA_ANALYZER=heuristic."
+        )
+    raise ConfigError(f"GAMMA_ANALYZER must be 'heuristic' or 'model', got {choice!r}")

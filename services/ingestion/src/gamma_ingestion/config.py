@@ -29,6 +29,10 @@ class Config:
     # process responsive to shutdown signals without busy-spinning on an empty queue.
     poll_timeout_seconds: float
     request_timeout_seconds: float
+    # Which analyser the factory builds: "heuristic" (default placeholder) or
+    # "model" (the real model — fails fast until the GPU/model layer exists).
+    # Has a default so it can stay last in the dataclass; from_env always sets it.
+    analyzer: str = "heuristic"
 
     @staticmethod
     def from_env(environ: dict[str, str] | None = None) -> "Config":
@@ -51,6 +55,7 @@ class Config:
             model_version=env.get("GAMMA_MODEL_VERSION", "heuristic-v0"),
             poll_timeout_seconds=_float(env, "GAMMA_POLL_TIMEOUT_SECONDS", 5.0),
             request_timeout_seconds=_float(env, "GAMMA_REQUEST_TIMEOUT_SECONDS", 10.0),
+            analyzer=env.get("GAMMA_ANALYZER", "heuristic"),
         )
 
 
