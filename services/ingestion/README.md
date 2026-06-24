@@ -50,8 +50,23 @@ Requires Python ≥ 3.11.
 cd services/ingestion
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e '.[dev]'          # latest compatible deps, for iterating
 pytest
+```
+
+For a **reproducible** install (CI, and the eventual Mac Studio) use the committed
+hashed lock instead — the exact versions that pass CI:
+
+```sh
+pip install -r requirements.lock
+pip install -e . --no-deps
+```
+
+Regenerate the lock after changing dependencies in `pyproject.toml`:
+
+```sh
+pip install pip-tools
+pip-compile --all-extras --generate-hashes --output-file requirements.lock pyproject.toml
 ```
 
 ## Run against a local stack
