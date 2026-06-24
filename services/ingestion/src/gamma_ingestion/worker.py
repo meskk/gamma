@@ -78,13 +78,24 @@ class Worker:
         )
 
     def run(self, should_stop: Callable[[], bool]) -> None:
-        """Loop until ``should_stop()`` returns True (set by a shutdown signal)."""
+        """Consume until ``should_stop()`` returns True (set by a SIGINT/SIGTERM
+        handler), then shut down gracefully.
+
+        Graceful-shutdown guarantees: the stop flag is checked only at the top of the
+        loop, so a post already popped is ALWAYS finished (written or dead-lettered)
+        before exit — never half-done and never lost back off the LIST — and no NEW
+        post is started once stopping. Worst-case shutdown latency while idle is one
+        ``poll_timeout_seconds`` (the blocking BRPOP). Per-call bounding relies on the
+        API timeout (``request_timeout_seconds``); a future model analyser must
+        likewise bound its own inference so an in-flight call can't stall shutdown
+        (the supervisor's SIGKILL is the final backstop)."""
         self._ensure_token()
         log.info(
             "ingestion worker started; consuming %s with analyzer %s",
             self._config.queue_key,
             self._analyzer.model_version,
         )
+        processed = 0
         while not should_stop():
             post_id = self._queue.pop(self._config.poll_timeout_seconds)
             if post_id is None:
@@ -100,4 +111,5 @@ class Worker:
                     self._queue.dead_letter(post_id, repr(exc))
                 except Exception:  # noqa: BLE001 — dead-letter is itself best-effort
                     log.exception("post %s: failed to dead-letter", post_id)
-        log.info("ingestion worker stopped")
+            processed += 1
+        log.info("ingestion worker stopped (processed %d posts this run)", processed)

@@ -145,3 +145,26 @@ def test_run_dead_letters_a_permanently_failing_post():
     worker.run(queue.drained)
     assert queue.dead_lettered == [5]
     assert 5 not in client.signals_written
+
+
+def test_run_finishes_in_flight_post_then_stops():
+    # Graceful shutdown: a stop requested DURING processing (simulating a SIGTERM
+    # mid-analysis) lets the in-flight post finish, but no new post is started.
+    stop = {"flag": False}
+
+    class StopDuringAnalyze:
+        model_version = "slow-v0"
+
+        def analyze(self, post: dict) -> dict:
+            stop["flag"] = True  # the signal arrives while we're analysing post 5
+            return {"ok": True}
+
+    client = FakeClient(
+        {5: {"id": 5, "body": "a", "category": None}, 6: {"id": 6, "body": "b", "category": None}}
+    )
+    queue = FakeQueue([5, 6])
+    worker = Worker(make_config(), queue, client, StopDuringAnalyze())
+    worker.run(lambda: stop["flag"])
+
+    assert 5 in client.signals_written  # in-flight post completed, not lost
+    assert 6 not in client.signals_written  # no new post started after stop
