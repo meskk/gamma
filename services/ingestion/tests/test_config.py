@@ -48,3 +48,20 @@ def test_api_base_url_trailing_slash_is_stripped():
 def test_non_numeric_timeout_raises():
     with pytest.raises(ConfigError):
         Config.from_env(dict(REQUIRED, GAMMA_POLL_TIMEOUT_SECONDS="abc"))
+
+
+def test_retry_knobs_default_and_override():
+    c = Config.from_env(dict(REQUIRED))
+    assert c.retry_attempts == 3
+    assert c.retry_base_delay_seconds == 0.5
+
+    c = Config.from_env(
+        dict(REQUIRED, GAMMA_RETRY_ATTEMPTS="5", GAMMA_RETRY_BASE_DELAY_SECONDS="0.1")
+    )
+    assert c.retry_attempts == 5
+    assert c.retry_base_delay_seconds == 0.1
+
+
+def test_non_integer_retry_attempts_raises():
+    with pytest.raises(ConfigError):
+        Config.from_env(dict(REQUIRED, GAMMA_RETRY_ATTEMPTS="3.5"))

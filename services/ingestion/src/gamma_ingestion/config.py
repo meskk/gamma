@@ -33,6 +33,10 @@ class Config:
     # "model" (the real model — fails fast until the GPU/model layer exists).
     # Has a default so it can stay last in the dataclass; from_env always sets it.
     analyzer: str = "heuristic"
+    # Retry policy for transient (network / 5xx) API failures. attempts == total
+    # tries (1 = no retry); base_delay seeds the exponential backoff (with jitter).
+    retry_attempts: int = 3
+    retry_base_delay_seconds: float = 0.5
 
     @staticmethod
     def from_env(environ: dict[str, str] | None = None) -> "Config":
@@ -56,6 +60,8 @@ class Config:
             poll_timeout_seconds=_float(env, "GAMMA_POLL_TIMEOUT_SECONDS", 5.0),
             request_timeout_seconds=_float(env, "GAMMA_REQUEST_TIMEOUT_SECONDS", 10.0),
             analyzer=env.get("GAMMA_ANALYZER", "heuristic"),
+            retry_attempts=_int(env, "GAMMA_RETRY_ATTEMPTS", 3),
+            retry_base_delay_seconds=_float(env, "GAMMA_RETRY_BASE_DELAY_SECONDS", 0.5),
         )
 
 
@@ -67,3 +73,13 @@ def _float(env: dict[str, str], key: str, default: float) -> float:
         return float(raw)
     except ValueError as exc:
         raise ConfigError(f"{key} must be a number, got {raw!r}") from exc
+
+
+def _int(env: dict[str, str], key: str, default: int) -> int:
+    raw = env.get(key)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{key} must be an integer, got {raw!r}") from exc
