@@ -82,3 +82,17 @@ python -m gamma_ingestion
 
 The worker logs one line per post (`written` / `skipped_missing`) and re-authenticates
 once if its session token expires. Stop it with Ctrl-C (graceful).
+
+## Deploy
+
+The service ships as a [Docker image](./Dockerfile) (the deploy unit for the cloud GPU
+box). Build + run:
+
+```sh
+docker build -t gamma-ingestion .
+docker run --rm --env-file .env gamma-ingestion
+```
+
+See **[RUNBOOK.md](./RUNBOOK.md)** for the full operate-and-swap procedure: configure,
+verify, inspect/replay the dead-letter queue, backfill the corpus, and the steps to
+bring the real model online.
