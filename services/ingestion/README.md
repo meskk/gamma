@@ -51,7 +51,7 @@ cd services/ingestion
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'          # latest compatible deps, for iterating
-pytest
+ruff check . && mypy && pytest   # the same gates CI runs (lint, types, tests)
 ```
 
 For a **reproducible** install (CI, and the eventual Mac Studio) use the committed

@@ -115,5 +115,11 @@ jobs:
           pip install -r requirements.lock
           pip install -e . --no-deps
 
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Type-check (mypy)
+        run: mypy
+
       - name: Test (pytest)
         run: pytest -q

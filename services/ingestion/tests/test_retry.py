@@ -10,7 +10,9 @@ def no_sleep(_delay: float) -> None:
 
 def test_returns_on_first_success_without_sleeping():
     calls = []
-    result = retry_transient(lambda: calls.append(1) or "ok", attempts=3, base_delay=0.5, sleep=no_sleep)
+    result = retry_transient(
+        lambda: calls.append(1) or "ok", attempts=3, base_delay=0.5, sleep=no_sleep
+    )
     assert result == "ok"
     assert len(calls) == 1
 

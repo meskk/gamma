@@ -10,6 +10,7 @@ behind the API); promote one in dev with
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -42,8 +43,8 @@ class Config:
     dead_letter_key: str = "gamma:ingestion:dead"
 
     @staticmethod
-    def from_env(environ: dict[str, str] | None = None) -> "Config":
-        env = os.environ if environ is None else environ
+    def from_env(environ: Mapping[str, str] | None = None) -> Config:
+        env: Mapping[str, str] = os.environ if environ is None else environ
 
         operator_email = env.get("GAMMA_OPERATOR_EMAIL", "").strip()
         operator_password = env.get("GAMMA_OPERATOR_PASSWORD", "")
@@ -70,7 +71,7 @@ class Config:
         )
 
 
-def _float(env: dict[str, str], key: str, default: float) -> float:
+def _float(env: Mapping[str, str], key: str, default: float) -> float:
     raw = env.get(key)
     if raw is None or raw == "":
         return default
@@ -80,7 +81,7 @@ def _float(env: dict[str, str], key: str, default: float) -> float:
         raise ConfigError(f"{key} must be a number, got {raw!r}") from exc
 
 
-def _int(env: dict[str, str], key: str, default: int) -> int:
+def _int(env: Mapping[str, str], key: str, default: int) -> int:
     raw = env.get(key)
     if raw is None or raw == "":
         return default

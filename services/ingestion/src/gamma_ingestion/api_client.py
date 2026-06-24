@@ -47,7 +47,7 @@ class ApiClient:
     def close(self) -> None:
         self._http.close()
 
-    def __enter__(self) -> "ApiClient":
+    def __enter__(self) -> ApiClient:
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -72,7 +72,8 @@ class ApiClient:
             raise TransientError(f"login failed: {resp.status_code}")
         if resp.status_code != 200:
             raise ApiError(f"login failed: {resp.status_code} {resp.text}")
-        return resp.json()["token"]
+        token: str = resp.json()["token"]
+        return token
 
     def get_post(self, post_id: int) -> dict | None:
         """Fetch a post, or ``None`` if it no longer exists (404).
@@ -87,7 +88,8 @@ class ApiClient:
             raise TransientError(f"get_post({post_id}) failed: {resp.status_code}")
         if resp.status_code != 200:
             raise ApiError(f"get_post({post_id}) failed: {resp.status_code} {resp.text}")
-        return resp.json()
+        post: dict = resp.json()
+        return post
 
     def put_signals(self, post_id: int, model_version: str, signals: dict, token: str) -> None:
         """Write back analysis for a post (operator-only). Raises on failure."""
