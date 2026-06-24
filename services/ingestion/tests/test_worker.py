@@ -1,5 +1,5 @@
 from gamma_ingestion.analyzer import HeuristicAnalyzer
-from gamma_ingestion.api_client import AuthError, TransientError
+from gamma_ingestion.api_client import ApiError, AuthError, TransientError
 from gamma_ingestion.config import Config
 from gamma_ingestion.worker import Worker, process_post
 
@@ -24,7 +24,13 @@ class FakeClient:
     model_version they were stamped with), and can reject the token a fixed number
     of times."""
 
-    def __init__(self, posts, fail_auth_times: int = 0, fail_transient_times: int = 0):
+    def __init__(
+        self,
+        posts,
+        fail_auth_times: int = 0,
+        fail_transient_times: int = 0,
+        fail_permanent: bool = False,
+    ):
         self.posts = posts
         self.signals_written: dict[int, dict] = {}
         self.model_versions: dict[int, str] = {}
@@ -32,6 +38,7 @@ class FakeClient:
         self.put_attempts = 0
         self._fail_auth_times = fail_auth_times
         self._fail_transient_times = fail_transient_times
+        self._fail_permanent = fail_permanent
 
     def login(self, email, password) -> str:
         self.login_count += 1
@@ -48,6 +55,8 @@ class FakeClient:
         if self._fail_auth_times > 0:
             self._fail_auth_times -= 1
             raise AuthError("expired")
+        if self._fail_permanent:
+            raise ApiError("permanent 400")
         self.signals_written[post_id] = signals
         self.model_versions[post_id] = model_version
 
@@ -55,9 +64,13 @@ class FakeClient:
 class FakeQueue:
     def __init__(self, items):
         self._items = list(items)
+        self.dead_lettered: list[int] = []
 
     def pop(self, timeout_seconds):
         return self._items.pop(0) if self._items else None
+
+    def dead_letter(self, post_id: int, error: str) -> None:
+        self.dead_lettered.append(post_id)
 
     def drained(self) -> bool:
         return not self._items
@@ -121,3 +134,14 @@ def test_worker_gives_up_after_exhausting_retries():
         raised = True
     assert raised
     assert client.put_attempts == 3  # capped at retry_attempts
+
+
+def test_run_dead_letters_a_permanently_failing_post():
+    # A post that fails permanently is quarantined to the dead-letter list, not
+    # silently dropped (it is already off the main LIST).
+    client = FakeClient({5: {"id": 5, "body": "hi", "category": None}}, fail_permanent=True)
+    queue = FakeQueue([5])
+    worker = Worker(make_config(), queue, client, HeuristicAnalyzer())
+    worker.run(queue.drained)
+    assert queue.dead_lettered == [5]
+    assert 5 not in client.signals_written

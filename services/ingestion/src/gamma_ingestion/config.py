@@ -37,6 +37,9 @@ class Config:
     # tries (1 = no retry); base_delay seeds the exponential backoff (with jitter).
     retry_attempts: int = 3
     retry_base_delay_seconds: float = 0.5
+    # Where a post that still fails after retries is quarantined (defaults to
+    # "<queue_key>:dead"), so failures are inspectable/replayable, not lost.
+    dead_letter_key: str = "gamma:ingestion:dead"
 
     @staticmethod
     def from_env(environ: dict[str, str] | None = None) -> "Config":
@@ -50,9 +53,10 @@ class Config:
                 "(an operator account the write-back authenticates as)."
             )
 
+        queue_key = env.get("GAMMA_INGESTION_QUEUE", "gamma:ingestion")
         return Config(
             redis_url=env.get("REDIS_URL", "redis://localhost:6379"),
-            queue_key=env.get("GAMMA_INGESTION_QUEUE", "gamma:ingestion"),
+            queue_key=queue_key,
             api_base_url=env.get("GAMMA_API_BASE_URL", "http://localhost:8080/v1").rstrip("/"),
             operator_email=operator_email,
             operator_password=operator_password,
@@ -62,6 +66,7 @@ class Config:
             analyzer=env.get("GAMMA_ANALYZER", "heuristic"),
             retry_attempts=_int(env, "GAMMA_RETRY_ATTEMPTS", 3),
             retry_base_delay_seconds=_float(env, "GAMMA_RETRY_BASE_DELAY_SECONDS", 0.5),
+            dead_letter_key=env.get("GAMMA_INGESTION_DEAD_QUEUE", f"{queue_key}:dead"),
         )
 
 

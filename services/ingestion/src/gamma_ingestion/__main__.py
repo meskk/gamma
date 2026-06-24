@@ -35,7 +35,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
-    queue = IngestionQueue(config.redis_url, config.queue_key)
+    queue = IngestionQueue(config.redis_url, config.queue_key, config.dead_letter_key)
     client = ApiClient(config.api_base_url, config.request_timeout_seconds)
     worker = Worker(config, queue, client, analyzer)
     try:

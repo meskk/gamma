@@ -65,3 +65,12 @@ def test_retry_knobs_default_and_override():
 def test_non_integer_retry_attempts_raises():
     with pytest.raises(ConfigError):
         Config.from_env(dict(REQUIRED, GAMMA_RETRY_ATTEMPTS="3.5"))
+
+
+def test_dead_letter_key_derives_from_queue_key():
+    # Default: "<queue_key>:dead".
+    c = Config.from_env(dict(REQUIRED, GAMMA_INGESTION_QUEUE="custom:q"))
+    assert c.dead_letter_key == "custom:q:dead"
+    # Explicit override wins.
+    c = Config.from_env(dict(REQUIRED, GAMMA_INGESTION_DEAD_QUEUE="some:other:dead"))
+    assert c.dead_letter_key == "some:other:dead"
