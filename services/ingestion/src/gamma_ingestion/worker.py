@@ -92,6 +92,12 @@ class Worker:
             try:
                 outcome = self.process(post_id)
                 log.info("post %s: %s", post_id, outcome)
-            except Exception:  # noqa: BLE001 — one bad post must not kill the loop
-                log.exception("post %s: processing failed; skipping", post_id)
+            except Exception as exc:  # noqa: BLE001 — one bad post must not kill the loop
+                # Quarantine, don't silently drop: the post is already off the main
+                # LIST, so without this it would be lost with no record.
+                log.exception("post %s: processing failed; dead-lettering", post_id)
+                try:
+                    self._queue.dead_letter(post_id, repr(exc))
+                except Exception:  # noqa: BLE001 — dead-letter is itself best-effort
+                    log.exception("post %s: failed to dead-letter", post_id)
         log.info("ingestion worker stopped")

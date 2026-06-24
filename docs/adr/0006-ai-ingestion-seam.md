@@ -49,3 +49,9 @@ exists, so we don't lock in the wrong columns prematurely.
   replace the shared operator credential later. See [[0005-bot-gate-is-operator-only]].
 - The ingestion queue, like the transcode queue, is a plain Redis LIST; a stream
   with acks is a later durability upgrade.
+- The Python consumer adds pragmatic durability short of that upgrade: transient
+  failures (network / 5xx) are retried with exponential backoff + jitter, and a post
+  that still fails — or fails permanently (a 4xx) — is pushed to a sibling
+  **dead-letter LIST** `<key>:dead` (default `gamma:ingestion:dead`) as a JSON
+  `{post_id, error}`, rather than being silently dropped off the main LIST. Inspect
+  with `LRANGE`; replay by pushing the ids back onto `gamma:ingestion`.
