@@ -16,6 +16,7 @@ from .analyzer import Analyzer
 from .api_client import ApiClient, AuthError
 from .config import Config
 from .queue import IngestionQueue
+from .retry import retry_transient
 
 log = logging.getLogger("gamma_ingestion")
 
@@ -58,15 +59,23 @@ class Worker:
         return self._token
 
     def process(self, post_id: int) -> str:
-        """Process one post, re-authenticating once if the token has expired."""
+        """Process one post: retry transient (network/5xx) failures with backoff,
+        and re-authenticate once if the token has expired."""
         token = self._ensure_token()
         try:
-            return process_post(self._client, post_id, self._analyzer, token)
+            return self._run_with_retry(post_id, token)
         except AuthError:
             log.info("bearer token rejected; re-authenticating")
             self._token = None
             token = self._ensure_token()
-            return process_post(self._client, post_id, self._analyzer, token)
+            return self._run_with_retry(post_id, token)
+
+    def _run_with_retry(self, post_id: int, token: str) -> str:
+        return retry_transient(
+            lambda: process_post(self._client, post_id, self._analyzer, token),
+            attempts=self._config.retry_attempts,
+            base_delay=self._config.retry_base_delay_seconds,
+        )
 
     def run(self, should_stop: Callable[[], bool]) -> None:
         """Loop until ``should_stop()`` returns True (set by a shutdown signal)."""

@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from gamma_ingestion.api_client import ApiClient, ApiError, AuthError
+from gamma_ingestion.api_client import ApiClient, ApiError, AuthError, TransientError
 
 BASE = "http://test.local/v1"
 
@@ -75,10 +75,32 @@ def test_put_signals_401_raises_auth_error():
             client.put_signals(7, "heuristic-v0", {}, "expired")
 
 
-def test_put_signals_other_error_raises_api_error():
+def test_put_signals_permanent_4xx_raises_api_error():
+    # A permanent client error (e.g. unknown post → 400) is NOT retryable.
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, text="boom")
+        return httpx.Response(400, text="unknown_post")
 
     with client_with(handler) as client:
-        with pytest.raises(ApiError):
+        with pytest.raises(ApiError) as exc:
             client.put_signals(7, "heuristic-v0", {}, "tok-1")
+        assert not isinstance(exc.value, TransientError)
+
+
+def test_5xx_is_transient():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="busy")
+
+    with client_with(handler) as client:
+        with pytest.raises(TransientError):
+            client.get_post(1)
+        with pytest.raises(TransientError):
+            client.put_signals(1, "m", {}, "tok")
+
+
+def test_transport_error_is_transient():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route to host")
+
+    with client_with(handler) as client:
+        with pytest.raises(TransientError):
+            client.get_post(1)

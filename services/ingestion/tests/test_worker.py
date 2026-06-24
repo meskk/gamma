@@ -1,5 +1,5 @@
 from gamma_ingestion.analyzer import HeuristicAnalyzer
-from gamma_ingestion.api_client import AuthError
+from gamma_ingestion.api_client import AuthError, TransientError
 from gamma_ingestion.config import Config
 from gamma_ingestion.worker import Worker, process_post
 
@@ -14,6 +14,8 @@ def make_config() -> Config:
         model_version="heuristic-v0",
         poll_timeout_seconds=0.01,
         request_timeout_seconds=1.0,
+        retry_attempts=3,
+        retry_base_delay_seconds=0.0,  # no real backoff sleeps in tests
     )
 
 
@@ -22,12 +24,14 @@ class FakeClient:
     model_version they were stamped with), and can reject the token a fixed number
     of times."""
 
-    def __init__(self, posts, fail_auth_times: int = 0):
+    def __init__(self, posts, fail_auth_times: int = 0, fail_transient_times: int = 0):
         self.posts = posts
         self.signals_written: dict[int, dict] = {}
         self.model_versions: dict[int, str] = {}
         self.login_count = 0
+        self.put_attempts = 0
         self._fail_auth_times = fail_auth_times
+        self._fail_transient_times = fail_transient_times
 
     def login(self, email, password) -> str:
         self.login_count += 1
@@ -37,6 +41,10 @@ class FakeClient:
         return self.posts.get(post_id)
 
     def put_signals(self, post_id, model_version, signals, token) -> None:
+        self.put_attempts += 1
+        if self._fail_transient_times > 0:
+            self._fail_transient_times -= 1
+            raise TransientError("temporary 5xx")
         if self._fail_auth_times > 0:
             self._fail_auth_times -= 1
             raise AuthError("expired")
@@ -90,3 +98,26 @@ def test_run_drains_queue_then_stops():
     worker.run(queue.drained)
     assert client.signals_written[5]["word_count"] == 2
     assert client.login_count == 1  # one login for the whole run
+
+
+def test_worker_retries_transient_failure_then_succeeds():
+    # Two transient (5xx) put failures, then success — within the 3-attempt budget.
+    client = FakeClient({5: {"id": 5, "body": "hi", "category": None}}, fail_transient_times=2)
+    worker = Worker(make_config(), FakeQueue([]), client, HeuristicAnalyzer())
+    assert worker.process(5) == "written"
+    assert client.put_attempts == 3  # 2 retries + the successful write
+    assert 5 in client.signals_written
+    assert client.login_count == 1  # transient retries do NOT re-login
+
+
+def test_worker_gives_up_after_exhausting_retries():
+    # More transient failures than the attempt budget → the error propagates.
+    client = FakeClient({5: {"id": 5, "body": "hi", "category": None}}, fail_transient_times=5)
+    worker = Worker(make_config(), FakeQueue([]), client, HeuristicAnalyzer())
+    try:
+        worker.process(5)
+        raised = False
+    except TransientError:
+        raised = True
+    assert raised
+    assert client.put_attempts == 3  # capped at retry_attempts
