@@ -107,8 +107,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install (editable + dev deps)
-        run: pip install -e '.[dev]'
+      # Install the EXACT pinned + hashed versions from the committed lock, so CI
+      # (and the eventual Mac Studio install) are reproducible. --no-deps installs
+      # the local package itself without re-resolving its dependencies.
+      - name: Install (pinned deps from the committed lock)
+        run: |
+          pip install -r requirements.lock
+          pip install -e . --no-deps
 
       - name: Test (pytest)
         run: pytest -q
