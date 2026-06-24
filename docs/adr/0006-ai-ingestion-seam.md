@@ -43,8 +43,15 @@ exists, so we don't lock in the wrong columns prematurely.
 - The feed does NOT consume signals yet — that waits until the pipeline's output
   shape is known, so no speculative ranking weights are introduced. Rows simply
   don't exist until the service runs, and the feed falls back to its deterministic
-  ranking. Wiring the feed to read `content_signals` is the next step once the
-  Python side lands.
+  ranking. **The deferred boundary is load-bearing and explicit** (noted in
+  `feed/mod.rs`): until a future ADR (gated on the dossier §4.2 taxonomy) defines
+  ranking consumption, nothing may read `content_signals` in `feed::service::score()`,
+  join it into `feed::repository::candidates()`, add signal-derived fields to `Post`,
+  or add ts-rs derives that would freeze a signal shape into the frontend contract.
+- The signals are write-mostly, but an **operator-only read-back**
+  `GET /v1/posts/:id/signals` exists so the pipeline/operators can inspect exactly
+  what was stored (404 if none yet). `ContentSignal` is Serialize-only — deliberately
+  NOT ts-rs-exported — so reading it back does not freeze the shape either.
 - The write-back is operator-only for now; a dedicated service-account role can
   replace the shared operator credential later. See [[0005-bot-gate-is-operator-only]].
 - The ingestion queue, like the transcode queue, is a plain Redis LIST; a stream
