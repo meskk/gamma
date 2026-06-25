@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, post_id, author_id, body, created_at\n            FROM comments\n            WHERE post_id = $1\n            ORDER BY created_at ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "post_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "author_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "body",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "41961720d52dfd2d543512b1ef46ac3e9fec082598534b7ee7f48cc82fa07887"
+}

@@ -8,6 +8,7 @@
 //! it. That split lets integration tests drive the real router in-process.
 
 pub mod auth;
+pub mod comments;
 pub mod error;
 pub mod feed;
 pub mod follows;
@@ -113,6 +114,7 @@ pub fn app(state: AppState) -> Router {
         .merge(auth::handler::routes())
         .merge(users::handler::routes())
         .merge(posts::handler::routes())
+        .merge(comments::handler::routes())
         .merge(follows::handler::routes())
         .merge(feed::handler::routes())
         .merge(interactions::handler::routes())
