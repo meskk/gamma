@@ -37,6 +37,7 @@ async fn new_post(pool: &PgPool, author: i64, body: &str) -> i64 {
             author_id: author,
             category: None,
             body: body.into(),
+            media_id: None,
         })
         .await
         .expect("post")

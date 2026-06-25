@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            INSERT INTO posts (author_id, category, body)\n            VALUES ($1, $2, $3)\n            RETURNING id, author_id, category, body, created_at, popularity_score\n            ",
+  "query": "\n            INSERT INTO posts (author_id, category, body, media_id)\n            VALUES ($1, $2, $3, $4)\n            RETURNING id, author_id, category, body, created_at, popularity_score, media_id\n            ",
   "describe": {
     "columns": [
       {
@@ -32,13 +32,19 @@
         "ordinal": 5,
         "name": "popularity_score",
         "type_info": "Float8"
+      },
+      {
+        "ordinal": 6,
+        "name": "media_id",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
       "Left": [
         "Int8",
         "Text",
-        "Text"
+        "Text",
+        "Int8"
       ]
     },
     "nullable": [
@@ -47,8 +53,9 @@
       true,
       true,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "0266199142b5cf8cc0044d9cdfaa2a58c59396092fa5097b6a5cf23bef86b9cd"
+  "hash": "7b43db9925cdd60966318e6adba77d40fac35019ef8bbf982dbfc43db0465c7e"
 }
