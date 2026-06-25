@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { token, userId, ready, logout } = useAuth();
+  const { token, userId, ready, logout, isOperator } = useAuth();
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
@@ -31,6 +31,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Link href="/feed">Feed</Link>
             <Link href="/compose">Compose</Link>
             {userId && <Link href={`/users/${userId}`}>Profile</Link>}
+            {isOperator && <Link href="/admin">Admin</Link>}
           </>
         )}
         <span style={{ marginLeft: "auto" }}>

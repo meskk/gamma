@@ -6,8 +6,10 @@ use ts_rs::TS;
 /// A user's authorization role. Maps 1:1 to the Postgres `user_role` enum.
 /// `User` is the default (non-privileged); `Operator` may run admin actions
 /// such as epoch settlement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type, Serialize, TS)]
 #[sqlx(type_name = "user_role", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../bindings/")]
 pub enum Role {
     User,
     Operator,
@@ -17,6 +19,15 @@ pub enum Role {
 /// they hold. Resolved in one query so role checks cost no extra round-trip.
 #[derive(Debug, Clone, Copy)]
 pub struct Principal {
+    pub user_id: i64,
+    pub role: Role,
+}
+
+/// Response for `GET /auth/me`: the current session's user id and role, so the
+/// frontend can gate operator-only navigation and routes.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct CurrentUser {
     pub user_id: i64,
     pub role: Role,
 }
