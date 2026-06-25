@@ -23,6 +23,9 @@ export function PostCard({ post }: { post: Post }) {
       <p style={{ margin: "0.4rem 0", whiteSpace: "pre-wrap" }}>
         {post.body ?? <em>(no text)</em>}
       </p>
+      {post.media_id != null && (
+        <p style={{ margin: "0.2rem 0", fontSize: "0.8rem", color: "#888" }}>📎 media attached</p>
+      )}
       <Link href={`/posts/${post.id}`} style={{ fontSize: "0.85rem" }}>
         Open →
       </Link>
