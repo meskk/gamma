@@ -69,6 +69,36 @@ async fn candidate_set_unions_all_three_sources(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn candidate_set_excludes_taken_down_posts(pool: PgPool) {
+    // Moderation invariant: a taken-down post must drop out of the feed (it is a
+    // user-facing read). See the post-visibility invariant in posts::repository.
+    let viewer = new_user(&pool, vec![]).await;
+    let author = new_user(&pool, vec![]).await;
+    let post_id = new_post(&pool, author, None, "globally visible").await;
+
+    let repo = FeedRepository::new(pool.clone());
+    let before = repo.candidates(viewer, &[]).await.expect("candidates");
+    assert!(
+        before.iter().any(|p| p.id == post_id),
+        "a visible post should be a feed candidate"
+    );
+
+    // Take it down → it must no longer be a candidate from any source.
+    PostRepository::new(pool.clone())
+        .set_hidden(post_id, Some(chrono::Utc::now()))
+        .await
+        .expect("hide");
+    let after = repo
+        .candidates(viewer, &[])
+        .await
+        .expect("candidates after");
+    assert!(
+        !after.iter().any(|p| p.id == post_id),
+        "a taken-down post must not appear in the feed"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn http_feed_boosts_category_match(pool: PgPool) {
     let router = app(AppState::new(pool.clone()));
     // The viewer reads their OWN feed, so they need a session; register with the

@@ -1,6 +1,30 @@
 //! Postgres-backed post repository — the only place that knows posts SQL.
 //! Same shape as the users repository (concrete struct, `query_as!` checked
 //! queries). Adds `list` to show the multi-row (`fetch_all`) template.
+//!
+//! ## Post-visibility invariant (moderation) — READ THIS BEFORE ADDING A QUERY
+//!
+//! A taken-down post has `hidden_at` set (operator action). Every user-facing read
+//! of `posts` — here OR via a `JOIN`/subquery from another domain — MUST exclude
+//! `hidden_at IS NOT NULL`, and every write *attached to* a post MUST refuse a hidden
+//! one. sqlx's compile-time macros can't share a `WHERE` fragment, so this is
+//! enforced per query: when you touch `posts`, add the `hidden_at IS NULL` filter
+//! unless it is an operator-only surface. This invariant has regressed twice
+//! (comments, interactions) — every surface below is now locked by a takedown test.
+//!
+//! Surfaces that MUST filter (all do):
+//!   - `get` / `list` (here) · the three feed CTEs (`feed::repository::candidates`)
+//!   - comment read + write (`comments::repository`)
+//!   - settlement edges (`interactions::repository::edges_for_epoch`) — drops the
+//!     gem-weight of likes on hidden posts, including likes recorded before takedown
+//!   - ingestion backfill / status (`unanalyzed_post_ids`, `count_unanalyzed_posts`,
+//!     `signals_count_by_model_version`)
+//!
+//! Deliberate exceptions:
+//!   - operator surfaces (`list_reported`) intentionally include hidden rows
+//!   - the interaction *write* path stays inert on a hidden post (the post is
+//!     unreadable everywhere and `edges_for_epoch` is the authoritative guard), so
+//!     it is not guarded again at insert time
 
 use chrono::{DateTime, Utc};
 
