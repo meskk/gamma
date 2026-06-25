@@ -5,6 +5,7 @@
 //! axum can clone the state per request.
 
 use crate::auth::AuthService;
+use crate::comments::CommentService;
 use crate::feed::FeedService;
 use crate::follows::FollowService;
 use crate::gems::SettlementService;
@@ -29,6 +30,7 @@ pub struct AppState {
     pub media: MediaService,
     pub auth: AuthService,
     pub signals: SignalService,
+    pub comments: CommentService,
     /// Exposed so the binary can ensure the bucket exists on startup.
     pub storage: Storage,
 }
@@ -53,6 +55,7 @@ impl AppState {
         let media = MediaService::with_econ(pool.clone(), storage.clone(), queue, econ);
         let auth = AuthService::new(pool.clone());
         let signals = SignalService::new(pool.clone());
+        let comments = CommentService::new(pool.clone());
         Self {
             pool,
             users,
@@ -64,6 +67,7 @@ impl AppState {
             media,
             auth,
             signals,
+            comments,
             storage,
         }
     }

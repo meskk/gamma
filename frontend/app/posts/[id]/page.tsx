@@ -9,6 +9,7 @@ import type { Post } from "@contract/Post";
 import type { ReportRequest } from "@contract/ReportRequest";
 
 import { ApiError, apiFetch } from "@/lib/api";
+import { Comments } from "@/components/Comments";
 import { MediaView } from "@/components/MediaView";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 
@@ -98,6 +99,7 @@ export default function PostDetailPage() {
               {reported ? "Reported" : "Report"}
             </button>
           </div>
+          <Comments postId={id} token={token} />
         </article>
       )}
     </div>
