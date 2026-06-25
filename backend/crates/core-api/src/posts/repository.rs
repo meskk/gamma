@@ -1,6 +1,6 @@
 //! Postgres-backed post repository — the only place that knows posts SQL.
 //! Same shape as the users repository (concrete struct, `query_as!` checked
-//! queries). Adds `list_recent` to show the multi-row (`fetch_all`) template.
+//! queries). Adds `list` to show the multi-row (`fetch_all`) template.
 
 use chrono::{DateTime, Utc};
 
@@ -49,16 +49,18 @@ impl PostRepository {
     }
 
     /// Most recent visible posts first, capped by `limit` (the caller clamps it).
-    pub async fn list_recent(&self, limit: i64) -> Result<Vec<Post>, sqlx::Error> {
+    /// When `author_id` is `Some`, only that author's posts (the profile feed).
+    pub async fn list(&self, author_id: Option<i64>, limit: i64) -> Result<Vec<Post>, sqlx::Error> {
         sqlx::query_as!(
             Post,
             r#"
             SELECT id, author_id, category, body, created_at, popularity_score
             FROM posts
-            WHERE hidden_at IS NULL
+            WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)
             ORDER BY created_at DESC
-            LIMIT $1
+            LIMIT $2
             "#,
+            author_id,
             limit
         )
         .fetch_all(&self.pool)
