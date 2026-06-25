@@ -194,6 +194,77 @@ async fn create_offers_post_to_ingestion_queue(pool: PgPool) {
     );
 }
 
+/// Insert a ready media asset owned by `owner_id` and return its id.
+async fn seed_media(pool: &PgPool, owner_id: i64, object_key: &str) -> i64 {
+    sqlx::query_scalar!(
+        "INSERT INTO media_assets (owner_id, kind, object_key, content_type) \
+         VALUES ($1, 'image', $2, 'image/png') RETURNING id",
+        owner_id,
+        object_key
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Create a post over HTTP as the bearer of `token`, optionally attaching `media_id`.
+async fn create_post_http(
+    router: &axum::Router,
+    token: &str,
+    media_id: Option<i64>,
+) -> axum::http::Response<Body> {
+    let body = serde_json::json!({ "body": "with media", "media_id": media_id });
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/posts")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn create_validates_media_ownership(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let (token, author) = common::register(&router, &[]).await;
+    let (_other_token, other) = common::register(&router, &[]).await;
+
+    // Another user's media → 400 unknown_media (and never misreported as a bad author).
+    let other_media = seed_media(&pool, other, "other-key").await;
+    let resp = create_post_http(&router, &token, Some(other_media)).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["error"], "unknown_media");
+
+    // A nonexistent media id → 400 unknown_media.
+    let resp = create_post_http(&router, &token, Some(999_999)).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["error"], "unknown_media");
+
+    // The author's OWN media → 201, with the asset attached.
+    let own_media = seed_media(&pool, author, "own-key").await;
+    let resp = create_post_http(&router, &token, Some(own_media)).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["media_id"].as_i64().unwrap(), own_media);
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn create_attaches_media(pool: PgPool) {
     let author = seed_author(&pool).await;

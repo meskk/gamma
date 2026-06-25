@@ -67,6 +67,12 @@ def test_non_integer_retry_attempts_raises():
         Config.from_env(dict(REQUIRED, GAMMA_RETRY_ATTEMPTS="3.5"))
 
 
+def test_zero_retry_attempts_raises():
+    # attempts < 1 is nonsensical (0 tries) — fail fast at config load, not later.
+    with pytest.raises(ConfigError):
+        Config.from_env(dict(REQUIRED, GAMMA_RETRY_ATTEMPTS="0"))
+
+
 def test_dead_letter_key_derives_from_queue_key():
     # Default: "<queue_key>:dead".
     c = Config.from_env(dict(REQUIRED, GAMMA_INGESTION_QUEUE="custom:q"))

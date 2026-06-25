@@ -28,6 +28,24 @@ pub enum ApiError {
     Internal(String),
 }
 
+impl ApiError {
+    /// Map a foreign-key violation to a caller-chosen error (e.g. `NotFound` or a
+    /// `Validation` code), and any other database failure to `Database`. The one
+    /// place that knows how to recognise an FK violation, so repositories don't
+    /// each re-implement it.
+    pub fn on_fk_violation(err: sqlx::Error, on_fk: ApiError) -> ApiError {
+        if err
+            .as_database_error()
+            .map(|e| matches!(e.kind(), sqlx::error::ErrorKind::ForeignKeyViolation))
+            .unwrap_or(false)
+        {
+            on_fk
+        } else {
+            ApiError::Database(err)
+        }
+    }
+}
+
 impl From<sqlx::Error> for ApiError {
     fn from(err: sqlx::Error) -> Self {
         ApiError::Database(err)

@@ -13,38 +13,42 @@ impl CommentRepository {
         Self { pool }
     }
 
-    /// Insert a comment. A comment for a non-existent post hits the FK constraint,
-    /// surfaced as a 404 by the service.
+    /// Insert a comment — but only when the target post exists AND is visible
+    /// (not taken down). Returns `None` when the post is missing or hidden, which
+    /// the service surfaces as a 404. A non-existent author still hits the FK.
     pub async fn create(
         &self,
         post_id: i64,
         author_id: i64,
         body: &str,
-    ) -> Result<Comment, sqlx::Error> {
+    ) -> Result<Option<Comment>, sqlx::Error> {
         sqlx::query_as!(
             Comment,
             r#"
             INSERT INTO comments (post_id, author_id, body)
-            VALUES ($1, $2, $3)
+            SELECT $1, $2, $3
+            WHERE EXISTS (SELECT 1 FROM posts WHERE id = $1 AND hidden_at IS NULL)
             RETURNING id, post_id, author_id, body, created_at
             "#,
             post_id,
             author_id,
             body
         )
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await
     }
 
-    /// A post's comments, oldest first.
+    /// A visible post's comments, oldest first. Comments on a taken-down
+    /// (`hidden_at` set) post are excluded — moderation hides the thread too.
     pub async fn list_for_post(&self, post_id: i64) -> Result<Vec<Comment>, sqlx::Error> {
         sqlx::query_as!(
             Comment,
             r#"
-            SELECT id, post_id, author_id, body, created_at
-            FROM comments
-            WHERE post_id = $1
-            ORDER BY created_at ASC
+            SELECT c.id, c.post_id, c.author_id, c.body, c.created_at
+            FROM comments c
+            JOIN posts p ON p.id = c.post_id
+            WHERE c.post_id = $1 AND p.hidden_at IS NULL
+            ORDER BY c.created_at ASC
             "#,
             post_id
         )

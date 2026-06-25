@@ -19,7 +19,7 @@ import type { LoginRequest } from "@contract/LoginRequest";
 import type { RegisterRequest } from "@contract/RegisterRequest";
 import type { Role } from "@contract/Role";
 
-import { apiFetch } from "./api";
+import { ApiError, apiFetch } from "./api";
 
 type AuthState = {
   token: string | null;
@@ -58,8 +58,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     loadSession(stored)
-      .catch(() => sessionStorage.removeItem(TOKEN_KEY))
+      // Only evict the stored token on a real 401 (the session is invalid). A
+      // transient 5xx/network blip must NOT log a valid user out.
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 401) {
+          sessionStorage.removeItem(TOKEN_KEY);
+        }
+      })
       .finally(() => setReady(true));
+  }, []);
+
+  // A 401 on any AUTHENTICATED request (signalled by api.ts) means the session
+  // expired — log out globally. logout() only clears state/storage and makes no
+  // fetch, so there is no loop.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onUnauthorized = () => logout();
+    window.addEventListener("gamma:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("gamma:unauthorized", onUnauthorized);
   }, []);
 
   async function login(email: string, password: string) {

@@ -44,6 +44,13 @@ export async function apiFetch<T>(path: string, opts: RequestOptions = {}): Prom
     } catch {
       // Non-JSON error body — keep the status text.
     }
+    // A 401 on an AUTHENTICATED request (one that carried a token) means the
+    // session is no longer valid — signal "logged out" globally. A 401 without
+    // a token (e.g. a bad-password login) is just a failed attempt, not an
+    // eviction. Use a browser event to avoid SSR/module-singleton coupling.
+    if (resp.status === 401 && opts.token && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("gamma:unauthorized"));
+    }
     throw new ApiError(resp.status, code);
   }
 

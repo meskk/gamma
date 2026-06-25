@@ -6,7 +6,7 @@
  */
 export type IngestionStatus = { 
 /**
- * Posts that have a `content_signals` row.
+ * Visible posts that have a `content_signals` row.
  */
 analyzed: bigint, 
 /**

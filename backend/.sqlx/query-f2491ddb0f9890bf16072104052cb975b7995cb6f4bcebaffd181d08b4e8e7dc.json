@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, post_id, author_id, body, created_at\n            FROM comments\n            WHERE post_id = $1\n            ORDER BY created_at ASC\n            ",
+  "query": "\n            INSERT INTO comments (post_id, author_id, body)\n            SELECT $1, $2, $3\n            WHERE EXISTS (SELECT 1 FROM posts WHERE id = $1 AND hidden_at IS NULL)\n            RETURNING id, post_id, author_id, body, created_at\n            ",
   "describe": {
     "columns": [
       {
@@ -31,7 +31,9 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
@@ -42,5 +44,5 @@
       false
     ]
   },
-  "hash": "41961720d52dfd2d543512b1ef46ac3e9fec082598534b7ee7f48cc82fa07887"
+  "hash": "f2491ddb0f9890bf16072104052cb975b7995cb6f4bcebaffd181d08b4e8e7dc"
 }

@@ -63,6 +63,13 @@ class Worker:
             )
         return self._token
 
+    def prime(self) -> None:
+        """Perform the initial login up front so a bad password or unreachable API
+        fails fast at startup (the caller can exit cleanly) instead of surfacing as
+        an uncaught error inside the run loop. ``run`` relies on this having been
+        called; ``process`` still lazily ensures a token afterwards."""
+        self._ensure_token()
+
     def process(self, post_id: int) -> str:
         """Process one post: retry transient (network/5xx) failures with backoff,
         and re-authenticate once if the token has expired."""
@@ -93,8 +100,10 @@ class Worker:
         ``poll_timeout_seconds`` (the blocking BRPOP). Per-call bounding relies on the
         API timeout (``request_timeout_seconds``); a future model analyser must
         likewise bound its own inference so an in-flight call can't stall shutdown
-        (the supervisor's SIGKILL is the final backstop)."""
-        self._ensure_token()
+        (the supervisor's SIGKILL is the final backstop).
+
+        Assumes ``prime()`` has already established the initial token (so a startup
+        login failure is caught by the caller, not raised from inside this loop)."""
         log.info(
             "ingestion worker started; consuming %s with analyzer %s",
             self._config.queue_key,
@@ -109,6 +118,23 @@ class Worker:
                 outcome = self.process(post_id)
                 self.metrics.record_outcome(outcome)
                 log.info("post %s: %s", post_id, outcome)
+            except AuthError:
+                # A second consecutive 401 — the token is still rejected even after a
+                # fresh re-login (e.g. expired/invalid operator credentials). This is a
+                # credentials/environment problem, NOT a poison post. Return the id to
+                # the main queue and stop so the supervisor restarts / an operator fixes
+                # the credentials — do NOT dead-letter a healthy post. (A revoked role
+                # yields 403, which surfaces as a plain ApiError and is dead-lettered.)
+                log.error(
+                    "post %s: authentication failing after re-login; returning post "
+                    "and stopping",
+                    post_id,
+                )
+                try:
+                    self._queue.requeue(post_id)
+                except Exception:  # noqa: BLE001 — best-effort; the id is logged above
+                    log.exception("post %s: failed to requeue", post_id)
+                break
             except Exception as exc:  # noqa: BLE001 — one bad post must not kill the loop
                 # Quarantine, don't silently drop: the post is already off the main
                 # LIST, so without this it would be lost with no record.

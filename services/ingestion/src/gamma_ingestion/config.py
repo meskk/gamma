@@ -55,6 +55,9 @@ class Config:
             )
 
         queue_key = env.get("GAMMA_INGESTION_QUEUE", "gamma:ingestion")
+        retry_attempts = _int(env, "GAMMA_RETRY_ATTEMPTS", 3)
+        if retry_attempts < 1:
+            raise ConfigError(f"GAMMA_RETRY_ATTEMPTS must be >= 1, got {retry_attempts}")
         return Config(
             redis_url=env.get("REDIS_URL", "redis://localhost:6379"),
             queue_key=queue_key,
@@ -65,7 +68,7 @@ class Config:
             poll_timeout_seconds=_float(env, "GAMMA_POLL_TIMEOUT_SECONDS", 5.0),
             request_timeout_seconds=_float(env, "GAMMA_REQUEST_TIMEOUT_SECONDS", 10.0),
             analyzer=env.get("GAMMA_ANALYZER", "heuristic"),
-            retry_attempts=_int(env, "GAMMA_RETRY_ATTEMPTS", 3),
+            retry_attempts=retry_attempts,
             retry_base_delay_seconds=_float(env, "GAMMA_RETRY_BASE_DELAY_SECONDS", 0.5),
             dead_letter_key=env.get("GAMMA_INGESTION_DEAD_QUEUE", f"{queue_key}:dead"),
         )

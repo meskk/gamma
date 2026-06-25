@@ -35,6 +35,8 @@ def retry_transient(
     jitter — avoids thundering-herd retries). Re-raises the last ``TransientError``
     once attempts are exhausted.
     """
+    if attempts < 1:
+        raise ValueError("attempts must be >= 1")
     last: TransientError
     for attempt in range(1, attempts + 1):
         try:

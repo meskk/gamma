@@ -34,6 +34,10 @@ class Analyzer(Protocol):
         ...
 
 
+# The heuristic OWNS this label intrinsically — it is never taken from config, so
+# GAMMA_MODEL_VERSION can never mislabel heuristic output as something else.
+_HEURISTIC_VERSION = "heuristic-v0"
+
 # A run of non-whitespace counts as a word — good enough for a length heuristic,
 # and deterministic across inputs.
 _WORD = re.compile(r"\S+")
@@ -53,12 +57,9 @@ class HeuristicAnalyzer:
     until then.
     """
 
-    def __init__(self, model_version: str = "heuristic-v0") -> None:
-        self._model_version = model_version
-
     @property
     def model_version(self) -> str:
-        return self._model_version
+        return _HEURISTIC_VERSION
 
     def analyze(self, post: dict) -> dict:
         """Pure and deterministic: same post in, same signals out. The returned dict
@@ -86,12 +87,16 @@ def make_analyzer(config: Config) -> Analyzer:
 
     THE SWAP POINT. Flipping ``GAMMA_ANALYZER=model`` — once the model-runtime layer
     exists (P18) — replaces the heuristic with the real model and the worker never
-    changes. The heuristic takes its label from ``GAMMA_MODEL_VERSION``; the real
-    model will declare its own intrinsically, so selector and label can't drift.
+    changes. The heuristic owns its label (``"heuristic-v0"``) intrinsically and is
+    NEVER fed ``config.model_version``, so the selector and the provenance tag can't
+    drift. ``GAMMA_MODEL_VERSION`` / ``config.model_version`` is reserved for the
+    future model analyser's label: a model's version tracks its weights, which change
+    without a code change, so it legitimately comes from config (RUNBOOK §6 step 3).
+    The pure-code heuristic never reads it.
     """
     choice = config.analyzer
     if choice == "heuristic":
-        return HeuristicAnalyzer(model_version=config.model_version)
+        return HeuristicAnalyzer()
     if choice == "model":
         raise NotImplementedError(
             "GAMMA_ANALYZER=model: the real model analyser is not built yet. This is "

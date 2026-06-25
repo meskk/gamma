@@ -83,6 +83,58 @@ async fn duplicate_interaction_in_epoch_is_deduped(pool: PgPool) {
     assert_eq!(all.len(), 2, "the duplicate like did not add a second edge");
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn edges_exclude_interactions_on_taken_down_posts(pool: PgPool) {
+    use core_api::posts::model::NewPost;
+    use core_api::posts::repository::PostRepository;
+
+    let router = app(AppState::new(pool.clone()));
+    let (_t_author, author) = common::register(&router, &[]).await;
+    let (_t_actor, actor) = common::register(&router, &[]).await;
+
+    // A visible post by `author`, liked by `actor`.
+    let posts = PostRepository::new(pool.clone());
+    let post = posts
+        .create(&NewPost {
+            author_id: author,
+            category: None,
+            body: "hello".to_string(),
+            media_id: None,
+        })
+        .await
+        .expect("create post");
+    InteractionService::new(pool.clone())
+        .record(NewInteraction {
+            actor_id: actor,
+            r#type: InteractionType::Like,
+            target_id: None,
+            post_id: Some(post.id),
+        })
+        .await
+        .expect("record like");
+
+    let epoch = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i32;
+    let repo = InteractionRepository::new(pool.clone());
+
+    // While visible: the like resolves to one actor→author edge.
+    let edges = repo.edges_for_epoch(epoch).await.expect("edges");
+    assert_eq!(edges.len(), 1, "a like on a visible post confers one edge");
+    assert_eq!(edges[0].actor_id, actor);
+    assert_eq!(edges[0].target_id, author);
+
+    // Take the post down → its like must no longer confer social weight, even
+    // though the interaction row (recorded while visible) still exists.
+    posts
+        .set_hidden(post.id, Some(Utc::now()))
+        .await
+        .expect("hide");
+    let edges_after = repo.edges_for_epoch(epoch).await.expect("edges after");
+    assert!(
+        edges_after.is_empty(),
+        "a taken-down post confers no weight at settlement"
+    );
+}
+
 #[test]
 fn weights_order_like_below_comment_below_share() {
     // Pure check on the ω_type ordering the graph relies on — no DB needed.

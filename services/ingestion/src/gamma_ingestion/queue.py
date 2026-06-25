@@ -30,6 +30,16 @@ class IngestionQueue:
         """Quarantine a permanently-failing post for later inspection/replay."""
         self._redis.lpush(self._dead_key, json.dumps({"post_id": post_id, "error": error}))
 
+    def requeue(self, post_id: int) -> None:
+        """Return a popped id to the main queue for reprocessing.
+
+        ``pop`` consumes the tail with BRPOP (the producer LPUSHes onto the head), so
+        we RPUSH here — the requeued id goes back on the tail and the very next
+        ``pop`` picks it up promptly, ahead of the existing backlog rather than lost.
+        Used when a transient/credentials problem (not the post) caused the failure.
+        """
+        self._redis.rpush(self._key, post_id)
+
     def pop(self, timeout_seconds: float) -> int | None:
         """Block up to ``timeout_seconds`` for the next post id, or ``None`` on timeout.
 

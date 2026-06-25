@@ -25,6 +25,13 @@ export default function PostDetailPage() {
 
   useEffect(() => {
     if (!token || !id) return;
+    // Reset per-post state before fetching so navigating between posts never
+    // carries over stale data — in particular a stale `liked`/`reported` from the
+    // previous post (which would mislabel the buttons and make like() early-return).
+    setPost(null);
+    setError(null);
+    setLiked(false);
+    setReported(false);
     apiFetch<Post>(`/posts/${id}`, { token })
       .then(setPost)
       .catch((e) =>

@@ -28,6 +28,14 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (!token || !profileId) return;
+    // Reset all per-profile state before fetching so stale data/error from a
+    // previously-viewed profile never flashes alongside the new one.
+    setUser(null);
+    setPosts(null);
+    setFollowingCount(null);
+    setBalance(null);
+    setFollowing(null);
+    setError(null);
     apiFetch<User>(`/users/${profileId}`, { token })
       .then(setUser)
       .catch(() => setError("Could not load this profile."));
