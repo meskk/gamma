@@ -5,6 +5,10 @@
 use core_api::interactions::model::{InteractionType, NewInteraction};
 use core_api::interactions::repository::InteractionRepository;
 use core_api::interactions::service::InteractionService;
+use core_api::posts::model::NewPost;
+use core_api::posts::repository::PostRepository;
+use core_api::users::model::NewUser;
+use core_api::users::repository::UserRepository;
 use core_api::{app, AppState};
 
 use axum::body::Body;
@@ -16,16 +20,45 @@ use tower::ServiceExt;
 
 mod common;
 
+// interaction_events now has FKs (migration 0015), so events must reference real
+// rows. These seed the minimal actor/target/post a capture test needs.
+async fn seed_user(pool: &PgPool) -> i64 {
+    UserRepository::new(pool.clone())
+        .create(&NewUser {
+            declared_categories: vec![],
+            bot_gate_v: true,
+        })
+        .await
+        .expect("user")
+        .id
+}
+
+async fn seed_post(pool: &PgPool, author: i64) -> i64 {
+    PostRepository::new(pool.clone())
+        .create(&NewPost {
+            author_id: author,
+            category: None,
+            body: "post".into(),
+            media_id: None,
+        })
+        .await
+        .expect("post")
+        .id
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn record_stamps_epoch_and_weight(pool: PgPool) {
+    let actor = seed_user(&pool).await;
+    let target = seed_user(&pool).await;
+    let post = seed_post(&pool, target).await;
     let service = InteractionService::new(pool.clone());
 
     let event = service
         .record(NewInteraction {
-            actor_id: 1,
+            actor_id: actor,
             r#type: InteractionType::Comment,
-            target_id: Some(2),
-            post_id: Some(10),
+            target_id: Some(target),
+            post_id: Some(post),
         })
         .await
         .expect("record");
@@ -46,12 +79,14 @@ async fn record_stamps_epoch_and_weight(pool: PgPool) {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn duplicate_interaction_in_epoch_is_deduped(pool: PgPool) {
+    let actor = seed_user(&pool).await;
+    let post = seed_post(&pool, actor).await;
     let svc = InteractionService::new(pool.clone());
     let like = NewInteraction {
-        actor_id: 1,
+        actor_id: actor,
         r#type: InteractionType::Like,
         target_id: None,
-        post_id: Some(10),
+        post_id: Some(post),
     };
 
     // The same like, twice, is idempotent — same row, no extra weight.
@@ -65,10 +100,10 @@ async fn duplicate_interaction_in_epoch_is_deduped(pool: PgPool) {
     // A DIFFERENT type on the same post is a distinct edge.
     let comment = svc
         .record(NewInteraction {
-            actor_id: 1,
+            actor_id: actor,
             r#type: InteractionType::Comment,
             target_id: None,
-            post_id: Some(10),
+            post_id: Some(post),
         })
         .await
         .expect("distinct type");
@@ -85,9 +120,6 @@ async fn duplicate_interaction_in_epoch_is_deduped(pool: PgPool) {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn edges_exclude_interactions_on_taken_down_posts(pool: PgPool) {
-    use core_api::posts::model::NewPost;
-    use core_api::posts::repository::PostRepository;
-
     let router = app(AppState::new(pool.clone()));
     let (_t_author, author) = common::register(&router, &[]).await;
     let (_t_actor, actor) = common::register(&router, &[]).await;
@@ -135,6 +167,29 @@ async fn edges_exclude_interactions_on_taken_down_posts(pool: PgPool) {
     );
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn interaction_on_missing_post_is_404(pool: PgPool) {
+    // The post FK (migration 0015) rejects an interaction on a non-existent post;
+    // the service maps it to 404 (a client error) rather than a 500.
+    let router = app(AppState::new(pool));
+    let (token, _actor) = common::register(&router, &[]).await;
+
+    let body = serde_json::json!({ "type": "like", "post_id": 999999 });
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/interactions")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 #[test]
 fn weights_order_like_below_comment_below_share() {
     // Pure check on the ω_type ordering the graph relies on — no DB needed.
@@ -144,11 +199,12 @@ fn weights_order_like_below_comment_below_share() {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn http_record_returns_typed_view(pool: PgPool) {
-    let router = app(AppState::new(pool));
+    let router = app(AppState::new(pool.clone()));
     let (token, actor) = common::register(&router, &[]).await;
+    let post = seed_post(&pool, actor).await;
 
     // No actor_id in the body — taken from the session.
-    let body = serde_json::json!({ "type": "share", "post_id": 42 });
+    let body = serde_json::json!({ "type": "share", "post_id": post });
     let resp = router
         .oneshot(
             Request::builder()
