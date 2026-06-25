@@ -44,6 +44,9 @@ fn default_backfill_limit() -> i64 {
 struct ListParams {
     #[serde(default = "default_limit")]
     limit: i64,
+    /// Optional: only this author's posts (the profile feed).
+    #[serde(default)]
+    author_id: Option<i64>,
 }
 
 fn default_limit() -> i64 {
@@ -72,7 +75,7 @@ async fn list_posts(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<Vec<Post>>, ApiError> {
-    let posts = state.posts.list_recent(params.limit).await?;
+    let posts = state.posts.list(params.author_id, params.limit).await?;
     Ok(Json(posts))
 }
 

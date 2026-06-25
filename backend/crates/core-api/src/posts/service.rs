@@ -95,9 +95,11 @@ impl PostService {
         self.repo.get(id).await?.ok_or(ApiError::NotFound)
     }
 
-    pub async fn list_recent(&self, limit: i64) -> Result<Vec<Post>, ApiError> {
+    /// Recent visible posts; when `author_id` is `Some`, only that author's (a
+    /// profile feed).
+    pub async fn list(&self, author_id: Option<i64>, limit: i64) -> Result<Vec<Post>, ApiError> {
         let limit = limit.clamp(1, MAX_LIST_LIMIT);
-        Ok(self.repo.list_recent(limit).await?)
+        Ok(self.repo.list(author_id, limit).await?)
     }
 
     /// Record a user's report of a post. Idempotent per (post, reporter). 404 if
