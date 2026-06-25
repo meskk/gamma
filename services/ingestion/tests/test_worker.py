@@ -1,3 +1,4 @@
+import gamma_ingestion.__main__ as main_mod
 from gamma_ingestion.analyzer import HeuristicAnalyzer
 from gamma_ingestion.api_client import ApiError, AuthError, TransientError
 from gamma_ingestion.config import Config
@@ -30,6 +31,7 @@ class FakeClient:
         fail_auth_times: int = 0,
         fail_transient_times: int = 0,
         fail_permanent: bool = False,
+        fail_login: Exception | None = None,
     ):
         self.posts = posts
         self.signals_written: dict[int, dict] = {}
@@ -39,10 +41,16 @@ class FakeClient:
         self._fail_auth_times = fail_auth_times
         self._fail_transient_times = fail_transient_times
         self._fail_permanent = fail_permanent
+        self._fail_login = fail_login
 
     def login(self, email, password) -> str:
         self.login_count += 1
+        if self._fail_login is not None:
+            raise self._fail_login
         return f"tok-{self.login_count}"
+
+    def close(self) -> None:
+        pass
 
     def get_post(self, post_id):
         return self.posts.get(post_id)
@@ -65,12 +73,19 @@ class FakeQueue:
     def __init__(self, items):
         self._items = list(items)
         self.dead_lettered: list[int] = []
+        self.requeued: list[int] = []
 
     def pop(self, timeout_seconds):
         return self._items.pop(0) if self._items else None
 
     def dead_letter(self, post_id: int, error: str) -> None:
         self.dead_lettered.append(post_id)
+
+    def requeue(self, post_id: int) -> None:
+        self.requeued.append(post_id)
+
+    def close(self) -> None:
+        pass
 
     def drained(self) -> bool:
         return not self._items
@@ -91,8 +106,16 @@ def test_process_post_skips_missing_post():
 def test_written_model_version_comes_from_the_analyzer():
     # The analyser OWNS its model_version, so what's written matches the analyser —
     # not any separate config value — which is what makes the model swap drift-proof.
+    # A stand-in analyser with a distinct intrinsic label proves the worker stamps
+    # whatever the analyser reports (the heuristic's own label is "heuristic-v0").
+    class StubAnalyzer:
+        model_version = "real-model-v1"
+
+        def analyze(self, post: dict) -> dict:
+            return {"ok": True}
+
     client = FakeClient({5: {"id": 5, "body": "hi", "category": None}})
-    process_post(client, 5, HeuristicAnalyzer(model_version="real-model-v1"), "tok")
+    process_post(client, 5, StubAnalyzer(), "tok")
     assert client.model_versions[5] == "real-model-v1"
 
 
@@ -189,3 +212,54 @@ def test_run_counts_dead_lettered_in_metrics():
     assert worker.metrics.failed == 1
     assert worker.metrics.dead_lettered == 1
     assert worker.metrics.written == 0
+
+
+def test_prime_raises_on_login_failure():
+    # An unreachable API / bad credentials at startup surfaces from prime(), so the
+    # caller (main) can fail fast — not as an uncaught error inside the run loop.
+    client = FakeClient({}, fail_login=TransientError("connection refused"))
+    worker = Worker(make_config(), FakeQueue([]), client, HeuristicAnalyzer())
+    raised = False
+    try:
+        worker.prime()
+    except TransientError:
+        raised = True
+    assert raised
+
+
+def test_main_exits_2_when_startup_login_fails(monkeypatch):
+    # RUNBOOK §3: an unreachable API at login fails fast with exit 2 and a clear
+    # message, never an uncaught traceback. prime() (not run()) does the login.
+    client = FakeClient({}, fail_login=ApiError("login failed: 503"))
+    queue = FakeQueue([])
+    worker = Worker(make_config(), queue, client, HeuristicAnalyzer())
+
+    monkeypatch.setattr(main_mod.Config, "from_env", staticmethod(lambda: make_config()))
+    monkeypatch.setattr(main_mod, "make_analyzer", lambda config: HeuristicAnalyzer())
+    monkeypatch.setattr(main_mod, "IngestionQueue", lambda *a, **k: queue)
+    monkeypatch.setattr(main_mod, "ApiClient", lambda *a, **k: client)
+    monkeypatch.setattr(main_mod, "Worker", lambda *a, **k: worker)
+
+    assert main_mod.main() == 2
+    # The bad post path is never reached: nothing dead-lettered, run() never started.
+    assert queue.dead_lettered == []
+    assert client.put_attempts == 0
+
+
+def test_run_requeues_and_stops_on_persistent_auth_error():
+    # A second consecutive 401 (token rejected even after re-login, e.g. operator
+    # role revoked mid-run) is a credentials problem, NOT a poison post: the post is
+    # returned to the queue and the loop stops — it must NOT be dead-lettered.
+    client = FakeClient(
+        {5: {"id": 5, "body": "hi", "category": None}, 6: {"id": 6, "body": "x", "category": None}},
+        fail_auth_times=2,  # both the original token and the re-login token are rejected
+    )
+    queue = FakeQueue([5, 6])
+    worker = Worker(make_config(), queue, client, HeuristicAnalyzer())
+    worker.prime()
+    worker.run(lambda: False)  # would loop forever; the AuthError break stops it
+
+    assert queue.requeued == [5]  # the healthy post was returned, not lost
+    assert queue.dead_lettered == []  # NOT quarantined as poison
+    assert 5 not in client.signals_written
+    assert 6 not in client.signals_written  # the loop stopped; no further posts

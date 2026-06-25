@@ -22,6 +22,17 @@ export async function uploadMedia(
   unlockPrice: number,
   token: string,
 ): Promise<MediaAssetView> {
+  // Reject unsupported MIME types up front. kindOf() defaults anything unknown
+  // to "image", so without this guard a PDF/other type could be uploaded and
+  // finalized as a bogus image.
+  if (
+    !file.type.startsWith("image/") &&
+    !file.type.startsWith("video/") &&
+    !file.type.startsWith("audio/")
+  ) {
+    throw new Error("unsupported_media_type");
+  }
+
   const kind = kindOf(file.type);
 
   // 1. Upload ticket (presigned PUT URL). unlock_price is bigint in the contract but

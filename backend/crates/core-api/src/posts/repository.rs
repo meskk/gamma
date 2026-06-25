@@ -34,6 +34,24 @@ impl PostRepository {
         .await
     }
 
+    /// Whether `media_id` exists AND is owned by `owner_id`. Lets the service
+    /// pre-validate an attached asset so a missing/not-owned media id is reported
+    /// precisely (`unknown_media`) instead of tripping the post's media FK and
+    /// being misread as a bad author.
+    pub async fn media_owned_by(&self, media_id: i64, owner_id: i64) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM media_assets WHERE id = $1 AND owner_id = $2
+            ) AS "exists!"
+            "#,
+            media_id,
+            owner_id
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
     /// A single post — but not if it has been taken down (hidden_at set).
     pub async fn get(&self, id: i64) -> Result<Option<Post>, sqlx::Error> {
         sqlx::query_as!(
@@ -155,16 +173,19 @@ impl PostRepository {
         .await
     }
 
-    /// Count of analysed posts grouped by the `model_version` that produced them.
-    /// Lets an operator watch a re-analysis sweep migrate the corpus from one model
-    /// version to the next. Read-only — counts rows, never reads the signals payload.
+    /// Count of analysed VISIBLE posts grouped by the `model_version` that produced
+    /// them. Joins posts and filters out taken-down ones so this count partitions
+    /// the same universe as `count_unanalyzed_posts` (visible posts): analysed +
+    /// unanalysed = all visible posts. Read-only — counts rows, never reads payload.
     pub async fn signals_count_by_model_version(&self) -> Result<Vec<(String, i64)>, sqlx::Error> {
         let rows = sqlx::query!(
             r#"
-            SELECT model_version, COUNT(*) AS "count!"
-            FROM content_signals
-            GROUP BY model_version
-            ORDER BY model_version
+            SELECT cs.model_version, COUNT(*) AS "count!"
+            FROM content_signals cs
+            JOIN posts p ON p.id = cs.post_id
+            WHERE p.hidden_at IS NULL
+            GROUP BY cs.model_version
+            ORDER BY cs.model_version
             "#
         )
         .fetch_all(&self.pool)

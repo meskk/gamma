@@ -1,5 +1,5 @@
-//! Comment business logic: validate input, and map a comment on a non-existent post
-//! to a 404.
+//! Comment business logic: validate input, and map a comment on a missing OR
+//! hidden (taken-down) post to a 404.
 
 use crate::comments::model::Comment;
 use crate::comments::repository::CommentRepository;
@@ -34,10 +34,13 @@ impl CommentService {
         if body.len() > MAX_COMMENT_LEN {
             return Err(ApiError::Validation("comment_too_long"));
         }
-        self.repo
-            .create(post_id, author_id, body)
-            .await
-            .map_err(map_fk)
+        // `None` ⇒ the post is missing OR hidden (taken down) ⇒ 404. A non-existent
+        // author still trips the FK, which `map_fk` also maps to a 404.
+        match self.repo.create(post_id, author_id, body).await {
+            Ok(Some(comment)) => Ok(comment),
+            Ok(None) => Err(ApiError::NotFound),
+            Err(err) => Err(map_fk(err)),
+        }
     }
 
     pub async fn list(&self, post_id: i64) -> Result<Vec<Comment>, ApiError> {
@@ -45,12 +48,8 @@ impl CommentService {
     }
 }
 
-/// A comment on a non-existent post hits the FK — a client error (404), not a fault.
+/// A comment with a non-existent author hits the FK — a client error (404), not a
+/// fault. (A missing/hidden post is already handled by the `None` arm above.)
 fn map_fk(err: sqlx::Error) -> ApiError {
-    if let Some(db_err) = err.as_database_error() {
-        if matches!(db_err.kind(), sqlx::error::ErrorKind::ForeignKeyViolation) {
-            return ApiError::NotFound;
-        }
-    }
-    ApiError::Database(err)
+    ApiError::on_fk_violation(err, ApiError::NotFound)
 }

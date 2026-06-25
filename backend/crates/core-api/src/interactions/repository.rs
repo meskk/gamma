@@ -93,6 +93,12 @@ impl InteractionRepository {
     /// post interaction with no explicit target, the post's author is the target
     /// (LEFT JOIN on post_id). Events with no resolvable target and self-loops are
     /// dropped here so the graph layer gets clean edges.
+    ///
+    /// A post interaction whose target is the author of a TAKEN-DOWN post
+    /// (`hidden_at` set) is also dropped: moderation must stop removed content from
+    /// conferring social weight — including likes recorded before the takedown. A
+    /// direct user→user interaction (explicit `target_id`) is kept regardless of any
+    /// attached post's visibility, since its weight does not flow from the post.
     pub async fn edges_for_epoch(&self, epoch_k: i32) -> Result<Vec<EpochEdge>, sqlx::Error> {
         sqlx::query_as!(
             EpochEdge,
@@ -107,6 +113,7 @@ impl InteractionRepository {
             WHERE ie.epoch_k = $1
               AND COALESCE(ie.target_id, p.author_id) IS NOT NULL
               AND ie.actor_id <> COALESCE(ie.target_id, p.author_id)
+              AND (ie.target_id IS NOT NULL OR p.hidden_at IS NULL)
             "#,
             epoch_k
         )

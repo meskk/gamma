@@ -64,13 +64,15 @@ def test_missing_keys_default_safely():
 
 
 def test_model_version_is_owned_by_the_analyzer():
+    # The heuristic owns its label INTRINSICALLY — there is no constructor override,
+    # so config can never mislabel heuristic output.
     assert HeuristicAnalyzer().model_version == "heuristic-v0"
-    # Overridable, so the future real model declares its own version intrinsically.
-    assert HeuristicAnalyzer(model_version="real-model-v1").model_version == "real-model-v1"
 
 
-def test_factory_builds_heuristic_with_configured_version():
-    a = make_analyzer(_config(analyzer="heuristic", model_version="heuristic-v0"))
+def test_factory_ignores_model_version_for_heuristic():
+    # Even if GAMMA_MODEL_VERSION is set to something else, the heuristic still
+    # reports its own intrinsic "heuristic-v0" — the selector and label can't drift.
+    a = make_analyzer(_config(analyzer="heuristic", model_version="mislabel-v9"))
     assert isinstance(a, HeuristicAnalyzer)
     assert a.model_version == "heuristic-v0"
 

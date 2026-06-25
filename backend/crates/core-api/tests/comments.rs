@@ -117,3 +117,47 @@ async fn comments_add_list_and_validate(pool: PgPool) {
     assert_eq!(v[0]["body"], "first!");
     assert_eq!(v[0]["post_id"].as_i64().unwrap(), post_id);
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn comments_respect_post_takedown(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let post_id = seed_post(&pool).await;
+    let (token, _) = common::register(&router, &[]).await;
+
+    // A comment lands while the post is visible, and the list shows it.
+    assert_eq!(
+        post_comment(&router, post_id, Some(&token), json!({ "body": "before" }))
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+    let resp = list_comments(&router, post_id).await;
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 1);
+
+    // Take the post down (operator moderation).
+    PostRepository::new(pool.clone())
+        .set_hidden(post_id, Some(chrono::Utc::now()))
+        .await
+        .expect("takedown");
+
+    // Commenting on a taken-down post → 404 (the post is no longer visible).
+    assert_eq!(
+        post_comment(&router, post_id, Some(&token), json!({ "body": "after" }))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // Listing a taken-down post's comments → empty (the thread is hidden too).
+    let resp = list_comments(&router, post_id).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 0);
+}

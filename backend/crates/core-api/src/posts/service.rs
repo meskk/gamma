@@ -34,7 +34,7 @@ pub struct BackfillResult {
 #[derive(Debug, Serialize, TS)]
 #[ts(export, export_to = "../../../bindings/")]
 pub struct IngestionStatus {
-    /// Posts that have a `content_signals` row.
+    /// Visible posts that have a `content_signals` row.
     pub analyzed: i64,
     /// Visible posts with no signals row yet (what a full backfill would enqueue).
     pub unanalyzed: i64,
@@ -76,6 +76,17 @@ impl PostService {
             .category
             .map(|c| c.trim().to_lowercase())
             .filter(|c| !c.is_empty());
+
+        // Pre-validate any attached media: it must exist AND belong to the author.
+        // This keeps the insert from ever tripping the post's media FK, so a missing
+        // or not-owned asset is reported precisely as `unknown_media` rather than
+        // being misattributed to a bad author. It also blocks attaching someone
+        // else's asset.
+        if let Some(media_id) = new.media_id {
+            if !self.repo.media_owned_by(media_id, new.author_id).await? {
+                return Err(ApiError::Validation("unknown_media"));
+            }
+        }
 
         let post = self.repo.create(&new).await.map_err(map_create_error)?;
 
@@ -176,8 +187,11 @@ impl PostService {
     /// vs not, and the analysed counts broken down by model version. Touches no
     /// signal payload and enqueues nothing (ADR 0006).
     pub async fn ingestion_status(&self) -> Result<IngestionStatus, ApiError> {
-        let unanalyzed = self.repo.count_unanalyzed_posts().await?;
-        let rows = self.repo.signals_count_by_model_version().await?;
+        // The two reads are independent — run them concurrently.
+        let (unanalyzed, rows) = tokio::try_join!(
+            self.repo.count_unanalyzed_posts(),
+            self.repo.signals_count_by_model_version(),
+        )?;
         let analyzed = rows.iter().map(|(_, count)| count).sum();
         let by_model_version = rows.into_iter().collect();
         Ok(IngestionStatus {
@@ -190,21 +204,13 @@ impl PostService {
 
 /// A report of a non-existent post hits the FK — a client error (404), not a fault.
 fn map_report_error(err: sqlx::Error) -> ApiError {
-    if let Some(db_err) = err.as_database_error() {
-        if matches!(db_err.kind(), sqlx::error::ErrorKind::ForeignKeyViolation) {
-            return ApiError::NotFound;
-        }
-    }
-    ApiError::Database(err)
+    ApiError::on_fk_violation(err, ApiError::NotFound)
 }
 
-/// A post for a non-existent author hits the FK constraint — that's a client
-/// error (bad author), not a server fault, so surface it as a 400.
+/// With media pre-validated above, the ONLY foreign key the insert can now trip is
+/// the author — a non-existent author is a client error (bad author), not a server
+/// fault, so surface it as a 400. (Media never reaches the FK anymore: a missing or
+/// not-owned asset is rejected as `unknown_media` before the insert.)
 fn map_create_error(err: sqlx::Error) -> ApiError {
-    if let Some(db_err) = err.as_database_error() {
-        if matches!(db_err.kind(), sqlx::error::ErrorKind::ForeignKeyViolation) {
-            return ApiError::Validation("unknown_author");
-        }
-    }
-    ApiError::Database(err)
+    ApiError::on_fk_violation(err, ApiError::Validation("unknown_author"))
 }

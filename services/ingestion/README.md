@@ -26,8 +26,11 @@ preserving the "API owns the database" boundary (ADR 0006 / ADR 0004).
 the end-to-end pipeline is real and testable before the actual AI service exists on
 the Mac Studio. The signal *shape* is deliberately minimal and the feed does **not**
 consume these signals yet — wiring that in waits until the real pipeline settles the
-shape, so no speculative ranking is introduced. Replacing this module and bumping
-`GAMMA_MODEL_VERSION` is the upgrade path.
+shape, so no speculative ranking is introduced. The placeholder owns its provenance
+tag intrinsically (`model_version = "heuristic-v0"`), so it can't be mislabelled. The
+upgrade path is to add the real model as a second `Analyzer` (`GAMMA_ANALYZER=model`);
+`GAMMA_MODEL_VERSION` is reserved for **that** analyser's label and has no effect on
+the heuristic.
 
 ## Layout
 
