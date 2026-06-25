@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use chrono::Utc;
 use serde::Serialize;
+use ts_rs::TS;
 
 use crate::error::ApiError;
 use crate::posts::model::{NewPost, Post, ReportedPost};
@@ -21,7 +22,8 @@ const MAX_BACKFILL_LIMIT: i64 = 1000;
 
 /// Result of one backfill page: how many ids were enqueued, and the cursor to
 /// resume from (`?after=`). `enqueued == 0` means the sweep is drained.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct BackfillResult {
     pub enqueued: i64,
     pub last_id: i64,
@@ -29,7 +31,8 @@ pub struct BackfillResult {
 
 /// A snapshot of how far ingestion analysis has progressed over the corpus. Pure
 /// observability for an operator sizing a backfill or watching a re-analysis sweep.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct IngestionStatus {
     /// Posts that have a `content_signals` row.
     pub analyzed: i64,
