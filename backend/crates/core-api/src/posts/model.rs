@@ -42,7 +42,8 @@ pub struct ReportRequest {
 }
 
 /// Operator review row: a reported post with how many reports it has.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
 pub struct ReportedPost {
     pub post_id: i64,
     pub report_count: i64,

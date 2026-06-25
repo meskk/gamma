@@ -24,9 +24,10 @@ pub mod worker;
 mod health;
 
 use axum::extract::DefaultBodyLimit;
-use axum::http::Request;
+use axum::http::{header, HeaderValue, Method, Request};
 use axum::Router;
 use econ_params::EconParams;
+use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::Level;
@@ -83,6 +84,23 @@ fn request_span<B>(req: &Request<B>) -> tracing::Span {
 /// default, deliberately.
 const MAX_BODY_BYTES: usize = 256 * 1024;
 
+/// CORS for the browser frontend (a separate origin from the API). The allowed
+/// origin is env-driven (`GAMMA_CORS_ORIGIN`, default the local Next.js dev server)
+/// so prod can point it at the real frontend without a code change. We allow the
+/// bearer `Authorization` + `Content-Type` headers and the methods the API uses;
+/// the `CorsLayer` answers preflight (OPTIONS) before routing.
+fn cors_layer() -> CorsLayer {
+    let origin =
+        std::env::var("GAMMA_CORS_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let origin: HeaderValue = origin
+        .parse()
+        .unwrap_or_else(|_| panic!("GAMMA_CORS_ORIGIN is not a valid origin: {origin}"));
+    CorsLayer::new()
+        .allow_origin(origin)
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+}
+
 /// Build the full router with all routes mounted and state injected.
 ///
 /// The API surface is versioned under `/v1` so the frontend and the (Phase-1b)
@@ -102,10 +120,11 @@ pub fn app(state: AppState) -> Router {
         .merge(media::handler::routes())
         .merge(signals::handler::routes());
 
-    // Layers wrap outermost-last. Order on a request: assign x-request-id → open
-    // the trace span (reads that id) → propagate the id onto the response →
-    // body-limit → routes. So every request is logged (method/path/status/latency,
-    // at INFO) under a span tagged with its id, and the response carries the id.
+    // Layers wrap outermost-last. Order on a request: CORS (answers preflight) →
+    // assign x-request-id → open the trace span (reads that id) → propagate the id
+    // onto the response → body-limit → routes. So every request is logged
+    // (method/path/status/latency, at INFO) under a span tagged with its id, and the
+    // response carries the id.
     Router::new()
         .merge(health::routes())
         .nest("/v1", v1)
@@ -117,5 +136,6 @@ pub fn app(state: AppState) -> Router {
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+        .layer(cors_layer())
         .with_state(state)
 }
