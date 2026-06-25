@@ -1,6 +1,6 @@
 //! Postgres-backed post repository — the only place that knows posts SQL.
 //! Same shape as the users repository (concrete struct, `query_as!` checked
-//! queries). Adds `list_recent` to show the multi-row (`fetch_all`) template.
+//! queries). Adds `list` to show the multi-row (`fetch_all`) template.
 
 use chrono::{DateTime, Utc};
 
@@ -21,13 +21,14 @@ impl PostRepository {
         sqlx::query_as!(
             Post,
             r#"
-            INSERT INTO posts (author_id, category, body)
-            VALUES ($1, $2, $3)
-            RETURNING id, author_id, category, body, created_at, popularity_score
+            INSERT INTO posts (author_id, category, body, media_id)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id, author_id, category, body, created_at, popularity_score, media_id
             "#,
             new.author_id,
             new.category.as_deref(),
-            new.body
+            new.body,
+            new.media_id
         )
         .fetch_one(&self.pool)
         .await
@@ -38,7 +39,7 @@ impl PostRepository {
         sqlx::query_as!(
             Post,
             r#"
-            SELECT id, author_id, category, body, created_at, popularity_score
+            SELECT id, author_id, category, body, created_at, popularity_score, media_id
             FROM posts
             WHERE id = $1 AND hidden_at IS NULL
             "#,
@@ -49,16 +50,18 @@ impl PostRepository {
     }
 
     /// Most recent visible posts first, capped by `limit` (the caller clamps it).
-    pub async fn list_recent(&self, limit: i64) -> Result<Vec<Post>, sqlx::Error> {
+    /// When `author_id` is `Some`, only that author's posts (the profile feed).
+    pub async fn list(&self, author_id: Option<i64>, limit: i64) -> Result<Vec<Post>, sqlx::Error> {
         sqlx::query_as!(
             Post,
             r#"
-            SELECT id, author_id, category, body, created_at, popularity_score
+            SELECT id, author_id, category, body, created_at, popularity_score, media_id
             FROM posts
-            WHERE hidden_at IS NULL
+            WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)
             ORDER BY created_at DESC
-            LIMIT $1
+            LIMIT $2
             "#,
+            author_id,
             limit
         )
         .fetch_all(&self.pool)
@@ -101,13 +104,75 @@ impl PostRepository {
             r#"
             UPDATE posts SET hidden_at = $2
             WHERE id = $1
-            RETURNING id, author_id, category, body, created_at, popularity_score
+            RETURNING id, author_id, category, body, created_at, popularity_score, media_id
             "#,
             id,
             hidden_at
         )
         .fetch_optional(&self.pool)
         .await
+    }
+
+    /// Post ids with NO `content_signals` row yet (and not taken down), id-ordered,
+    /// after a cursor, capped by `limit`. The backfill producer: the existing corpus
+    /// is otherwise invisible to the ingestion pipeline, which only sees NEW posts.
+    /// Read-only — it selects ids; it never touches the signals payload or the feed.
+    pub async fn unanalyzed_post_ids(
+        &self,
+        after_id: i64,
+        limit: i64,
+    ) -> Result<Vec<i64>, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT p.id AS "id!"
+            FROM posts p
+            LEFT JOIN content_signals cs ON cs.post_id = p.id
+            WHERE cs.post_id IS NULL
+              AND p.hidden_at IS NULL
+              AND p.id > $1
+            ORDER BY p.id
+            LIMIT $2
+            "#,
+            after_id,
+            limit
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    /// How many visible posts have NO `content_signals` row yet — i.e. exactly what
+    /// a full backfill sweep would enqueue. Read-only count for operator status.
+    pub async fn count_unanalyzed_posts(&self) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) AS "count!"
+            FROM posts p
+            LEFT JOIN content_signals cs ON cs.post_id = p.id
+            WHERE cs.post_id IS NULL AND p.hidden_at IS NULL
+            "#
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    /// Count of analysed posts grouped by the `model_version` that produced them.
+    /// Lets an operator watch a re-analysis sweep migrate the corpus from one model
+    /// version to the next. Read-only — counts rows, never reads the signals payload.
+    pub async fn signals_count_by_model_version(&self) -> Result<Vec<(String, i64)>, sqlx::Error> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT model_version, COUNT(*) AS "count!"
+            FROM content_signals
+            GROUP BY model_version
+            ORDER BY model_version
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.model_version, r.count))
+            .collect())
     }
 
     /// Reported posts with their report counts, most-reported first (operator

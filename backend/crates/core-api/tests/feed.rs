@@ -32,6 +32,7 @@ async fn new_post(pool: &PgPool, author: i64, category: Option<&str>, body: &str
             author_id: author,
             category: category.map(str::to_string),
             body: body.into(),
+            media_id: None,
         })
         .await
         .expect("post")

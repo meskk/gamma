@@ -90,3 +90,63 @@ jobs:
       # contract must be regenerated and committed alongside the API change.
       - name: Frontend contract is in sync (bindings not drifted)
         run: git diff --exit-code bindings
+
+  # The Python AI-ingestion service (services/ingestion). Its tests are pure —
+  # httpx MockTransport + fakes, no Redis/Postgres — so this job needs no backing
+  # services and runs independently of the Rust workspace above.
+  ingestion-python:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: services/ingestion
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Install the EXACT pinned + hashed versions from the committed lock, so CI
+      # (and the eventual Mac Studio install) are reproducible. --no-deps installs
+      # the local package itself without re-resolving its dependencies.
+      - name: Install (pinned deps from the committed lock)
+        run: |
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Type-check (mypy)
+        run: mypy
+
+      - name: Test (pytest)
+        run: pytest -q
+
+  # The Next.js frontend (frontend/). Typechecks against the committed ts-rs
+  # contract (backend/bindings/*.ts via the @contract alias), so a backend API
+  # shape change that wasn't reflected in the frontend breaks CI here, and builds.
+  frontend:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Type-check (contract alignment)
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

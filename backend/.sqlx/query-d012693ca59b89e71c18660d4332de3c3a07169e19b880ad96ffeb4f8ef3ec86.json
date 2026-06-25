@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO media_assets (owner_id, kind, object_key, content_type) VALUES ($1, 'image', $2, 'image/png') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d012693ca59b89e71c18660d4332de3c3a07169e19b880ad96ffeb4f8ef3ec86"
+}

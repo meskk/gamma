@@ -1,7 +1,11 @@
 //! Post business logic: validate and normalise input, and translate database
 //! constraint violations into meaningful API errors.
 
+use std::collections::BTreeMap;
+
 use chrono::Utc;
+use serde::Serialize;
+use ts_rs::TS;
 
 use crate::error::ApiError;
 use crate::posts::model::{NewPost, Post, ReportedPost};
@@ -13,6 +17,30 @@ use db::PgPool;
 const MAX_LIST_LIMIT: i64 = 200;
 /// Hard cap on a report reason's length.
 const MAX_REASON_LEN: usize = 500;
+/// Hard cap on how many posts one backfill page enqueues (the operator paginates).
+const MAX_BACKFILL_LIMIT: i64 = 1000;
+
+/// Result of one backfill page: how many ids were enqueued, and the cursor to
+/// resume from (`?after=`). `enqueued == 0` means the sweep is drained.
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct BackfillResult {
+    pub enqueued: i64,
+    pub last_id: i64,
+}
+
+/// A snapshot of how far ingestion analysis has progressed over the corpus. Pure
+/// observability for an operator sizing a backfill or watching a re-analysis sweep.
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct IngestionStatus {
+    /// Posts that have a `content_signals` row.
+    pub analyzed: i64,
+    /// Visible posts with no signals row yet (what a full backfill would enqueue).
+    pub unanalyzed: i64,
+    /// Analysed-post counts keyed by the model version that produced them.
+    pub by_model_version: BTreeMap<String, i64>,
+}
 
 #[derive(Clone)]
 pub struct PostService {
@@ -67,9 +95,11 @@ impl PostService {
         self.repo.get(id).await?.ok_or(ApiError::NotFound)
     }
 
-    pub async fn list_recent(&self, limit: i64) -> Result<Vec<Post>, ApiError> {
+    /// Recent visible posts; when `author_id` is `Some`, only that author's (a
+    /// profile feed).
+    pub async fn list(&self, author_id: Option<i64>, limit: i64) -> Result<Vec<Post>, ApiError> {
         let limit = limit.clamp(1, MAX_LIST_LIMIT);
-        Ok(self.repo.list_recent(limit).await?)
+        Ok(self.repo.list(author_id, limit).await?)
     }
 
     /// Record a user's report of a post. Idempotent per (post, reporter). 404 if
@@ -108,6 +138,53 @@ impl PostService {
     pub async fn list_reported(&self, limit: i64) -> Result<Vec<ReportedPost>, ApiError> {
         let limit = limit.clamp(1, MAX_LIST_LIMIT);
         Ok(self.repo.list_reported(limit).await?)
+    }
+
+    /// Enqueue a page of not-yet-analysed posts so the ingestion pipeline can sweep
+    /// the existing corpus — which it otherwise never sees, since `create` is the
+    /// only other producer. ENQUEUE-ONLY: it never writes `content_signals` and
+    /// never reads signal contents, so no signal shape is touched and the API still
+    /// owns the database (ADR 0006). Safe to repeat: already-analysed posts are
+    /// filtered out and duplicate enqueues are harmless (the consumer upserts).
+    /// Paginate with the returned `last_id` (as `after`) until `enqueued == 0`.
+    pub async fn backfill_unanalyzed(
+        &self,
+        after_id: i64,
+        limit: i64,
+    ) -> Result<BackfillResult, ApiError> {
+        let queue = self
+            .ingestion
+            .as_ref()
+            .ok_or_else(|| ApiError::Internal("ingestion queue not configured".into()))?;
+        let limit = limit.clamp(1, MAX_BACKFILL_LIMIT);
+        let ids = self.repo.unanalyzed_post_ids(after_id, limit).await?;
+
+        let mut enqueued = 0i64;
+        let mut last_id = after_id;
+        for id in ids {
+            queue
+                .enqueue(id)
+                .await
+                .map_err(|err| ApiError::Internal(format!("backfill enqueue failed: {err}")))?;
+            enqueued += 1;
+            last_id = id;
+        }
+        Ok(BackfillResult { enqueued, last_id })
+    }
+
+    /// Read-only ingestion progress over the corpus: how many posts are analysed
+    /// vs not, and the analysed counts broken down by model version. Touches no
+    /// signal payload and enqueues nothing (ADR 0006).
+    pub async fn ingestion_status(&self) -> Result<IngestionStatus, ApiError> {
+        let unanalyzed = self.repo.count_unanalyzed_posts().await?;
+        let rows = self.repo.signals_count_by_model_version().await?;
+        let analyzed = rows.iter().map(|(_, count)| count).sum();
+        let by_model_version = rows.into_iter().collect();
+        Ok(IngestionStatus {
+            analyzed,
+            unanalyzed,
+            by_model_version,
+        })
     }
 }
 

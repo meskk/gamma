@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, author_id, category, body, created_at, popularity_score\n            FROM posts\n            WHERE hidden_at IS NULL\n            ORDER BY created_at DESC\n            LIMIT $1\n            ",
+  "query": "\n            SELECT id, post_id, author_id, body, created_at\n            FROM comments\n            WHERE post_id = $1\n            ORDER BY created_at ASC\n            ",
   "describe": {
     "columns": [
       {
@@ -10,13 +10,13 @@
       },
       {
         "ordinal": 1,
-        "name": "author_id",
+        "name": "post_id",
         "type_info": "Int8"
       },
       {
         "ordinal": 2,
-        "name": "category",
-        "type_info": "Text"
+        "name": "author_id",
+        "type_info": "Int8"
       },
       {
         "ordinal": 3,
@@ -27,11 +27,6 @@
         "ordinal": 4,
         "name": "created_at",
         "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 5,
-        "name": "popularity_score",
-        "type_info": "Float8"
       }
     ],
     "parameters": {
@@ -42,11 +37,10 @@
     "nullable": [
       false,
       false,
-      true,
-      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "be1218a465116e300cc5e479d5385dac555fa1f8aaebaef98958de2bd40cb230"
+  "hash": "41961720d52dfd2d543512b1ef46ac3e9fec082598534b7ee7f48cc82fa07887"
 }

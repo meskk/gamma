@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE posts SET hidden_at = $2\n            WHERE id = $1\n            RETURNING id, author_id, category, body, created_at, popularity_score\n            ",
+  "query": "\n            INSERT INTO comments (post_id, author_id, body)\n            VALUES ($1, $2, $3)\n            RETURNING id, post_id, author_id, body, created_at\n            ",
   "describe": {
     "columns": [
       {
@@ -10,13 +10,13 @@
       },
       {
         "ordinal": 1,
-        "name": "author_id",
+        "name": "post_id",
         "type_info": "Int8"
       },
       {
         "ordinal": 2,
-        "name": "category",
-        "type_info": "Text"
+        "name": "author_id",
+        "type_info": "Int8"
       },
       {
         "ordinal": 3,
@@ -27,27 +27,22 @@
         "ordinal": 4,
         "name": "created_at",
         "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 5,
-        "name": "popularity_score",
-        "type_info": "Float8"
       }
     ],
     "parameters": {
       "Left": [
         "Int8",
-        "Timestamptz"
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
       false,
       false,
-      true,
-      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "6fec5ee3d56a246676802aa143e46350ca7eecbcb21ec6ebc15a9ffc55b3b327"
+  "hash": "65c926087e671673c198f22bd367aba3686d55c134d0918325879c99e1e7a126"
 }

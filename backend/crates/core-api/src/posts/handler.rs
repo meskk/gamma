@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::auth::{AdminUser, AuthUser};
 use crate::error::ApiError;
 use crate::posts::model::{NewPost, Post, ReportRequest, ReportedPost};
+use crate::posts::service::{BackfillResult, IngestionStatus};
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
@@ -20,12 +21,32 @@ pub fn routes() -> Router<AppState> {
         .route("/posts/:id/takedown", post(takedown))
         .route("/posts/:id/restore", post(restore))
         .route("/reports", get(list_reports))
+        // Operator-only: sweep the existing corpus into the ingestion pipeline.
+        .route("/admin/ingestion/backfill", post(backfill_ingestion))
+        // Operator-only: how much of the corpus has been analysed (and by which model).
+        .route("/admin/ingestion/status", get(ingestion_status))
+}
+
+#[derive(Deserialize)]
+struct BackfillParams {
+    /// Resume cursor: only posts with id greater than this are considered.
+    #[serde(default)]
+    after: i64,
+    #[serde(default = "default_backfill_limit")]
+    limit: i64,
+}
+
+fn default_backfill_limit() -> i64 {
+    500
 }
 
 #[derive(Deserialize)]
 struct ListParams {
     #[serde(default = "default_limit")]
     limit: i64,
+    /// Optional: only this author's posts (the profile feed).
+    #[serde(default)]
+    author_id: Option<i64>,
 }
 
 fn default_limit() -> i64 {
@@ -54,7 +75,7 @@ async fn list_posts(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<Vec<Post>>, ApiError> {
-    let posts = state.posts.list_recent(params.limit).await?;
+    let posts = state.posts.list(params.author_id, params.limit).await?;
     Ok(Json(posts))
 }
 
@@ -93,4 +114,30 @@ async fn list_reports(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ReportedPost>>, ApiError> {
     Ok(Json(state.posts.list_reported(100).await?))
+}
+
+/// Operator-only: enqueue not-yet-analysed posts so the ingestion pipeline sweeps
+/// the existing corpus. Paginate by calling with `?after=<last_id>` until the
+/// response reports `enqueued == 0`. Enqueue-only — it never touches the signal
+/// shape or the feed (ADR 0006).
+async fn backfill_ingestion(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+    Query(params): Query<BackfillParams>,
+) -> Result<Json<BackfillResult>, ApiError> {
+    Ok(Json(
+        state
+            .posts
+            .backfill_unanalyzed(params.after, params.limit)
+            .await?,
+    ))
+}
+
+/// Operator-only: a read-only snapshot of ingestion progress over the corpus
+/// (analysed vs not, and a breakdown by model version). No enqueue, no signal shape.
+async fn ingestion_status(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+) -> Result<Json<IngestionStatus>, ApiError> {
+    Ok(Json(state.posts.ingestion_status().await?))
 }
