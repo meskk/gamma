@@ -26,6 +26,7 @@ export default function ComposePage() {
       const payload: NewPost = {
         body: body.trim(),
         category: category.trim() ? category.trim() : null,
+        media_id: null, // attaching media lands in Media part 2
       };
       const created = await apiFetch<Post>("/posts", { method: "POST", body: payload, token });
       router.push(`/posts/${created.id}`);
