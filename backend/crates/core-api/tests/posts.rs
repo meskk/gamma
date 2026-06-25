@@ -39,6 +39,7 @@ async fn repository_create_get_list(pool: PgPool) {
             author_id: author,
             category: Some("tech".into()),
             body: "hello world".into(),
+            media_id: None,
         })
         .await
         .expect("create");
@@ -157,6 +158,7 @@ async fn unknown_author_is_rejected_at_service_level(pool: PgPool) {
             author_id: 999_999,
             category: None,
             body: "orphan".into(),
+            media_id: None,
         })
         .await
         .unwrap_err();
@@ -180,6 +182,7 @@ async fn create_offers_post_to_ingestion_queue(pool: PgPool) {
             author_id: author,
             category: None,
             body: "hello pipeline".into(),
+            media_id: None,
         })
         .await
         .expect("create");
@@ -189,4 +192,34 @@ async fn create_offers_post_to_ingestion_queue(pool: PgPool) {
         Some(post.id),
         "the new post id is offered to the ingestion pipeline"
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn create_attaches_media(pool: PgPool) {
+    let author = seed_author(&pool).await;
+    let media_id: i64 = sqlx::query_scalar!(
+        "INSERT INTO media_assets (owner_id, kind, object_key, content_type) \
+         VALUES ($1, 'image', $2, 'image/png') RETURNING id",
+        author,
+        "obj-key-1"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let repo = PostRepository::new(pool.clone());
+    let post = repo
+        .create(&NewPost {
+            author_id: author,
+            category: None,
+            body: "with media".into(),
+            media_id: Some(media_id),
+        })
+        .await
+        .expect("create");
+    assert_eq!(post.media_id, Some(media_id));
+
+    // It round-trips through get.
+    let fetched = repo.get(post.id).await.unwrap().unwrap();
+    assert_eq!(fetched.media_id, Some(media_id));
 }

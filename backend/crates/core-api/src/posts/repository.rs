@@ -21,13 +21,14 @@ impl PostRepository {
         sqlx::query_as!(
             Post,
             r#"
-            INSERT INTO posts (author_id, category, body)
-            VALUES ($1, $2, $3)
-            RETURNING id, author_id, category, body, created_at, popularity_score
+            INSERT INTO posts (author_id, category, body, media_id)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id, author_id, category, body, created_at, popularity_score, media_id
             "#,
             new.author_id,
             new.category.as_deref(),
-            new.body
+            new.body,
+            new.media_id
         )
         .fetch_one(&self.pool)
         .await
@@ -38,7 +39,7 @@ impl PostRepository {
         sqlx::query_as!(
             Post,
             r#"
-            SELECT id, author_id, category, body, created_at, popularity_score
+            SELECT id, author_id, category, body, created_at, popularity_score, media_id
             FROM posts
             WHERE id = $1 AND hidden_at IS NULL
             "#,
@@ -54,7 +55,7 @@ impl PostRepository {
         sqlx::query_as!(
             Post,
             r#"
-            SELECT id, author_id, category, body, created_at, popularity_score
+            SELECT id, author_id, category, body, created_at, popularity_score, media_id
             FROM posts
             WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)
             ORDER BY created_at DESC
@@ -103,7 +104,7 @@ impl PostRepository {
             r#"
             UPDATE posts SET hidden_at = $2
             WHERE id = $1
-            RETURNING id, author_id, category, body, created_at, popularity_score
+            RETURNING id, author_id, category, body, created_at, popularity_score, media_id
             "#,
             id,
             hidden_at

@@ -18,6 +18,9 @@ pub struct Post {
     pub created_at: DateTime<Utc>,
     /// Cold-start feed signal (popularity + recency); 0 at creation (Dossier §4.2).
     pub popularity_score: f64,
+    /// Optional attached media asset (image/video/audio). Access is gated by the
+    /// asset's own unlock_price — see `GET /media/:id`.
+    pub media_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -32,6 +35,10 @@ pub struct NewPost {
     #[serde(default)]
     pub category: Option<String>,
     pub body: String,
+    /// Optional id of an already-uploaded media asset to attach. The frontend sets
+    /// this after the presigned-upload + finalize flow.
+    #[serde(default)]
+    pub media_id: Option<i64>,
 }
 
 /// A user's report of a post (moderation). The reporter is the session user.

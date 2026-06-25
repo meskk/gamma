@@ -91,6 +91,7 @@ async fn settles_epoch_mints_by_weight_and_is_idempotent(pool: PgPool) {
             author_id: a,
             category: None,
             body: "a's post".into(),
+            media_id: None,
         })
         .await
         .expect("post")

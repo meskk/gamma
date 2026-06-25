@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE posts SET hidden_at = $2\n            WHERE id = $1\n            RETURNING id, author_id, category, body, created_at, popularity_score\n            ",
+  "query": "\n            SELECT id, author_id, category, body, created_at, popularity_score, media_id\n            FROM posts\n            WHERE id = $1 AND hidden_at IS NULL\n            ",
   "describe": {
     "columns": [
       {
@@ -32,12 +32,16 @@
         "ordinal": 5,
         "name": "popularity_score",
         "type_info": "Float8"
+      },
+      {
+        "ordinal": 6,
+        "name": "media_id",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8",
-        "Timestamptz"
+        "Int8"
       ]
     },
     "nullable": [
@@ -46,8 +50,9 @@
       true,
       true,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "6fec5ee3d56a246676802aa143e46350ca7eecbcb21ec6ebc15a9ffc55b3b327"
+  "hash": "62879ad8ea5a6a6d74893003b332f2d85c0ba90792fd83a8d2c51ec0f63aed4d"
 }

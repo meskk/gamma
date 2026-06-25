@@ -30,6 +30,7 @@ async fn seed_post(pool: &PgPool) -> i64 {
             author_id: author,
             category: None,
             body: "analyse me".into(),
+            media_id: None,
         })
         .await
         .expect("post")

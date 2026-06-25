@@ -4,4 +4,9 @@ export type Post = { id: bigint, author_id: bigint, category: string | null, bod
 /**
  * Cold-start feed signal (popularity + recency); 0 at creation (Dossier §4.2).
  */
-popularity_score: number, };
+popularity_score: number, 
+/**
+ * Optional attached media asset (image/video/audio). Access is gated by the
+ * asset's own unlock_price — see `GET /media/:id`.
+ */
+media_id: bigint | null, };
