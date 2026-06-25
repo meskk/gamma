@@ -9,6 +9,7 @@ import type { Post } from "@contract/Post";
 import type { ReportRequest } from "@contract/ReportRequest";
 
 import { ApiError, apiFetch } from "@/lib/api";
+import { MediaView } from "@/components/MediaView";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 
 export default function PostDetailPage() {
@@ -84,6 +85,11 @@ export default function PostDetailPage() {
           <p style={{ fontSize: "1.1rem", whiteSpace: "pre-wrap", margin: "1rem 0" }}>
             {post.body ?? <em>(no text)</em>}
           </p>
+          {post.media_id != null && (
+            <div style={{ margin: "1rem 0" }}>
+              <MediaView mediaId={String(post.media_id)} token={token} />
+            </div>
+          )}
           <div style={{ display: "flex", gap: "0.75rem" }}>
             <button type="button" onClick={like} disabled={liked}>
               {liked ? "♥ Liked" : "♡ Like"}

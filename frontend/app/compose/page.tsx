@@ -7,6 +7,7 @@ import type { NewPost } from "@contract/NewPost";
 import type { Post } from "@contract/Post";
 
 import { apiFetch } from "@/lib/api";
+import { uploadMedia } from "@/lib/mediaUpload";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 
 export default function ComposePage() {
@@ -14,6 +15,8 @@ export default function ComposePage() {
   const router = useRouter();
   const [body, setBody] = useState("");
   const [category, setCategory] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [price, setPrice] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -23,15 +26,23 @@ export default function ComposePage() {
     setBusy(true);
     setError(null);
     try {
-      const payload: NewPost = {
+      // Upload the attachment first (presigned flow), then reference it on the post.
+      let mediaId: number | null = null;
+      if (file) {
+        const asset = await uploadMedia(file, price, token);
+        mediaId = Number(asset.id);
+      }
+      const payload = {
         body: body.trim(),
         category: category.trim() ? category.trim() : null,
-        media_id: null, // attaching media lands in Media part 2
-      };
+        media_id: mediaId, // bigint|null in the contract; a number on the wire
+      } as unknown as NewPost;
       const created = await apiFetch<Post>("/posts", { method: "POST", body: payload, token });
       router.push(`/posts/${created.id}`);
     } catch {
-      setError("Could not publish — please try again.");
+      setError(
+        file ? "Could not upload the media or publish — please try again." : "Could not publish.",
+      );
       setBusy(false);
     }
   }
@@ -63,6 +74,27 @@ export default function ComposePage() {
             placeholder="music, tech, art…"
           />
         </label>
+        <label>
+          Attach media <small>(optional — image / video / audio)</small>
+          <br />
+          <input
+            type="file"
+            accept="image/*,video/*,audio/*"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+        </label>
+        {file && (
+          <label>
+            Unlock price <small>(gems; 0 = free)</small>
+            <br />
+            <input
+              type="number"
+              min={0}
+              value={price}
+              onChange={(e) => setPrice(Math.max(0, Number(e.target.value) || 0))}
+            />
+          </label>
+        )}
         {error && <p style={{ color: "crimson" }}>{error}</p>}
         <button type="submit" disabled={busy || !body.trim()}>
           {busy ? "Publishing…" : "Publish"}
