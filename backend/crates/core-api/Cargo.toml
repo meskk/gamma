@@ -39,6 +39,8 @@ dotenvy.workspace = true
 tower_governor = "0.4"
 ts-rs = { version = "12.0.1", features = ["chrono-impl"] }
 tower-http = { version = "0.7.0", features = ["trace", "request-id", "cors"] }
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 
 [dev-dependencies]
 tower.workspace = true

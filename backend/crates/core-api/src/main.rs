@@ -20,6 +20,11 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    // Install the Prometheus recorder so `/metrics` has data to render. Done in the
+    // binary (not in `app()`) so the in-process test router never tries to install a
+    // second global recorder.
+    core_api::install_prometheus();
+
     let database_url = std::env::var("DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("DATABASE_URL must be set (see .env.example)"))?;
 
