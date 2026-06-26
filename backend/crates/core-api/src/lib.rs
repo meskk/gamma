@@ -23,9 +23,13 @@ pub mod users;
 pub mod worker;
 
 mod health;
+mod observability;
+
+pub use observability::install_prometheus;
 
 use axum::extract::DefaultBodyLimit;
 use axum::http::{header, HeaderValue, Method, Request};
+use axum::routing::get;
 use axum::Router;
 use econ_params::EconParams;
 use tower_http::cors::CorsLayer;
@@ -124,12 +128,15 @@ pub fn app(state: AppState) -> Router {
 
     // Layers wrap outermost-last. Order on a request: CORS (answers preflight) →
     // assign x-request-id → open the trace span (reads that id) → propagate the id
-    // onto the response → body-limit → routes. So every request is logged
-    // (method/path/status/latency, at INFO) under a span tagged with its id, and the
-    // response carries the id.
+    // onto the response → body-limit → metrics → routes. So every request is logged
+    // (method/path/status/latency, at INFO) under a span tagged with its id, counted
+    // for `/metrics`, and the response carries the id. `/metrics` itself stays
+    // UNVERSIONED (a scrape target, like `/health`).
     Router::new()
         .merge(health::routes())
+        .route("/metrics", get(observability::metrics_handler))
         .nest("/v1", v1)
+        .layer(axum::middleware::from_fn(observability::track_metrics))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(
