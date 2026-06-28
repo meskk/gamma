@@ -36,18 +36,37 @@ async fn main() -> anyhow::Result<()> {
     state.storage.ensure_bucket().await?;
     tracing::info!("object storage bucket ready");
 
-    // Per-IP rate limit, applied at the server edge only (not inside `app()`, so
-    // the in-process test router is unaffected). Steady ~10 req/s with bursts to
-    // 50 — blunts login/argon2 brute-force and general request flooding. Keyed on
-    // the peer IP, which is why we serve with connect-info below.
-    let governor = Arc::new(
-        GovernorConfigBuilder::default()
-            .per_second(10)
-            .burst_size(50)
-            .finish()
-            .expect("valid rate-limit config"),
-    );
-    let service = app(state).layer(GovernorLayer { config: governor });
+    // Per-IP rate limit, applied at the server edge only (not inside `app()`, so the
+    // in-process test router is unaffected). Blunts login/argon2 brute-force and
+    // request flooding; keyed on the peer IP (why we serve with connect-info below).
+    //
+    // Env-configurable: the typed SPA fires several requests per page (doubled again
+    // by React StrictMode in dev), so a tight global limit throttles normal use —
+    // set GAMMA_RATE_LIMIT_DISABLED=true locally. NOTE: this is a coarse GLOBAL limit;
+    // per-route limits (tight on /auth, loose on reads) are the proper follow-up, at
+    // which point the default here can be raised for production.
+    let mut service = app(state);
+    if std::env::var("GAMMA_RATE_LIMIT_DISABLED").as_deref() == Ok("true") {
+        tracing::warn!("per-IP rate limit DISABLED (GAMMA_RATE_LIMIT_DISABLED=true)");
+    } else {
+        let per_second: u64 = std::env::var("GAMMA_RATE_LIMIT_PER_SECOND")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+        let burst: u32 = std::env::var("GAMMA_RATE_LIMIT_BURST")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50);
+        let governor = Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(per_second)
+                .burst_size(burst)
+                .finish()
+                .expect("valid rate-limit config"),
+        );
+        service = service.layer(GovernorLayer { config: governor });
+        tracing::info!(per_second, burst, "per-IP rate limit enabled");
+    }
 
     let bind = std::env::var("CORE_API_BIND").unwrap_or_else(|_| "0.0.0.0:8080".into());
     let listener = tokio::net::TcpListener::bind(&bind).await?;

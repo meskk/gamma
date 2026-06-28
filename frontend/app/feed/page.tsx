@@ -18,6 +18,11 @@ export default function FeedPage() {
 
   useEffect(() => {
     if (!token || !userId) return;
+    // Reset before (re)fetching so a previous error/feed doesn't linger — a transient
+    // failure then self-heals on the next run instead of sticking until a full reload.
+    setPosts(null);
+    setBalance(null);
+    setError(null);
     apiFetch<Post[]>(`/users/${userId}/feed?limit=50`, { token })
       .then(setPosts)
       .catch(() => setError("Could not load your feed."));
