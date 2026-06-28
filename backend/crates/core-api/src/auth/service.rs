@@ -61,6 +61,14 @@ impl AuthService {
         self.issue_session(user_id).await
     }
 
+    /// Whether an account exists for `email` (the email-first login step). Normalises
+    /// the email exactly as register/login do, so the check matches what a later
+    /// login would look up.
+    pub async fn email_exists(&self, email: &str) -> Result<bool, ApiError> {
+        let email = email.trim().to_lowercase();
+        Ok(self.repo.email_exists(&email).await?)
+    }
+
     /// Resolve a bearer token to the authenticated principal (id + role), or
     /// `None` if the token is invalid/expired.
     pub async fn authenticate(&self, token: &str) -> Result<Option<Principal>, ApiError> {

@@ -84,6 +84,41 @@ async fn register_login_and_authenticated_me(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn check_email_reports_existence(pool: PgPool) {
+    let router = app(AppState::new(pool));
+
+    // Unknown email → exists: false (normalised the same way login is).
+    let resp = post_json(
+        &router,
+        "/v1/auth/check-email",
+        serde_json::json!({ "email": "  New@Example.com " }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(json_body(resp).await["exists"].as_bool(), Some(false));
+
+    // Register it, then the same (differently-cased) email → exists: true.
+    assert_eq!(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({ "email": "new@example.com", "password": "supersecret" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+    let resp = post_json(
+        &router,
+        "/v1/auth/check-email",
+        serde_json::json!({ "email": "NEW@example.com" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(json_body(resp).await["exists"].as_bool(), Some(true));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn duplicate_email_conflicts(pool: PgPool) {
     let router = app(AppState::new(pool));
     let body = serde_json::json!({ "email": "bob@example.com", "password": "supersecret" });

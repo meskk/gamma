@@ -4,12 +4,20 @@
 // Functional styling only — the external designer restyles later.
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { useAuth } from "@/lib/auth";
 
+// Auth screens bring their own full-bleed background + back button, so the app nav
+// frame is skipped for them.
+const BARE_ROUTES = new Set(["/login", "/register"]);
+
 export function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const { token, userId, ready, logout, isOperator } = useAuth();
+
+  if (BARE_ROUTES.has(pathname)) return <>{children}</>;
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", maxWidth: 720, margin: "0 auto", padding: "1rem" }}>

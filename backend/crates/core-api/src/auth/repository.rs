@@ -52,6 +52,17 @@ impl AuthRepository {
         Ok(row.and_then(|r| r.password_hash.map(|h| (r.id, h))))
     }
 
+    /// Whether an account exists for this (already-normalised) email. Powers the
+    /// email-first login step.
+    pub async fn email_exists(&self, email: &str) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM users WHERE email = $1) AS "exists!""#,
+            email
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
     pub async fn create_session(
         &self,
         token_hash: &str,
