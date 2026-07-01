@@ -9,6 +9,7 @@ import type { Post } from "@contract/Post";
 import type { ReportRequest } from "@contract/ReportRequest";
 
 import { ApiError, apiFetch } from "@/lib/api";
+import type { Wire } from "@/lib/wire";
 import { Comments } from "@/components/Comments";
 import { MediaView } from "@/components/MediaView";
 import { useRequireAuth } from "@/lib/useRequireAuth";
@@ -32,27 +33,39 @@ export default function PostDetailPage() {
     setError(null);
     setLiked(false);
     setReported(false);
+    // Guard against out-of-order resolution: a slow response for a previous `id`
+    // must not overwrite the newer post once navigation has moved on.
+    let stale = false;
+    // Note (UI-lie limitation): the `Post` contract carries no per-viewer "liked"
+    // flag, so we can't hydrate `liked` from the server — after a reload a post the
+    // viewer already liked shows "♡ Like" until they interact. Backend fix required
+    // (add a `liked_by_me` field to `Post`); until then this is a known cosmetic gap.
     apiFetch<Post>(`/posts/${id}`, { token })
-      .then(setPost)
-      .catch((e) =>
+      .then((p) => !stale && setPost(p))
+      .catch((e) => {
+        if (stale) return;
         setError(
           e instanceof ApiError && e.status === 404
             ? "This post doesn't exist (or was taken down)."
             : "Could not load this post.",
-        ),
-      );
+        );
+      });
+    return () => {
+      stale = true;
+    };
   }, [token, id]);
 
   async function like() {
     if (liked || !token) return;
     setLiked(true); // optimistic; the backend dedups likes, so a repeat is a no-op
     // ids are bigint in the contract but go on the wire as numbers (JSON can't
-    // serialize bigint), so build with a number and cast to the contract type.
-    const body = {
+    // serialize bigint), so build with a number against Wire<NewInteraction> —
+    // that still typechecks structurally, so a renamed/added field is caught.
+    const body: Wire<NewInteraction> = {
       type: "like",
       target_id: null,
       post_id: Number(id),
-    } as unknown as NewInteraction;
+    };
     try {
       await apiFetch<void>("/interactions", { method: "POST", body, token });
     } catch {

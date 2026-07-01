@@ -18,8 +18,7 @@ export default function Home() {
           </p>
         ) : (
           <p>
-            <Link href="/login">Log in</Link> or{" "}
-            <Link href="/register">create an account</Link> to get started.
+            <Link href="/login">Log in or create an account</Link> to get started.
           </p>
         ))}
     </div>

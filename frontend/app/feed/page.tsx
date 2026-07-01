@@ -23,14 +23,20 @@ export default function FeedPage() {
     setPosts(null);
     setBalance(null);
     setError(null);
+    // Guard against out-of-order resolution: if `userId`/`token` changes before a
+    // fetch resolves, drop the stale response so it can't overwrite the newer one.
+    let stale = false;
     apiFetch<Post[]>(`/users/${userId}/feed?limit=50`, { token })
-      .then(setPosts)
-      .catch(() => setError("Could not load your feed."));
+      .then((p) => !stale && setPosts(p))
+      .catch(() => !stale && setError("Could not load your feed."));
     apiFetch<GemBalance>(`/users/${userId}/gems`, { token })
-      .then(setBalance)
+      .then((b) => !stale && setBalance(b))
       .catch(() => {
         /* balance is non-critical; ignore */
       });
+    return () => {
+      stale = true;
+    };
   }, [token, userId]);
 
   if (!ready || !token) return null;

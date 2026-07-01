@@ -3,21 +3,28 @@
 // Glass auth (design: Figma "Social App – Design System", 🫧 Glass · Login). The
 // visual is the designer's; the data flow uses the existing auth.
 //   - Anmelden / Registrieren tabs pick the mode (matching the design).
-//   - Step 1: enter email → "Weiter". We call /auth/check-email so a wrong tab is
-//     caught nicely (e.g. "Anmelden" with an unknown email → hint to register).
-//   - Step 2: same glass card, password field → sign in / create the account.
+//   - Step 1 (email): enter email → "Weiter". We call /auth/check-email so a wrong
+//     tab is caught nicely (login with an unknown email → hint to register). The
+//     check is a UX nicety, not an auth precondition: if it fails we degrade to the
+//     password step rather than dead-ending.
+//   - Step 2 (password): same glass card, password field → sign in, or (register)
+//     advance to the interests step.
+//   - Step 3 (interests, register only): capture declared_categories for cold-start,
+//     then create the account. This is the ONE registration flow (the old English
+//     /register plain-form was removed — see AppShell / app/page.tsx).
 // No passkey / no email-code / no wallet (not in the backend); the email-only
 // "Methoden-Wähler" from the design collapses to a direct email field.
 
-import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useRef, useState, type FormEvent } from "react";
 
+import type { EmailCheckRequest } from "@contract/EmailCheckRequest";
 import type { EmailCheckResult } from "@contract/EmailCheckResult";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
-type Step = "email" | "password";
+type Step = "email" | "password" | "interests";
 type Mode = "login" | "register";
 
 function MailIcon() {
@@ -34,6 +41,15 @@ function LockIcon() {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <rect x="5" y="11" width="14" height="9" rx="2.5" />
       <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+function TagIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M20.6 13.4 12 22l-8-8 8.6-8.6a2 2 0 0 1 1.4-.6H20a2 2 0 0 1 2 2v6a2 2 0 0 1-.6 1.4Z" />
+      <circle cx="16.5" cy="7.5" r="1.2" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -55,39 +71,78 @@ function BackIcon() {
 }
 
 export default function LoginPage() {
+  // useSearchParams() (for ?next=) requires a Suspense boundary under Next's
+  // static generation.
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const { login, register } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>("login");
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [interests, setInterests] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // In-flight request generation. Every state transition (tab switch, back) bumps
+  // it; an async handler captures the value at submit time and drops its result if
+  // the flow has moved on — this defeats the stale-closure race where a slow
+  // check-email/login response lands after the user changed tabs or stepped back.
+  const flowGen = useRef(0);
+
+  // Redirect target after a successful login (finding: preserve intended URL). Only
+  // honour local paths — never an absolute/protocol-relative URL (open-redirect).
+  function redirectTarget(): string {
+    const next = searchParams.get("next");
+    if (next && next.startsWith("/") && !next.startsWith("//")) return next;
+    return "/feed";
+  }
 
   function switchMode(next: Mode) {
-    if (next === mode) return;
+    if (next === mode || busy) return;
+    flowGen.current += 1; // invalidate any in-flight request
     setMode(next);
+    setStep("email");
+    setPassword("");
+    setInterests("");
+    setError(null);
+  }
+
+  function backToEmail() {
+    if (busy) return;
+    flowGen.current += 1;
     setStep("email");
     setPassword("");
     setError(null);
   }
 
-  function backToEmail() {
-    setStep("email");
-    setPassword("");
+  function backToPassword() {
+    if (busy) return;
+    flowGen.current += 1;
+    setStep("password");
     setError(null);
   }
 
   // Step 1: validate the email against the chosen tab, then move to the password.
   async function onEmailSubmit(e: FormEvent) {
     e.preventDefault();
+    const gen = ++flowGen.current;
     setBusy(true);
     setError(null);
     try {
+      const body: EmailCheckRequest = { email };
       const { exists } = await apiFetch<EmailCheckResult>("/auth/check-email", {
         method: "POST",
-        body: { email },
+        body,
       });
+      if (gen !== flowGen.current) return; // flow moved on — drop this result
       if (mode === "login" && !exists) {
         setError("Mit dieser E-Mail gibt es noch kein Konto — wechsle zu „Registrieren“.");
         return;
@@ -98,53 +153,90 @@ export default function LoginPage() {
       }
       setStep("password");
     } catch {
-      setError("Etwas ist schiefgelaufen — bitte erneut versuchen.");
+      // The existence check is a UX nicety, not an auth precondition: on any
+      // failure (network/400/429/5xx) degrade to the password step rather than
+      // dead-ending both login and registration. The real check happens on submit.
+      if (gen !== flowGen.current) return;
+      setStep("password");
     } finally {
-      setBusy(false);
+      if (gen === flowGen.current) setBusy(false);
     }
   }
 
-  // Step 2: sign in, or create the account.
+  // Step 2 (login): sign in. Step 2 (register): advance to the interests step.
   async function onPasswordSubmit(e: FormEvent) {
     e.preventDefault();
+    if (mode === "register") {
+      setStep("interests");
+      setError(null);
+      return;
+    }
+    const gen = ++flowGen.current;
     setBusy(true);
     setError(null);
     try {
-      if (mode === "login") {
-        await login(email, password);
-      } else {
-        await register({ email, password, declared_categories: [] });
-      }
-      router.push("/feed");
+      await login(email, password);
+      router.push(redirectTarget());
     } catch (err) {
-      if (mode === "login") {
-        setError(
-          err instanceof ApiError && err.status === 401
-            ? "Falsches Passwort."
-            : "Anmeldung fehlgeschlagen — bitte erneut versuchen.",
-        );
-      } else {
-        setError(
-          err instanceof ApiError && err.status === 400
-            ? "Passwort zu kurz (mindestens 8 Zeichen)."
-            : "Registrierung fehlgeschlagen — bitte erneut versuchen.",
-        );
-      }
+      if (gen !== flowGen.current) return;
+      // Login bad-password is a 401 (code "unauthorized"); anything else is a
+      // transient failure.
+      setError(
+        err instanceof ApiError && err.status === 401
+          ? "Falsches Passwort."
+          : "Anmeldung fehlgeschlagen — bitte erneut versuchen.",
+      );
     } finally {
-      setBusy(false);
+      if (gen === flowGen.current) setBusy(false);
     }
   }
+
+  // Step 3 (register only): capture interests and create the account.
+  async function onInterestsSubmit(e: FormEvent) {
+    e.preventDefault();
+    const gen = ++flowGen.current;
+    setBusy(true);
+    setError(null);
+    try {
+      const declared_categories = interests
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      await register({ email, password, declared_categories });
+      router.push(redirectTarget());
+    } catch (err) {
+      if (gen !== flowGen.current) return;
+      // Map on the backend's stable machine-readable code, not just HTTP status:
+      // `email_taken` (409), `weak_password`/`invalid_email` (400).
+      const code = err instanceof ApiError ? err.code : "";
+      if (code === "email_taken") {
+        setError("Diese E-Mail ist bereits registriert — wechsle zu „Anmelden“.");
+      } else if (code === "weak_password") {
+        setError("Passwort zu kurz (mindestens 8 Zeichen).");
+      } else if (code === "invalid_email") {
+        setError("Diese E-Mail-Adresse ist ungültig.");
+      } else {
+        setError("Registrierung fehlgeschlagen — bitte erneut versuchen.");
+      }
+    } finally {
+      if (gen === flowGen.current) setBusy(false);
+    }
+  }
+
+  const onSubmit =
+    step === "email" ? onEmailSubmit : step === "password" ? onPasswordSubmit : onInterestsSubmit;
 
   const seg = (active: boolean) => ({
     flex: 1,
     padding: "9px 0",
     borderRadius: 999,
     border: "none",
-    cursor: "pointer",
+    cursor: busy ? "default" : "pointer",
     fontSize: 14,
     fontWeight: active ? 600 : 500,
     color: active ? "#fff" : "rgba(255,255,255,0.55)",
     background: active ? "rgba(255,255,255,0.18)" : "transparent",
+    opacity: busy && !active ? 0.5 : 1,
     transition: "background 0.15s, color 0.15s",
   });
   const field = {
@@ -160,21 +252,34 @@ export default function LoginPage() {
     transition: "border-color 0.15s, background 0.15s",
   };
   const input = { flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", color: "#fff", fontSize: 15 };
-  const heading = { margin: 0, fontFamily: "'Hanken Grotesk', 'Inter', sans-serif", fontWeight: 700, fontSize: 26, color: "#fff", textAlign: "center" as const };
+  const heading = { margin: 0, fontFamily: "var(--font-hanken), var(--font-inter), sans-serif", fontWeight: 700, fontSize: 26, color: "#fff", textAlign: "center" as const };
   const subtext = { margin: 0, fontSize: 14, color: "rgba(255,255,255,0.55)", textAlign: "center" as const };
+
+  const primaryLabel =
+    step === "email"
+      ? "Weiter"
+      : step === "interests"
+        ? "Konto erstellen"
+        : mode === "login"
+          ? "Anmelden"
+          : "Weiter";
+  // Keep an accessible name on the busy button rather than a bare "…".
+  const busyLabel = busy ? { children: "…", "aria-label": "Wird verarbeitet…" } : { children: primaryLabel };
 
   return (
     <div className="glass-login">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap');
-        html, body { margin: 0; }
-        .glass-login { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .glass-login { font-family: var(--font-inter), system-ui, -apple-system, sans-serif; }
         .glass-login input::placeholder { color: rgba(255,255,255,0.4); }
         .glass-login .gl-field:focus-within { border-color: rgba(255,255,255,0.42); background: rgba(255,255,255,0.11); }
         .glass-login .gl-primary:hover:not(:disabled) { background: rgba(255,255,255,0.30); }
         .glass-login .gl-primary:disabled { opacity: 0.6; cursor: default; }
-        .glass-login .gl-back:hover { background: rgba(255,255,255,0.18); }
+        .glass-login .gl-back:hover:not(:disabled) { background: rgba(255,255,255,0.18); }
+        .glass-login .gl-back:disabled { opacity: 0.5; cursor: default; }
         .glass-login .gl-change { background: none; border: none; padding: 0; cursor: pointer; color: rgba(255,255,255,0.85); text-decoration: underline; font: inherit; }
+        .glass-login .gl-change:disabled { cursor: default; opacity: 0.6; }
+        .glass-login .gl-legal { color: rgba(255,255,255,0.62); font-weight: 500; text-decoration: none; }
+        .glass-login .gl-legal:hover { text-decoration: underline; }
       `}</style>
 
       <div
@@ -196,7 +301,15 @@ export default function LoginPage() {
         <button
           type="button"
           className="gl-back"
-          onClick={() => (step === "password" ? backToEmail() : router.back())}
+          disabled={busy}
+          onClick={() => {
+            if (step === "interests") backToPassword();
+            else if (step === "password") backToEmail();
+            // Fresh tab has no history — router.back() is a no-op there, so fall
+            // back to a real destination.
+            else if (window.history.length > 1) router.back();
+            else router.push("/");
+          }}
           aria-label="Zurück"
           style={{ position: "absolute", top: 24, left: 24, width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 999, background: "rgba(255,255,255,0.10)", border: "1px solid rgba(255,255,255,0.22)", color: "rgba(255,255,255,0.85)", cursor: "pointer", transition: "background 0.15s" }}
         >
@@ -204,7 +317,7 @@ export default function LoginPage() {
         </button>
 
         <form
-          onSubmit={step === "email" ? onEmailSubmit : onPasswordSubmit}
+          onSubmit={onSubmit}
           style={{
             position: "relative",
             width: "min(440px, 100%)",
@@ -227,17 +340,17 @@ export default function LoginPage() {
             <span style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.35)", color: "#fff" }}>
               <SparkleIcon />
             </span>
-            <span style={{ fontFamily: "'Hanken Grotesk', 'Inter', sans-serif", fontWeight: 700, fontSize: 22, color: "#fff" }}>
-              Poolside
+            <span style={{ fontFamily: "var(--font-hanken), var(--font-inter), sans-serif", fontWeight: 700, fontSize: 22, color: "#fff" }}>
+              Peer Network
             </span>
           </div>
 
           {/* Anmelden / Registrieren tabs */}
-          <div style={{ display: "flex", gap: 4, width: "100%", padding: 4, borderRadius: 999, background: "rgba(255,255,255,0.07)", boxSizing: "border-box" }}>
-            <button type="button" style={seg(mode === "login")} onClick={() => switchMode("login")}>
+          <div role="tablist" aria-label="Anmelden oder Registrieren" style={{ display: "flex", gap: 4, width: "100%", padding: 4, borderRadius: 999, background: "rgba(255,255,255,0.07)", boxSizing: "border-box" }}>
+            <button type="button" role="tab" aria-selected={mode === "login"} disabled={busy} style={seg(mode === "login")} onClick={() => switchMode("login")}>
               Anmelden
             </button>
-            <button type="button" style={seg(mode === "register")} onClick={() => switchMode("register")}>
+            <button type="button" role="tab" aria-selected={mode === "register"} disabled={busy} style={seg(mode === "register")} onClick={() => switchMode("register")}>
               Registrieren
             </button>
           </div>
@@ -246,20 +359,22 @@ export default function LoginPage() {
           <p style={subtext}>
             {step === "email" ? (
               mode === "login" ? "Gib deine E-Mail ein, um dich anzumelden." : "Gib deine E-Mail ein, um zu starten."
+            ) : step === "interests" ? (
+              "Wähle ein paar Interessen (optional) — das verbessert deinen Feed."
             ) : (
               <>
                 {email}
                 {" · "}
-                <button type="button" className="gl-change" onClick={backToEmail}>
+                <button type="button" className="gl-change" disabled={busy} onClick={backToEmail}>
                   Ändern
                 </button>
               </>
             )}
           </p>
 
-          {step === "email" ? (
+          {step === "email" && (
             <div className="gl-field" style={field}>
-              <span style={{ color: "rgba(255,255,255,0.6)", display: "flex" }}>
+              <span style={{ color: "rgba(255,255,255,0.6)", display: "flex" }} aria-hidden>
                 <MailIcon />
               </span>
               <input
@@ -267,15 +382,18 @@ export default function LoginPage() {
                 required
                 autoFocus
                 autoComplete="email"
+                aria-label="E-Mail-Adresse"
                 placeholder="du@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 style={input}
               />
             </div>
-          ) : (
+          )}
+
+          {step === "password" && (
             <div className="gl-field" style={field}>
-              <span style={{ color: "rgba(255,255,255,0.6)", display: "flex" }}>
+              <span style={{ color: "rgba(255,255,255,0.6)", display: "flex" }} aria-hidden>
                 <LockIcon />
               </span>
               <input
@@ -284,6 +402,7 @@ export default function LoginPage() {
                 autoFocus
                 minLength={mode === "register" ? 8 : undefined}
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
+                aria-label="Passwort"
                 placeholder={mode === "login" ? "Passwort" : "Passwort wählen (min. 8 Zeichen)"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -292,23 +411,43 @@ export default function LoginPage() {
             </div>
           )}
 
-          {error && <p style={{ margin: 0, width: "100%", fontSize: 13, color: "#ff8585", textAlign: "center" }}>{error}</p>}
+          {step === "interests" && (
+            <div className="gl-field" style={field}>
+              <span style={{ color: "rgba(255,255,255,0.6)", display: "flex" }} aria-hidden>
+                <TagIcon />
+              </span>
+              <input
+                type="text"
+                autoFocus
+                aria-label="Interessen (kommagetrennt, optional)"
+                placeholder="Musik, Tech, Kunst…"
+                value={interests}
+                onChange={(e) => setInterests(e.target.value)}
+                style={input}
+              />
+            </div>
+          )}
+
+          {error && (
+            <p role="alert" aria-live="assertive" style={{ margin: 0, width: "100%", fontSize: 13, color: "#ff8585", textAlign: "center" }}>
+              {error}
+            </p>
+          )}
 
           <button
             type="submit"
             className="gl-primary"
             disabled={busy}
             style={{ width: "100%", padding: "15px 0", borderRadius: 999, background: "rgba(255,255,255,0.22)", border: "1.2px solid rgba(255,255,255,0.42)", boxShadow: "0 8px 20px rgba(0,0,0,0.4)", color: "#fff", fontSize: 15, fontWeight: 500, cursor: "pointer", transition: "background 0.15s" }}
-          >
-            {busy ? "…" : step === "email" ? "Weiter" : mode === "login" ? "Anmelden" : "Konto erstellen"}
-          </button>
+            {...busyLabel}
+          />
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, paddingTop: 6, fontSize: 11 }}>
             <span style={{ color: "rgba(255,255,255,0.38)", textAlign: "center" }}>Mit Fortfahren akzeptierst du unsere</span>
             <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ color: "rgba(255,255,255,0.62)", fontWeight: 500 }}>AGB</span>
+              <a className="gl-legal" href="/legal/agb">AGB</a>
               <span style={{ color: "rgba(255,255,255,0.3)" }}>·</span>
-              <span style={{ color: "rgba(255,255,255,0.62)", fontWeight: 500 }}>Datenschutz</span>
+              <a className="gl-legal" href="/legal/datenschutz">Datenschutz</a>
             </span>
           </div>
         </form>

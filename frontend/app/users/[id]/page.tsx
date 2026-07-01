@@ -24,7 +24,13 @@ export default function ProfilePage() {
   const [followingCount, setFollowingCount] = useState<number | null>(null);
   const [balance, setBalance] = useState<GemBalance | null>(null);
   const [following, setFollowing] = useState<boolean | null>(null);
+  // Distinguishes "still loading the viewer's follow list" (following === null,
+  // followErr === null) from "the follow list failed" (followErr set) so we can
+  // offer a retry instead of silently hiding the Follow button forever.
+  const [followErr, setFollowErr] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped to re-run only the viewer's follow-list fetch on "Retry".
+  const [followReload, setFollowReload] = useState(0);
 
   useEffect(() => {
     if (!token || !profileId) return;
@@ -35,26 +41,33 @@ export default function ProfilePage() {
     setFollowingCount(null);
     setBalance(null);
     setFollowing(null);
+    setFollowErr(false);
     setError(null);
+    // Guard against out-of-order resolution: a slow response for a previously-
+    // viewed profile must not overwrite the profile we navigated to.
+    let stale = false;
     apiFetch<User>(`/users/${profileId}`, { token })
-      .then(setUser)
-      .catch(() => setError("Could not load this profile."));
+      .then((u) => !stale && setUser(u))
+      .catch(() => !stale && setError("Could not load this profile."));
     apiFetch<Post[]>(`/posts?author_id=${profileId}&limit=50`, { token })
-      .then(setPosts)
-      .catch(() => setPosts([]));
+      .then((p) => !stale && setPosts(p))
+      .catch(() => !stale && setPosts([]));
     apiFetch<Follow[]>(`/users/${profileId}/following`, { token })
-      .then((f) => setFollowingCount(f.length))
+      .then((f) => !stale && setFollowingCount(f.length))
       .catch(() => {});
     if (isSelf) {
       apiFetch<GemBalance>(`/users/${profileId}/gems`, { token })
-        .then(setBalance)
+        .then((b) => !stale && setBalance(b))
         .catch(() => {});
     } else if (userId) {
       apiFetch<Follow[]>(`/users/${userId}/following`, { token })
-        .then((f) => setFollowing(f.some((x) => String(x.followee_id) === profileId)))
-        .catch(() => {});
+        .then((f) => !stale && setFollowing(f.some((x) => String(x.followee_id) === profileId)))
+        .catch(() => !stale && setFollowErr(true));
     }
-  }, [token, userId, profileId, isSelf]);
+    return () => {
+      stale = true;
+    };
+  }, [token, userId, profileId, isSelf, followReload]);
 
   async function toggleFollow() {
     if (following === null || !token) return;
@@ -92,6 +105,14 @@ export default function ProfilePage() {
             <button type="button" onClick={toggleFollow}>
               {following ? "Unfollow" : "Follow"}
             </button>
+          )}
+          {!isSelf && followErr && (
+            <p style={{ color: "crimson" }}>
+              Couldn&apos;t check your follow status.{" "}
+              <button type="button" onClick={() => setFollowReload((n) => n + 1)}>
+                Retry
+              </button>
+            </p>
           )}
           {isSelf && (
             <p>

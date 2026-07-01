@@ -8,6 +8,7 @@ import type { NewUpload } from "@contract/NewUpload";
 import type { UploadTicket } from "@contract/UploadTicket";
 
 import { apiFetch } from "./api";
+import type { Wire } from "./wire";
 
 export type MediaKindT = "image" | "video" | "audio";
 
@@ -36,12 +37,13 @@ export async function uploadMedia(
   const kind = kindOf(file.type);
 
   // 1. Upload ticket (presigned PUT URL). unlock_price is bigint in the contract but
-  //    goes on the wire as a number, so build with a number and cast.
-  const newUpload = {
+  //    goes on the wire as a number; Wire<> lets the number through while keeping
+  //    the field contract, so a renamed/added required field still breaks the build.
+  const newUpload: Wire<NewUpload> = {
     kind,
     content_type: file.type,
     unlock_price: unlockPrice,
-  } as unknown as NewUpload;
+  };
   const ticket = await apiFetch<UploadTicket>("/media", {
     method: "POST",
     body: newUpload,

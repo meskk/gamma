@@ -7,6 +7,7 @@ import type { NewPost } from "@contract/NewPost";
 import type { Post } from "@contract/Post";
 
 import { apiFetch } from "@/lib/api";
+import type { Wire } from "@/lib/wire";
 import { uploadMedia } from "@/lib/mediaUpload";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 
@@ -32,11 +33,11 @@ export default function ComposePage() {
         const asset = await uploadMedia(file, price, token);
         mediaId = Number(asset.id);
       }
-      const payload = {
+      const payload: Wire<NewPost> = {
         body: body.trim(),
         category: category.trim() ? category.trim() : null,
         media_id: mediaId, // bigint|null in the contract; a number on the wire
-      } as unknown as NewPost;
+      };
       const created = await apiFetch<Post>("/posts", { method: "POST", body: payload, token });
       router.push(`/posts/${created.id}`);
     } catch {

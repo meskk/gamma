@@ -45,6 +45,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function loadSession(t: string) {
     const me = await apiFetch<CurrentUser>("/auth/me", { token: t });
+    // Deliberate Phase-1a decision: the bearer token lives in sessionStorage
+    // (JS-readable) rather than an HttpOnly cookie, to keep the SPA + Bearer flow
+    // simple. The compensating control is the Content-Security-Policy set in
+    // next.config.mjs, which constrains script/connect origins to shrink the XSS
+    // token-exfiltration surface. Revisit (HttpOnly cookie) if/when this hardens.
     sessionStorage.setItem(TOKEN_KEY, t);
     setToken(t);
     setUserId(String(me.user_id));
