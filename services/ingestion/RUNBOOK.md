@@ -64,12 +64,21 @@ supervisor / `--restart=unless-stopped` / the orchestrator's restart policy.
   (`written/skipped_missing/failed/dead_lettered`) is logged every 100 posts and at
   shutdown.
 - **Dead-letter queue:** posts that fail after retries land on `gamma:ingestion:dead`.
-  Inspect: `redis-cli LRANGE gamma:ingestion:dead 0 -1`. Replay: push the ids back onto
-  `gamma:ingestion` once the cause is fixed.
+  Each entry is a JSON `{"post_id":…,"error":…}`. Inspect:
+  `redis-cli LRANGE gamma:ingestion:dead 0 -1`. Replay once the cause is fixed:
+  `redis-cli RPOPLPUSH gamma:ingestion:dead gamma:ingestion` per entry — the consumer
+  normalises that JSON shape back to an id, so replaying does NOT destroy the entry.
+  (A poison payload the consumer could not parse at all is also quarantined here, with
+  `"post_id": null`; delete those rather than replaying them.)
+- **Reliable delivery (at-least-once):** each id is moved onto
+  `gamma:ingestion:processing` while in flight and only removed after it is written or
+  dead-lettered. A crash mid-post leaves the id there; the worker re-queues any such
+  stragglers at startup (logged as "recovered … stranded"). Re-delivery is safe — the
+  write-back is idempotent. Inspect in-flight work: `LRANGE gamma:ingestion:processing 0 -1`.
 - **Backfill the existing corpus:** `POST /v1/admin/ingestion/backfill?after=<cursor>`
   (operator), paginating until `enqueued == 0`.
-- **Shutdown:** SIGINT/SIGTERM → the in-flight post finishes (never half-done), then it
-  exits (`docker stop` is clean).
+- **Shutdown:** SIGINT/SIGTERM → the in-flight post finishes (never half-done) and is
+  acked, then it exits (`docker stop` is clean).
 
 ## 6. The model swap (when the GPU/model is ready)
 
@@ -78,8 +87,10 @@ supervisor / `--restart=unless-stopped` / the orchestrator's restart policy.
    impl that declares its own `model_version` (prep-plan P18).
 2. Add the model deps to `pyproject.toml` and regenerate `requirements.lock`; base the
    Dockerfile runtime on a CUDA image (or run natively under launchd on a Mac).
-3. Run with `GAMMA_ANALYZER=model` and a bumped `GAMMA_MODEL_VERSION`. Confirm
-   `ruff check . && mypy && pytest` still green.
+3. Run with `GAMMA_ANALYZER=model`. The analyser declares its own `model_version`
+   intrinsically (in code, next to the weights it loads) — there is no
+   `GAMMA_MODEL_VERSION` env knob to set, so the provenance tag can't drift from the
+   code. Confirm `ruff check . && mypy && pytest` still green.
 4. Re-analyse the corpus once a second version exists: `POST /v1/admin/ingestion/backfill`
    targeting the stale rows (version-targeted re-enqueue, prep-plan P4).
 

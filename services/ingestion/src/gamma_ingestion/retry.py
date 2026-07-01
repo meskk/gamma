@@ -13,16 +13,13 @@ import logging
 import random
 import time
 from collections.abc import Callable
-from typing import TypeVar
 
 from .api_client import TransientError
 
 log = logging.getLogger("gamma_ingestion")
 
-T = TypeVar("T")
 
-
-def retry_transient(
+def retry_transient[T](
     fn: Callable[[], T],
     attempts: int,
     base_delay: float,

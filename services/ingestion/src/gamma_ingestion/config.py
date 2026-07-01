@@ -25,8 +25,7 @@ class Config:
     api_base_url: str
     operator_email: str
     operator_password: str
-    model_version: str
-    # How long BRPOP blocks waiting for work before looping (seconds). Keeps the
+    # How long BRPOPLPUSH blocks waiting for work before looping (seconds). Keeps the
     # process responsive to shutdown signals without busy-spinning on an empty queue.
     poll_timeout_seconds: float
     request_timeout_seconds: float
@@ -41,6 +40,9 @@ class Config:
     # Where a post that still fails after retries is quarantined (defaults to
     # "<queue_key>:dead"), so failures are inspectable/replayable, not lost.
     dead_letter_key: str = "gamma:ingestion:dead"
+    # Reliable-queue processing LIST: ids popped-but-not-yet-acked live here so a
+    # crash mid-post can't lose them (defaults to "<queue_key>:processing").
+    processing_key: str = "gamma:ingestion:processing"
 
     @staticmethod
     def from_env(environ: Mapping[str, str] | None = None) -> Config:
@@ -64,13 +66,13 @@ class Config:
             api_base_url=env.get("GAMMA_API_BASE_URL", "http://localhost:8080/v1").rstrip("/"),
             operator_email=operator_email,
             operator_password=operator_password,
-            model_version=env.get("GAMMA_MODEL_VERSION", "heuristic-v0"),
             poll_timeout_seconds=_float(env, "GAMMA_POLL_TIMEOUT_SECONDS", 5.0),
             request_timeout_seconds=_float(env, "GAMMA_REQUEST_TIMEOUT_SECONDS", 10.0),
             analyzer=env.get("GAMMA_ANALYZER", "heuristic"),
             retry_attempts=retry_attempts,
             retry_base_delay_seconds=_float(env, "GAMMA_RETRY_BASE_DELAY_SECONDS", 0.5),
             dead_letter_key=env.get("GAMMA_INGESTION_DEAD_QUEUE", f"{queue_key}:dead"),
+            processing_key=env.get("GAMMA_INGESTION_PROCESSING_QUEUE", f"{queue_key}:processing"),
         )
 
 

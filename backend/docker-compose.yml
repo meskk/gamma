@@ -1,11 +1,15 @@
 # Local dependencies for one-command setup: `docker compose up -d`.
 # A drop-in reviewer is running in minutes, on any machine.
+#
+# The credentials below are DEV-ONLY convenience defaults (they match .env.example so
+# the stack runs with zero config). NEVER reuse them outside local dev — prod secrets
+# come from the orchestrator / a secrets manager, never a committed compose file.
 services:
   postgres:
     image: postgres:16
     environment:
       POSTGRES_USER: gamma
-      POSTGRES_PASSWORD: gamma
+      POSTGRES_PASSWORD: gamma # dev-only
       POSTGRES_DB: gamma
     ports:
       - "5432:5432"
@@ -21,6 +25,15 @@ services:
     image: redis:7
     ports:
       - "6379:6379"
+    # Persist the queue across `docker compose down` so enqueued (but not-yet-
+    # processed) ingestion/transcode jobs survive a stack restart.
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   # S3-compatible object storage for media (long video/audio never touch the app
   # server — clients upload/download via presigned URLs). Console at :9001.
@@ -28,14 +41,23 @@ services:
     image: minio/minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: gamma
-      MINIO_ROOT_PASSWORD: gammasecret
+      MINIO_ROOT_USER: gamma # dev-only
+      MINIO_ROOT_PASSWORD: gammasecret # dev-only
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
       - miniodata:/data
+    # `mc ready local` is MinIO's own readiness probe (the server image ships `mc`
+    # and auto-registers the `local` alias) — it reports healthy only once the server
+    # can serve, which the media tests / app depend on.
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 volumes:
   pgdata:
+  redisdata:
   miniodata:

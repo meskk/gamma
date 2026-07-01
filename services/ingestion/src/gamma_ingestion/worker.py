@@ -5,15 +5,23 @@ trivially testable. ``Worker`` adds token lifecycle (lazy login, re-login once o
 401) and the resilient loop: one bad post is logged and skipped, never fatal. The
 analyser is INJECTED (like the client and queue), so the real model swaps in without
 touching this loop.
+
+Delivery is at-least-once (see ``queue.py``): the queue moves each id onto a
+processing list at ``pop`` and only drops it at ``ack`` (after the post is written or
+dead-lettered), so a crash mid-post re-delivers rather than loses it. The write-back
+is idempotent, so a re-delivery is harmless.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 
+import redis
+
 from .analyzer import Analyzer
-from .api_client import ApiClient, AuthError
+from .api_client import ApiClient, AuthError, ForbiddenError
 from .config import Config
 from .metrics import Metrics
 from .queue import IngestionQueue
@@ -72,14 +80,19 @@ class Worker:
 
     def process(self, post_id: int) -> str:
         """Process one post: retry transient (network/5xx) failures with backoff,
-        and re-authenticate once if the token has expired."""
+        and re-authenticate once if the token has expired.
+
+        The re-login on a 401 is itself wrapped in the transient-retry: an API
+        redeploy shows up as a 401 followed by a brief unreachability, and a
+        transient failure while re-logging in must NOT bubble out to the caller as a
+        poison-post error — the post is healthy and retryable."""
         token = self._ensure_token()
         try:
             return self._run_with_retry(post_id, token)
         except AuthError:
             log.info("bearer token rejected; re-authenticating")
             self._token = None
-            token = self._ensure_token()
+            token = self._relogin_with_retry()
             return self._run_with_retry(post_id, token)
 
     def _run_with_retry(self, post_id: int, token: str) -> str:
@@ -89,21 +102,60 @@ class Worker:
             base_delay=self._config.retry_base_delay_seconds,
         )
 
+    def _relogin_with_retry(self) -> str:
+        """Re-login, retrying transient failures with backoff.
+
+        ``login`` raises ``TransientError`` on network/5xx problems (an API mid-
+        redeploy). Retrying here — instead of letting it propagate — keeps a brief
+        blip during re-auth from quarantining an in-flight, healthy post as poison."""
+        return retry_transient(
+            self._ensure_token,
+            attempts=self._config.retry_attempts,
+            base_delay=self._config.retry_base_delay_seconds,
+        )
+
+    def _pop_with_retry(self, should_stop: Callable[[], bool]) -> tuple[int, object] | None:
+        """Pop the next id, retrying Redis connection blips with backoff.
+
+        A transient Redis failure (a restart / network blip) must not kill the
+        process with an uncaught traceback: retry with exponential backoff until the
+        queue comes back or shutdown is requested. Returns ``None`` on an idle
+        timeout or when stopping."""
+        delay = self._config.retry_base_delay_seconds or 0.5
+        while not should_stop():
+            try:
+                return self._queue.pop(self._config.poll_timeout_seconds)
+            except redis.exceptions.RedisError:
+                log.warning(
+                    "redis unavailable while polling; retrying in %.2fs", delay, exc_info=True
+                )
+                time.sleep(delay)
+                delay = min(delay * 2, 30.0)
+        return None
+
     def run(self, should_stop: Callable[[], bool]) -> None:
         """Consume until ``should_stop()`` returns True (set by a SIGINT/SIGTERM
         handler), then shut down gracefully.
 
         Graceful-shutdown guarantees: the stop flag is checked only at the top of the
         loop, so a post already popped is ALWAYS finished (written or dead-lettered)
-        before exit — never half-done and never lost back off the LIST — and no NEW
-        post is started once stopping. Worst-case shutdown latency while idle is one
-        ``poll_timeout_seconds`` (the blocking BRPOP). Per-call bounding relies on the
-        API timeout (``request_timeout_seconds``); a future model analyser must
-        likewise bound its own inference so an in-flight call can't stall shutdown
-        (the supervisor's SIGKILL is the final backstop).
+        and acked before exit — never half-done and never lost off the processing
+        LIST — and no NEW post is started once stopping. Worst-case shutdown latency
+        while idle is one ``poll_timeout_seconds`` (the blocking BRPOPLPUSH). Per-call
+        bounding relies on the API timeout (``request_timeout_seconds``); a future
+        model analyser must likewise bound its own inference so an in-flight call
+        can't stall shutdown (the supervisor's SIGKILL is the final backstop).
 
         Assumes ``prime()`` has already established the initial token (so a startup
         login failure is caught by the caller, not raised from inside this loop)."""
+        stranded = self._queue.recover_stranded()
+        if stranded:
+            log.warning(
+                "recovered %d id(s) stranded on the processing list from a prior "
+                "crash; re-queued for reprocessing: %s",
+                len(stranded),
+                stranded,
+            )
         log.info(
             "ingestion worker started; consuming %s with analyzer %s",
             self._config.queue_key,
@@ -111,9 +163,10 @@ class Worker:
         )
         processed = 0
         while not should_stop():
-            post_id = self._queue.pop(self._config.poll_timeout_seconds)
-            if post_id is None:
-                continue  # idle timeout — re-check the stop flag and block again
+            popped = self._pop_with_retry(should_stop)
+            if popped is None:
+                continue  # idle timeout / stopping — re-check the stop flag
+            post_id, raw = popped
             try:
                 outcome = self.process(post_id)
                 self.metrics.record_outcome(outcome)
@@ -123,21 +176,30 @@ class Worker:
                 # fresh re-login (e.g. expired/invalid operator credentials). This is a
                 # credentials/environment problem, NOT a poison post. Return the id to
                 # the main queue and stop so the supervisor restarts / an operator fixes
-                # the credentials — do NOT dead-letter a healthy post. (A revoked role
-                # yields 403, which surfaces as a plain ApiError and is dead-lettered.)
+                # the credentials — do NOT dead-letter a healthy post.
                 log.error(
-                    "post %s: authentication failing after re-login; returning post "
-                    "and stopping",
+                    "post %s: authentication failing after re-login; returning "
+                    "post and stopping",
                     post_id,
                 )
-                try:
-                    self._queue.requeue(post_id)
-                except Exception:  # noqa: BLE001 — best-effort; the id is logged above
-                    log.exception("post %s: failed to requeue", post_id)
-                break
+                self._safe_requeue(post_id)
+                self._safe_ack(raw)  # the id is now back on the main queue; drop the in-flight copy
+                return
+            except ForbiddenError:
+                # 403: valid token, insufficient permission (operator role revoked).
+                # Systemic, not per-post — every post would fail identically, so
+                # return this one and stop rather than shovel the whole backlog into
+                # the DLQ.
+                log.error(
+                    "post %s: forbidden (operator permission revoked?); returning "
+                    "post and stopping",
+                    post_id,
+                )
+                self._safe_requeue(post_id)
+                self._safe_ack(raw)  # the id is now back on the main queue; drop the in-flight copy
+                return
             except Exception as exc:  # noqa: BLE001 — one bad post must not kill the loop
-                # Quarantine, don't silently drop: the post is already off the main
-                # LIST, so without this it would be lost with no record.
+                # Quarantine, don't silently drop.
                 log.exception("post %s: processing failed; dead-lettering", post_id)
                 dead_lettered = False
                 try:
@@ -146,7 +208,22 @@ class Worker:
                 except Exception:  # noqa: BLE001 — dead-letter is itself best-effort
                     log.exception("post %s: failed to dead-letter", post_id)
                 self.metrics.record_failure(dead_lettered=dead_lettered)
+            # The post is fully handled (written, skipped, or dead-lettered) — ack it
+            # off the processing list so a later crash won't re-deliver it.
+            self._safe_ack(raw)
             processed += 1
             if processed % _SUMMARY_EVERY == 0:
                 log.info("ingestion metrics: %s", self.metrics.as_dict())
         log.info("ingestion worker stopped; metrics: %s", self.metrics.as_dict())
+
+    def _safe_requeue(self, post_id: int) -> None:
+        try:
+            self._queue.requeue(post_id)
+        except Exception:  # noqa: BLE001 — best-effort; recovered from the processing list otherwise
+            log.exception("post %s: failed to requeue", post_id)
+
+    def _safe_ack(self, raw: object) -> None:
+        try:
+            self._queue.ack(raw)
+        except Exception:  # noqa: BLE001 — a failed ack only risks a harmless re-delivery
+            log.exception("failed to ack processed id off the processing list")

@@ -54,11 +54,14 @@ jobs:
       # bucket gamma-media — matching the MinIO container below, so no overrides needed.
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Actions pinned to immutable version tags. TODO: pin to the full commit SHA
+      # (e.g. actions/checkout@<40-hex> # v4.2.2) — a tag is mutable; a SHA is not.
+      # Resolving SHAs needs network access this offline change can't reach.
+      - uses: actions/checkout@v4.2.2 # TODO: pin to SHA
+      - uses: dtolnay/rust-toolchain@stable # TODO: pin to SHA (this action has no versioned tags; SHA-pin is the only fix)
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.7.8 # TODO: pin to SHA
         with:
           workspaces: backend
 
@@ -67,14 +70,25 @@ jobs:
 
       - name: Start MinIO (S3-compatible object store for the media tests)
         run: |
+          # Pinned image tag (immutable dated release) rather than :latest, so a MinIO
+          # release can't silently change CI. TODO: pin to a @sha256 digest.
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=gamma -e MINIO_ROOT_PASSWORD=gammasecret \
-            minio/minio server /data
+            minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
           echo "waiting for MinIO…"
+          ready=""
           for _ in $(seq 1 30); do
-            curl -sf http://localhost:9000/minio/health/live && break
+            if curl -sf http://localhost:9000/minio/health/live; then
+              ready=1
+              break
+            fi
             sleep 1
           done
+          if [ -z "$ready" ]; then
+            echo "MinIO did not become healthy in time" >&2
+            docker logs minio || true
+            exit 1
+          fi
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -88,8 +102,12 @@ jobs:
       # `cargo test` regenerates the ts-rs frontend contract (the export_bindings
       # tests). If the committed bindings drifted from the Rust types, fail — the
       # contract must be regenerated and committed alongside the API change.
+      # `git add -A` then a cached diff so NEW (untracked) exports and DELETED
+      # bindings are caught too — a plain `git diff` sees only tracked, modified files.
       - name: Frontend contract is in sync (bindings not drifted)
-        run: git diff --exit-code bindings
+        run: |
+          git add -A bindings
+          git diff --cached --exit-code bindings
 
   # The Python AI-ingestion service (services/ingestion). Its tests are pure —
   # httpx MockTransport + fakes, no Redis/Postgres — so this job needs no backing
@@ -102,8 +120,9 @@ jobs:
         working-directory: services/ingestion
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # TODO: pin these to full commit SHAs (see the note in build-and-test).
+      - uses: actions/checkout@v4.2.2 # TODO: pin to SHA
+      - uses: actions/setup-python@v5.4.0 # TODO: pin to SHA
         with:
           python-version: "3.12"
 
@@ -124,6 +143,20 @@ jobs:
       - name: Test (pytest)
         run: pytest -q
 
+  # The ingestion service's deploy unit is its Dockerfile — build it in CI so a
+  # broken image (bad lock, missing file, changed base) is caught here, not at deploy.
+  ingestion-docker:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: services/ingestion
+
+    steps:
+      - uses: actions/checkout@v4.2.2 # TODO: pin to SHA
+      - name: Build the ingestion image (the declared deploy unit)
+        run: docker build -t gamma-ingestion:ci .
+
   # The Next.js frontend (frontend/). Typechecks against the committed ts-rs
   # contract (backend/bindings/*.ts via the @contract alias), so a backend API
   # shape change that wasn't reflected in the frontend breaks CI here, and builds.
@@ -135,8 +168,9 @@ jobs:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # TODO: pin these to full commit SHAs (see the note in build-and-test).
+      - uses: actions/checkout@v4.2.2 # TODO: pin to SHA
+      - uses: actions/setup-node@v4.2.0 # TODO: pin to SHA
         with:
           node-version: "22"
           cache: npm
@@ -147,6 +181,9 @@ jobs:
 
       - name: Type-check (contract alignment)
         run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
 
       - name: Test
         run: npm test
