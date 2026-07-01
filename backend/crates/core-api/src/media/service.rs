@@ -35,6 +35,13 @@ const COMPANY_ACCOUNT_ID: i64 = 0;
 /// terabytes to the bucket" hole.
 const MAX_UPLOAD_BYTES: i64 = 2 * 1024 * 1024 * 1024;
 
+/// Upper bound on an asset's unlock price (the whole 21M-PEER supply in base
+/// units). A price can never exceed the total possible supply, and bounding it here
+/// keeps the unlock fee split (`price * fee_bps`) well inside i64 — an unbounded
+/// price would overflow the multiply (a panic under the money crates'
+/// overflow-checks, silent wrap without them).
+const MAX_UNLOCK_PRICE: i64 = 21_000_000 * domain::PT_ONE as i64;
+
 #[derive(Clone)]
 pub struct MediaService {
     repo: MediaRepository,
@@ -78,6 +85,9 @@ impl MediaService {
 
         if req.unlock_price < 0 {
             return Err(ApiError::Validation("negative_price"));
+        }
+        if req.unlock_price > MAX_UNLOCK_PRICE {
+            return Err(ApiError::Validation("price_too_high"));
         }
 
         let asset = self

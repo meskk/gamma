@@ -199,7 +199,15 @@ impl SettlementService {
         let start = (current_epoch - lookback).max(0);
         let mut summaries = Vec::new();
         for epoch_k in start..current_epoch {
-            summaries.push(self.settle(epoch_k).await?);
+            match self.settle(epoch_k).await {
+                Ok(s) => summaries.push(s),
+                // A single failing epoch must NOT block the newer epochs behind it
+                // (the old `?` aborted the whole window, so one poison epoch stalled
+                // every later payout). Log it and continue; the next tick retries it.
+                Err(e) => {
+                    tracing::error!(epoch = epoch_k, error = ?e, "settling epoch failed; continuing")
+                }
+            }
         }
         Ok(summaries)
     }
