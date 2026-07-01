@@ -42,8 +42,14 @@ impl FollowRepository {
         Ok(())
     }
 
-    /// The accounts `follower` follows, newest edge first.
-    pub async fn list_following(&self, follower: i64) -> Result<Vec<Follow>, sqlx::Error> {
+    /// The accounts `follower` follows, newest edge first, bounded by
+    /// `limit`/`offset` so the list can't return an unbounded result set.
+    pub async fn list_following(
+        &self,
+        follower: i64,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Follow>, sqlx::Error> {
         sqlx::query_as!(
             Follow,
             r#"
@@ -51,8 +57,11 @@ impl FollowRepository {
             FROM follows
             WHERE follower_id = $1
             ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3
             "#,
-            follower
+            follower,
+            limit,
+            offset
         )
         .fetch_all(&self.pool)
         .await

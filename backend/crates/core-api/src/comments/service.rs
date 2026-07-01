@@ -9,6 +9,13 @@ use db::PgPool;
 /// Hard cap on a comment's length.
 const MAX_COMMENT_LEN: usize = 2000;
 
+/// Default page size when the client asks for none, and the hard maximum it may
+/// request. Bounds the result set (the query was previously unbounded) while
+/// staying generous enough not to truncate a normal thread; keyset pagination is
+/// the eventual refinement.
+const DEFAULT_PAGE: i64 = 200;
+const MAX_PAGE: i64 = 500;
+
 #[derive(Clone)]
 pub struct CommentService {
     repo: CommentRepository,
@@ -43,8 +50,15 @@ impl CommentService {
         }
     }
 
-    pub async fn list(&self, post_id: i64) -> Result<Vec<Comment>, ApiError> {
-        Ok(self.repo.list_for_post(post_id).await?)
+    pub async fn list(
+        &self,
+        post_id: i64,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<Comment>, ApiError> {
+        let limit = limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
+        let offset = offset.unwrap_or(0).max(0);
+        Ok(self.repo.list_for_post(post_id, limit, offset).await?)
     }
 }
 

@@ -6,6 +6,12 @@ use crate::follows::model::Follow;
 use crate::follows::repository::FollowRepository;
 use db::PgPool;
 
+/// Default and maximum page size for the following list. The default is generous
+/// (the frontend derives follow state from the list today), while the max bounds
+/// the worst case a single request can return.
+const DEFAULT_PAGE: i64 = 1000;
+const MAX_PAGE: i64 = 1000;
+
 #[derive(Clone)]
 pub struct FollowService {
     repo: FollowRepository,
@@ -29,8 +35,15 @@ impl FollowService {
         Ok(self.repo.unfollow(follower, followee).await?)
     }
 
-    pub async fn list_following(&self, follower: i64) -> Result<Vec<Follow>, ApiError> {
-        Ok(self.repo.list_following(follower).await?)
+    pub async fn list_following(
+        &self,
+        follower: i64,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<Follow>, ApiError> {
+        let limit = limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
+        let offset = offset.unwrap_or(0).max(0);
+        Ok(self.repo.list_following(follower, limit, offset).await?)
     }
 }
 

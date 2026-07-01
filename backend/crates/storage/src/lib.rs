@@ -186,4 +186,17 @@ impl Storage {
             }
         }
     }
+
+    /// Delete an object (best-effort cleanup, e.g. an upload that exceeded the size
+    /// cap at finalize). Deleting a missing key is a no-op on S3.
+    pub async fn delete_object(&self, key: &str) -> Result<()> {
+        self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| StorageError::S3(e.to_string()))?;
+        Ok(())
+    }
 }

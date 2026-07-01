@@ -84,6 +84,62 @@ async fn register_login_and_authenticated_me(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn logout_revokes_the_session(pool: PgPool) {
+    let router = app(AppState::new(pool));
+
+    // Register → a working token.
+    let reg = json_body(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({ "email": "logout@example.com", "password": "supersecret" }),
+        )
+        .await,
+    )
+    .await;
+    let token = reg["token"].as_str().unwrap().to_string();
+
+    let me = |t: String| {
+        let router = router.clone();
+        async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/v1/auth/me")
+                        .header("authorization", format!("Bearer {t}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+
+    // Token works, then logout revokes it, then the SAME token is 401.
+    assert_eq!(me(token.clone()).await, StatusCode::OK);
+    let logout = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/auth/logout")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        me(token).await,
+        StatusCode::UNAUTHORIZED,
+        "a revoked token must no longer authenticate"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn check_email_reports_existence(pool: PgPool) {
     let router = app(AppState::new(pool));
 

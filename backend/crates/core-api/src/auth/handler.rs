@@ -2,7 +2,8 @@
 //! `AuthUser` extractor.
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::header::AUTHORIZATION;
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
@@ -18,7 +19,26 @@ pub fn routes() -> Router<AppState> {
         .route("/auth/register", post(register))
         .route("/auth/login", post(login))
         .route("/auth/check-email", post(check_email))
+        .route("/auth/logout", post(logout))
         .route("/auth/me", get(me))
+}
+
+/// Revoke the session on this request (logout). Requires a valid token (`Caller`
+/// → 401 otherwise); the token to revoke is read from the same Authorization
+/// header. Returns 204 whether or not the row still existed (idempotent).
+async fn logout(
+    State(state): State<AppState>,
+    _caller: Caller,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    if let Some(token) = headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    {
+        state.auth.logout(token).await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Email-first login step: does an account exist for this email? Drives whether the

@@ -34,12 +34,16 @@ async fn follow_is_idempotent_and_listed(pool: PgPool) {
     repo.follow(a, b).await.expect("follow");
     repo.follow(a, b).await.expect("follow again is a no-op");
 
-    let following = repo.list_following(a).await.expect("list");
+    let following = repo.list_following(a, 100, 0).await.expect("list");
     assert_eq!(following.len(), 1);
     assert_eq!(following[0].followee_id, b);
 
     repo.unfollow(a, b).await.expect("unfollow");
-    assert!(repo.list_following(a).await.expect("list").is_empty());
+    assert!(repo
+        .list_following(a, 100, 0)
+        .await
+        .expect("list")
+        .is_empty());
 
     // Unfollowing a non-edge is fine.
     repo.unfollow(a, b).await.expect("unfollow no-op");
