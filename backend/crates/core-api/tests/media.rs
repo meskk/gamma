@@ -366,6 +366,27 @@ async fn queue_enqueue_dequeue_is_fifo() {
     assert!(queue.dequeue().await.unwrap().is_none());
 }
 
+#[tokio::test]
+async fn reserve_without_ack_is_recovered_not_lost() {
+    let queue = TranscodeQueue::with_key(REDIS_URL, unique_queue_key()).unwrap();
+    queue.enqueue(7).await.unwrap();
+
+    // Reserve moves the job onto the processing list (not the main queue).
+    assert_eq!(queue.reserve().await.unwrap(), Some(7));
+    // Simulate a crash before ack: the job is still recoverable.
+    assert_eq!(
+        queue.recover_stranded().await.unwrap(),
+        1,
+        "a reserved-but-unacked job is re-queued, not lost"
+    );
+
+    // Reserve again, this time ack it → nothing left to recover, queue drained.
+    assert_eq!(queue.reserve().await.unwrap(), Some(7));
+    queue.ack(7).await.unwrap();
+    assert_eq!(queue.recover_stranded().await.unwrap(), 0);
+    assert!(queue.reserve().await.unwrap().is_none());
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn worker_transcodes_an_enqueued_asset(pool: PgPool) {
     ensure_bucket().await;
