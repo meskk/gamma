@@ -35,3 +35,8 @@ hex = "0.4"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+# Trap integer overflow on conserved quantities in release too: a wrapping add on
+# a balance/emission would silently corrupt supply. We'd rather fail closed (panic,
+# caught by the settlement error path) than mint 2^128 gems. The cost is negligible
+# on this workload.
+overflow-checks = true

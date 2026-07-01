@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use thiserror::Error;
 
 mod pg;
-pub use pg::{burn_tx, credit_tx, debit_tx, PgLedger};
+pub use pg::{burn_tx, credit_tx, debit_tx, mint_epoch_tx, PgLedger};
 
 #[derive(Debug, Error)]
 pub enum LedgerError {

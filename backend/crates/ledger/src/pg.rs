@@ -86,6 +86,56 @@ pub async fn debit_tx(
     Ok(true)
 }
 
+/// Mint an epoch's payouts within the caller's transaction, journaling each and
+/// crediting balances. Idempotent per (epoch, user) via the partial unique index
+/// on `ledger_entries` — a retry credits only users still missing. Returns the
+/// amount NEWLY minted by THIS call (0 on a full replay).
+///
+/// Exposing the transaction-scoped form lets the caller commit the mint and the
+/// settlement marker in ONE transaction, so there is never a committed state where
+/// an epoch is minted but unmarked — the window a divergent retry (recomputed from
+/// changed inputs) could over-emit into.
+pub async fn mint_epoch_tx(
+    conn: &mut PgConnection,
+    epoch: Epoch,
+    payouts: &[(UserId, PtAmount)],
+) -> std::result::Result<PtAmount, sqlx::Error> {
+    let mut minted: u128 = 0;
+    for (user, amount) in payouts {
+        if amount.0 == 0 {
+            continue;
+        }
+        let entry = sqlx::query!(
+            r#"
+            INSERT INTO ledger_entries (user_id, epoch_k, kind, amount, ref_type, ref_id)
+            VALUES ($1, $2, 'mint', $3, 'epoch', $2)
+            ON CONFLICT (epoch_k, user_id) WHERE kind = 'mint' DO NOTHING
+            "#,
+            user.0 as i64,
+            epoch.0 as i64,
+            amount.0 as i64,
+        )
+        .execute(&mut *conn)
+        .await?;
+
+        if entry.rows_affected() == 1 {
+            sqlx::query!(
+                r#"
+                INSERT INTO gem_balances (user_id, balance) VALUES ($1, $2)
+                ON CONFLICT (user_id) DO UPDATE
+                SET balance = gem_balances.balance + EXCLUDED.balance, updated_at = now()
+                "#,
+                user.0 as i64,
+                amount.0 as i64,
+            )
+            .execute(&mut *conn)
+            .await?;
+            minted += amount.0;
+        }
+    }
+    Ok(PtAmount(minted))
+}
+
 /// Record a burn (destruction with no holder) for audit, within the caller's
 /// transaction. No balance moves — the destroyed amount is the part of a debit
 /// that was never credited; this entry makes that destruction explicit. It has
@@ -154,48 +204,15 @@ impl LedgerBackend for PgLedger {
 
     async fn mint_epoch(&self, epoch: Epoch, payouts: &[(UserId, PtAmount)]) -> Result<PtAmount> {
         // One transaction for the whole epoch: either every payout (balance + its
-        // journal entry) commits, or none does. The partial unique index
-        // (epoch_k, user_id) WHERE kind='mint' makes each mint idempotent, so a
-        // retry after a crash credits only the users still missing.
+        // journal entry) commits, or none does. Delegates to `mint_epoch_tx` so the
+        // pool-owned path and the caller-owned (mint + marker atomic) path share one
+        // implementation.
         let mut tx = self.pool.begin().await.map_err(backend)?;
-        let mut minted: u128 = 0;
-        for (user, amount) in payouts {
-            if amount.0 == 0 {
-                continue;
-            }
-            let entry = sqlx::query!(
-                r#"
-                INSERT INTO ledger_entries (user_id, epoch_k, kind, amount, ref_type, ref_id)
-                VALUES ($1, $2, 'mint', $3, 'epoch', $2)
-                ON CONFLICT (epoch_k, user_id) WHERE kind = 'mint' DO NOTHING
-                "#,
-                user.0 as i64,
-                epoch.0 as i64,
-                amount.0 as i64,
-            )
-            .execute(&mut *tx)
+        let minted = mint_epoch_tx(&mut tx, epoch, payouts)
             .await
             .map_err(backend)?;
-
-            // Only move the balance if THIS call recorded the mint (idempotency).
-            if entry.rows_affected() == 1 {
-                sqlx::query!(
-                    r#"
-                    INSERT INTO gem_balances (user_id, balance) VALUES ($1, $2)
-                    ON CONFLICT (user_id) DO UPDATE
-                    SET balance = gem_balances.balance + EXCLUDED.balance, updated_at = now()
-                    "#,
-                    user.0 as i64,
-                    amount.0 as i64,
-                )
-                .execute(&mut *tx)
-                .await
-                .map_err(backend)?;
-                minted += amount.0;
-            }
-        }
         tx.commit().await.map_err(backend)?;
-        Ok(PtAmount(minted))
+        Ok(minted)
     }
 
     async fn burn(&self, user: UserId, amount: PtAmount, _epoch: Epoch) -> Result<()> {

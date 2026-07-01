@@ -63,40 +63,45 @@ pub fn build_user_inputs(
     let pos: BTreeMap<UserId, usize> = index.iter().enumerate().map(|(i, u)| (*u, i)).collect();
     let meta_map: BTreeMap<UserId, &UserMeta> = meta.iter().map(|m| (m.user, m)).collect();
 
-    // 2. Accumulate aggregates and the raw (unnormalised) transition weights.
-    //    transition[j][i] = weight of i's outgoing engagement directed at j.
+    // 2. Accumulate aggregates and the raw (unnormalised) outgoing weights as a
+    //    SPARSE adjacency by source: `adj[i][j]` = weight of i's engagement directed
+    //    at j. Sparse (O(edges)) rather than a dense n×n matrix, which at scale is
+    //    the difference between a few MB and tens of GB — the interaction graph has
+    //    only a handful of edges per user per day.
     let mut out_weight = vec![0.0f64; n];
     let mut in_weight = vec![0.0f64; n];
     let mut counterparties: Vec<BTreeSet<UserId>> = vec![BTreeSet::new(); n];
-    let mut transition = vec![vec![0.0f64; n]; n];
+    let mut adj: Vec<BTreeMap<usize, f64>> = vec![BTreeMap::new(); n];
 
     for e in edges {
         let i = pos[&e.actor];
         let j = pos[&e.target];
         out_weight[i] += e.weight;
         in_weight[j] += e.weight;
-        transition[j][i] += e.weight;
+        *adj[i].entry(j).or_insert(0.0) += e.weight;
         counterparties[i].insert(e.target);
         counterparties[j].insert(e.actor);
     }
 
-    // 3. Column-normalise. A dangling actor (no outgoing weight) links uniformly
-    //    so PageRank rank is conserved rather than leaking away.
-    let uniform = 1.0 / n as f64;
-    for i in 0..n {
-        if out_weight[i] > 0.0 {
-            for row in transition.iter_mut() {
-                row[i] /= out_weight[i];
+    // 3. Column-normalise into the sparse form pagerank() consumes. A dangling actor
+    //    (no outgoing weight) stays empty and is handled by the dangling-mass
+    //    redistribution inside pagerank(), so rank is conserved. BTreeMap iteration
+    //    is sorted, keeping the build deterministic.
+    let out_edges: Vec<Vec<(usize, f64)>> = (0..n)
+        .map(|i| {
+            if out_weight[i] > 0.0 {
+                adj[i]
+                    .iter()
+                    .map(|(&j, &w)| (j, w / out_weight[i]))
+                    .collect()
+            } else {
+                Vec::new()
             }
-        } else {
-            for row in transition.iter_mut() {
-                row[i] = uniform;
-            }
-        }
-    }
+        })
+        .collect();
 
-    // 4. Node score via PageRank over the column-stochastic matrix.
-    let ranks = pagerank(&transition, params.pagerank_damping, PAGERANK_ITERS);
+    // 4. Node score via PageRank over the sparse column-stochastic graph.
+    let ranks = pagerank(&out_edges, params.pagerank_damping, PAGERANK_ITERS);
 
     // 5. Assemble inputs per node.
     index
@@ -177,6 +182,28 @@ mod tests {
                     .unwrap()
                     .node_score
         );
+    }
+
+    #[test]
+    fn scales_to_many_users_without_dense_matrix() {
+        // A 20k-node sparse ring (each user engages the next). The old dense n×n
+        // transition matrix would be 20000² × 8 bytes ≈ 3.2 GB and OOM; the sparse
+        // form is O(n) memory and completes in milliseconds. Proves the scaling wall
+        // was the representation, not the math.
+        let n = 20_000u64;
+        let edges: Vec<Edge> = (0..n).map(|i| edge(i, (i + 1) % n, 1.0)).collect();
+        let meta: Vec<UserMeta> = (0..n)
+            .map(|i| UserMeta {
+                user: UserId(i),
+                verified: true,
+                account_burn_sats: 0,
+            })
+            .collect();
+        let inputs = build_user_inputs(&edges, &meta, &EconParams::default());
+        assert_eq!(inputs.len(), n as usize);
+        // PageRank still yields a probability distribution.
+        let total: f64 = inputs.iter().map(|i| i.node_score).sum();
+        assert!((total - 1.0).abs() < 1e-6);
     }
 
     #[test]

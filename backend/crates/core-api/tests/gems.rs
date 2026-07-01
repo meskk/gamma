@@ -4,8 +4,7 @@
 
 use core_api::error::ApiError;
 use core_api::gems::service::SettlementService;
-use core_api::interactions::model::{InteractionType, NewInteraction};
-use core_api::interactions::service::InteractionService;
+use core_api::interactions::model::InteractionType;
 use core_api::posts::model::NewPost;
 use core_api::posts::repository::PostRepository;
 use core_api::users::model::NewUser;
@@ -80,6 +79,37 @@ async fn settle_request(
         .unwrap()
 }
 
+/// Seed an interaction directly into a specific (usually CLOSED) epoch, timestamped
+/// just before its close so time-decay is negligible. Settlement only accepts
+/// CLOSED epochs, and `record()` always stamps the *current* (open) epoch, so tests
+/// that want to settle must place their interactions in a past epoch this way.
+#[allow(clippy::too_many_arguments)]
+async fn seed_interaction(
+    pool: &PgPool,
+    actor: i64,
+    target: Option<i64>,
+    post: Option<i64>,
+    type_code: i16,
+    weight: f64,
+    epoch_k: i64,
+) {
+    let created = (epoch_k + 1) * 86_400 - 60; // ~1 min before epoch close
+    sqlx::query(
+        "INSERT INTO interaction_events (actor_id, target_id, post_id, type, weight, epoch_k, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7))",
+    )
+    .bind(actor)
+    .bind(target)
+    .bind(post)
+    .bind(type_code)
+    .bind(weight)
+    .bind(epoch_k as i32)
+    .bind(created as f64)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn settles_epoch_mints_by_weight_and_is_idempotent(pool: PgPool) {
     let a = verified_user(&pool).await; // hub (receives engagement)
@@ -97,28 +127,30 @@ async fn settles_epoch_mints_by_weight_and_is_idempotent(pool: PgPool) {
         .expect("post")
         .id;
 
-    // b likes and c shares a's post → both edges resolve to author `a`.
-    let inter = InteractionService::new(pool.clone());
-    inter
-        .record(NewInteraction {
-            actor_id: b,
-            r#type: InteractionType::Like,
-            target_id: None,
-            post_id: Some(post_a),
-        })
-        .await
-        .unwrap();
-    inter
-        .record(NewInteraction {
-            actor_id: c,
-            r#type: InteractionType::Share,
-            target_id: None,
-            post_id: Some(post_a),
-        })
-        .await
-        .unwrap();
+    // Settle a CLOSED epoch (the only kind allowed). b likes and c shares a's post
+    // → both edges resolve to author `a`.
+    let epoch_k = current_epoch() - 1;
+    seed_interaction(
+        &pool,
+        b,
+        None,
+        Some(post_a),
+        InteractionType::Like.code(),
+        1.0,
+        epoch_k,
+    )
+    .await;
+    seed_interaction(
+        &pool,
+        c,
+        None,
+        Some(post_a),
+        InteractionType::Share.code(),
+        5.0,
+        epoch_k,
+    )
+    .await;
 
-    let epoch_k = current_epoch();
     let svc = SettlementService::new(pool.clone());
     let summary = svc.settle(epoch_k).await.unwrap();
 
@@ -148,16 +180,17 @@ async fn settles_epoch_mints_by_weight_and_is_idempotent(pool: PgPool) {
 async fn settlement_is_resumable_without_double_mint(pool: PgPool) {
     let a = verified_user(&pool).await;
     let b = verified_user(&pool).await;
-    InteractionService::new(pool.clone())
-        .record(NewInteraction {
-            actor_id: b,
-            r#type: InteractionType::Comment,
-            target_id: Some(a),
-            post_id: None,
-        })
-        .await
-        .unwrap();
-    let epoch_k = current_epoch();
+    let epoch_k = current_epoch() - 1;
+    seed_interaction(
+        &pool,
+        b,
+        Some(a),
+        None,
+        InteractionType::Comment.code(),
+        3.0,
+        epoch_k,
+    )
+    .await;
     let svc = SettlementService::new(pool.clone());
 
     // First settlement mints and records the marker.
@@ -195,20 +228,22 @@ async fn settlement_is_resumable_without_double_mint(pool: PgPool) {
 async fn scheduler_settles_closed_epochs_idempotently(pool: PgPool) {
     let a = verified_user(&pool).await;
     let b = verified_user(&pool).await;
-    InteractionService::new(pool.clone())
-        .record(NewInteraction {
-            actor_id: b,
-            r#type: InteractionType::Comment,
-            target_id: Some(a),
-            post_id: None,
-        })
-        .await
-        .unwrap();
-    let epoch_k = current_epoch();
+    // Interactions in the just-closed epoch (current - 1).
+    let epoch_k = current_epoch() - 1;
+    seed_interaction(
+        &pool,
+        b,
+        Some(a),
+        None,
+        InteractionType::Comment.code(),
+        3.0,
+        epoch_k,
+    )
+    .await;
     let svc = SettlementService::new(pool.clone());
 
-    // As of "now = epoch_k + 1", epoch_k is closed and gets settled by the window.
-    let summaries = svc.settle_closed_epochs(epoch_k + 1, 2).await.unwrap();
+    // The scheduler window [current - lookback, current - 1] settles the closed epoch.
+    let summaries = svc.settle_closed_epochs(current_epoch(), 2).await.unwrap();
     assert!(
         summaries
             .iter()
@@ -219,7 +254,7 @@ async fn scheduler_settles_closed_epochs_idempotently(pool: PgPool) {
     assert!(bal > 0);
 
     // Re-running the same window is a no-op (idempotent) — no double-mint.
-    let again = svc.settle_closed_epochs(epoch_k + 1, 2).await.unwrap();
+    let again = svc.settle_closed_epochs(current_epoch(), 2).await.unwrap();
     assert!(again.iter().all(|s| s.already_settled));
     assert_eq!(svc.gem_balance(a).await.unwrap().balance, bal);
 }
@@ -245,7 +280,7 @@ async fn older_interactions_decay_and_earn_less(pool: PgPool) {
     let a = verified_user(&pool).await; // actor
     let b = verified_user(&pool).await; // engaged early in the day → older → more decay
     let c = verified_user(&pool).await; // engaged late in the day → newer → less decay
-    let epoch_k = current_epoch();
+    let epoch_k = current_epoch() - 1; // a CLOSED epoch (settlement rejects the open one)
     let day_start = epoch_k * 86_400;
 
     // Two identical likes from A this epoch — only the timing differs.
@@ -284,19 +319,38 @@ async fn future_epoch_is_rejected(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn current_open_epoch_is_rejected(pool: PgPool) {
+    // Settling the still-open epoch would freeze it on a partial-day snapshot and
+    // silently orphan the rest of the day's interactions. Only CLOSED epochs settle.
+    let svc = SettlementService::new(pool);
+    let err = svc.settle(current_epoch()).await.unwrap_err();
+    assert!(matches!(err, ApiError::Validation("epoch_not_closed")));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn negative_epoch_is_rejected(pool: PgPool) {
+    // A negative epoch used to slip past the `> current` guard and, via `as i32`,
+    // alias a real epoch — now rejected outright.
+    let svc = SettlementService::new(pool);
+    let err = svc.settle(-4_294_967_291).await.unwrap_err();
+    assert!(matches!(err, ApiError::Validation("epoch_negative")));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn http_settle_is_operator_only_then_reads_balance(pool: PgPool) {
     let a = verified_user(&pool).await;
     let b = verified_user(&pool).await;
-    InteractionService::new(pool.clone())
-        .record(NewInteraction {
-            actor_id: b,
-            r#type: InteractionType::Comment,
-            target_id: Some(a),
-            post_id: None,
-        })
-        .await
-        .unwrap();
-    let epoch_k = current_epoch();
+    let epoch_k = current_epoch() - 1; // a CLOSED epoch
+    seed_interaction(
+        &pool,
+        b,
+        Some(a),
+        None,
+        InteractionType::Comment.code(),
+        3.0,
+        epoch_k,
+    )
+    .await;
     let router = app(AppState::new(pool.clone()));
 
     // A normal account and an operator account (promoted directly in the DB —

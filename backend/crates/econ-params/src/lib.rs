@@ -49,10 +49,41 @@ pub struct EconParams {
     /// Burn-multiplier scale B0 in sats. Dossier 0.001 BTC = 100_000 sats.
     pub burn_scale_sats: u64,
 
+    // --- Interaction edge weights ω_type (see gem-engine matrix M) ---
+    /// Per-interaction-type edge weights. These directly scale every user's payout
+    /// share, so they are as economic as `time_decay_lambda` and belong here, not
+    /// hardcoded in the API. A retune is a `version` bump. (Historical
+    /// `interaction_events.weight` rows keep the ω they were stamped with; read them
+    /// alongside the epoch's `econ.version` to know which economy produced them.)
+    pub interaction_weights: InteractionWeights,
+
     // --- Genesis (Phase 1b only) ---
     /// Genesis LP seed target in sats — a depth/cold-start knob, not a solvency lock.
     /// $100k @ $60k/BTC ≈ 1.667 BTC.
     pub genesis_seed_target_sats: u64,
+}
+
+/// ω_type edge weights per interaction type (like < comment < share; dwell is a
+/// weak signal; follow is structural). Tunable via config, never in code.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InteractionWeights {
+    pub like: f64,
+    pub comment: f64,
+    pub share: f64,
+    pub follow: f64,
+    pub dwell: f64,
+}
+
+impl Default for InteractionWeights {
+    fn default() -> Self {
+        Self {
+            like: 1.0,
+            comment: 3.0,
+            share: 5.0,
+            follow: 2.0,
+            dwell: 0.5,
+        }
+    }
 }
 
 impl Default for EconParams {
@@ -71,20 +102,100 @@ impl Default for EconParams {
             kappa_post: 0.3,
             gamma_audience: 1.0,
             burn_scale_sats: 100_000,
+            interaction_weights: InteractionWeights::default(),
             genesis_seed_target_sats: 166_666_667,
         }
     }
 }
 
+/// A semantically-invalid parameter set (e.g. take-rates summing past 100%).
+#[derive(Debug, PartialEq, Eq)]
+pub struct ParamError(pub String);
+
+impl std::fmt::Display for ParamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid econ-params: {}", self.0)
+    }
+}
+
+impl std::error::Error for ParamError {}
+
 impl EconParams {
     /// Load a parameter set from a TOML string (e.g. a per-environment config file).
-    pub fn from_toml_str(s: &str) -> Result<Self, toml::de::Error> {
-        toml::from_str(s)
+    /// The result is `validate()`d so a malformed config fails at load, not silently
+    /// at settlement time (a fee+burn > 100% would credit creators nothing and
+    /// corrupt the burn journal).
+    pub fn from_toml_str(s: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let params: Self = toml::from_str(s)?;
+        params.validate()?;
+        Ok(params)
     }
 
     /// Serialize back to TOML — handy for snapshotting the exact knobs an epoch ran under.
     pub fn to_toml_string(&self) -> Result<String, toml::ser::Error> {
         toml::to_string_pretty(self)
+    }
+
+    /// Reject economically-nonsensical knobs before they can reach the money path.
+    /// Bad values here don't error at settlement — they silently mis-distribute or,
+    /// worse, break conservation of the burn journal. Fail closed at the boundary.
+    pub fn validate(&self) -> Result<(), ParamError> {
+        let bps = |name: &str, v: u16| -> Result<(), ParamError> {
+            if v > 10_000 {
+                return Err(ParamError(format!("{name} = {v} bps exceeds 100%")));
+            }
+            Ok(())
+        };
+        bps("company_skim_bps", self.company_skim_bps)?;
+        bps("content_fee_bps", self.content_fee_bps)?;
+        bps("transfer_burn_bps", self.transfer_burn_bps)?;
+        bps("emission_decay_bps", self.emission_decay_bps)?;
+        // A paid unlock splits price into creator + fee + burn; fee+burn > 100%
+        // would drive the creator's share negative.
+        if self.content_fee_bps as u32 + self.transfer_burn_bps as u32 > 10_000 {
+            return Err(ParamError(format!(
+                "content_fee_bps ({}) + transfer_burn_bps ({}) exceeds 100%",
+                self.content_fee_bps, self.transfer_burn_bps
+            )));
+        }
+        // Damping must be a strict contraction in (0,1) for PageRank to converge to
+        // a unique fixed point with a non-negative teleport term.
+        if !(0.0..1.0).contains(&self.pagerank_damping) || self.pagerank_damping <= 0.0 {
+            return Err(ParamError(format!(
+                "pagerank_damping = {} must be in (0, 1)",
+                self.pagerank_damping
+            )));
+        }
+        if self.time_decay_lambda < 0.0 || !self.time_decay_lambda.is_finite() {
+            return Err(ParamError(format!(
+                "time_decay_lambda = {} must be finite and >= 0 (negative makes older interactions count MORE)",
+                self.time_decay_lambda
+            )));
+        }
+        for (name, v) in [
+            ("kappa_account", self.kappa_account),
+            ("kappa_post", self.kappa_post),
+            ("gamma_audience", self.gamma_audience),
+        ] {
+            if v < 0.0 || !v.is_finite() {
+                return Err(ParamError(format!("{name} = {v} must be finite and >= 0")));
+            }
+        }
+        let w = &self.interaction_weights;
+        for (name, v) in [
+            ("like", w.like),
+            ("comment", w.comment),
+            ("share", w.share),
+            ("follow", w.follow),
+            ("dwell", w.dwell),
+        ] {
+            if v < 0.0 || !v.is_finite() {
+                return Err(ParamError(format!(
+                    "interaction_weights.{name} = {v} must be finite and >= 0"
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -98,5 +209,50 @@ mod tests {
         let s = p.to_toml_string().unwrap();
         let back = EconParams::from_toml_str(&s).unwrap();
         assert_eq!(p, back);
+    }
+
+    #[test]
+    fn defaults_are_valid() {
+        assert!(EconParams::default().validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_fee_plus_burn_over_100pct() {
+        let p = EconParams {
+            content_fee_bps: 6000,
+            transfer_burn_bps: 6000,
+            ..Default::default()
+        };
+        assert!(p.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_bad_damping_and_negative_lambda() {
+        for p in [
+            EconParams {
+                pagerank_damping: 1.0,
+                ..Default::default()
+            },
+            EconParams {
+                pagerank_damping: 0.0,
+                ..Default::default()
+            },
+            EconParams {
+                time_decay_lambda: -0.1,
+                ..Default::default()
+            },
+        ] {
+            assert!(p.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn from_toml_str_rejects_invalid() {
+        let p = EconParams {
+            company_skim_bps: 20_000,
+            ..Default::default()
+        };
+        let s = p.to_toml_string().unwrap();
+        assert!(EconParams::from_toml_str(&s).is_err());
     }
 }

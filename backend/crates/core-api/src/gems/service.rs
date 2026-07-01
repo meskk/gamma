@@ -7,9 +7,9 @@ use chrono::Utc;
 use db::PgPool;
 use domain::{Epoch, PtAmount, UserId};
 use econ_params::EconParams;
-use gem_engine::{build_user_inputs, Edge, UserMeta};
+use gem_engine::{build_user_inputs, compute_payouts, Edge, UserMeta};
 use ledger::{LedgerBackend, PgLedger};
-use settlement::{emission_for, settle_epoch};
+use settlement::emission_for;
 
 use crate::error::ApiError;
 use crate::gems::model::{GemBalance, SettlementSummary};
@@ -35,24 +35,43 @@ impl SettlementService {
     }
 
     /// Settle one epoch. Idempotent: a second call for the same epoch is a no-op.
+    ///
+    /// Only CLOSED epochs settle. Settling the CURRENT (still-open) epoch would
+    /// freeze it on a partial-day snapshot — the marker then makes every later
+    /// interaction in that day unpayable — so it, the future, and negatives (which
+    /// used to slip past the old `> current` guard and, via `as i32`, alias a real
+    /// epoch) are all rejected.
     pub async fn settle(&self, epoch_k: i64) -> Result<SettlementSummary, ApiError> {
-        // Only CLOSED epochs settle. The current epoch is allowed (it is re-run each
-        // tick and again once it's past), but a FUTURE epoch has had nothing happen
-        // in it — reject it so an operator can't settle a not-yet-real epoch.
+        if epoch_k < 0 {
+            return Err(ApiError::Validation("epoch_negative"));
+        }
         let current = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i64;
-        if epoch_k > current {
+        if epoch_k >= current {
             return Err(ApiError::Validation("epoch_not_closed"));
         }
+        let epoch_k_i32 =
+            i32::try_from(epoch_k).map_err(|_| ApiError::Validation("epoch_out_of_range"))?;
 
         let interactions = InteractionRepository::new(self.pool.clone());
         let users = UserRepository::new(self.pool.clone());
         let gems = GemRepository::new(self.pool.clone());
-        let ledger = PgLedger::new(self.pool.clone());
         let params = &self.econ;
         let epoch = Epoch(epoch_k as u64);
 
+        // Fast path FIRST, before the expensive graph build. The scheduler re-checks
+        // a lookback window every tick; an already-settled epoch returns from the
+        // (indexed) marker without ever loading edges or running PageRank.
+        if let Some(m) = gems.settled_marker(epoch_k).await? {
+            return Ok(SettlementSummary {
+                epoch_k,
+                emission: m.emission,
+                user_count: m.user_count,
+                already_settled: true,
+            });
+        }
+
         // 1. Resolved user→user edges for this epoch.
-        let raw_edges = interactions.edges_for_epoch(epoch_k as i32).await?;
+        let raw_edges = interactions.edges_for_epoch(epoch_k_i32).await?;
 
         // 2. Verified flags for every user that appears in an edge.
         let mut ids: BTreeSet<i64> = BTreeSet::new();
@@ -109,8 +128,40 @@ impl SettlementService {
         let emission = i64::try_from(emission_pt.0)
             .map_err(|_| ApiError::Internal("emission exceeds i64".into()))?;
 
-        // 4. Fast path: an epoch already settled needs no work.
-        if gems.is_settled(epoch_k).await? {
+        // 4. Distribute by weight. Conservation (Σ payouts == emission) is a pure,
+        //    fail-closed check done BEFORE any DB write.
+        let payouts = compute_payouts(&inputs, params, emission_pt);
+        let distributed: u128 = payouts.values().map(|p| p.0).sum();
+        if distributed != emission_pt.0 {
+            return Err(ApiError::Internal(format!(
+                "conservation: distributed {distributed} != emission {}",
+                emission_pt.0
+            )));
+        }
+
+        // 5. Mint the payouts AND write the settlement marker in ONE transaction,
+        //    serialized against other settlers of this epoch by a transaction-scoped
+        //    advisory lock. This is the core idempotency fix:
+        //    - The advisory lock stops the scheduler and a manual settle (or two
+        //      scheduler instances) from interleaving mints for the same epoch.
+        //    - Mint + marker committing together means there is NEVER a committed
+        //      state where an epoch is minted but unmarked. That state was the window
+        //      a divergent retry — recomputing from since-changed inputs (a flipped
+        //      bot-gate flag, a restored post) — could over-emit into. Now a crash
+        //      before commit leaves nothing; a retry recomputes cleanly and conserves.
+        //    The per-(epoch,user) unique index on `ledger_entries` remains as
+        //    belt-and-suspenders. No global supply read is taken here: conservation
+        //    above plus the atomic, idempotent mint pin the supply delta exactly,
+        //    without the cross-epoch race the old `total_supply()` check introduced.
+        let mut tx = self.pool.begin().await?;
+        GemRepository::lock_epoch(&mut tx, epoch_k).await?;
+        // Re-check under the lock: a peer settler may have finished while we computed.
+        if GemRepository::is_settled_tx(&mut tx, epoch_k).await? {
+            tx.rollback().await?;
+            let m = gems.settled_marker(epoch_k).await?;
+            let (emission, user_count) = m
+                .map(|m| (m.emission, m.user_count))
+                .unwrap_or((emission, user_count));
             return Ok(SettlementSummary {
                 epoch_k,
                 emission,
@@ -118,17 +169,14 @@ impl SettlementService {
                 already_settled: true,
             });
         }
-
-        // 5. Mint by weight FIRST (atomic + idempotent per (epoch, user) at the
-        //    ledger level), THEN record the settlement marker. Minting before the
-        //    marker means a crash mid-settlement leaves NO marker, so a retry
-        //    re-mints idempotently and completes — the marker can never flag an
-        //    under-paid epoch as done. (Earlier this was claim-then-mint, which on
-        //    a mid-mint crash permanently under-paid the epoch.)
         if has_participants {
-            settle_epoch(&ledger, epoch, &inputs, params, emission_pt).await?;
+            let payout_vec: Vec<(UserId, PtAmount)> =
+                payouts.iter().map(|(u, a)| (*u, *a)).collect();
+            ledger::mint_epoch_tx(&mut tx, epoch, &payout_vec).await?;
         }
-        let first_time = gems.claim_epoch(epoch_k, emission, user_count).await?;
+        let first_time =
+            GemRepository::claim_epoch_tx(&mut tx, epoch_k, emission, user_count).await?;
+        tx.commit().await?;
 
         Ok(SettlementSummary {
             epoch_k,

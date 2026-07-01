@@ -49,7 +49,7 @@ impl AppState {
         let posts = PostService::with_ingestion(pool.clone(), ingestion);
         let follows = FollowService::new(pool.clone());
         let feed = FeedService::new(pool.clone());
-        let interactions = InteractionService::new(pool.clone());
+        let interactions = InteractionService::with_econ(pool.clone(), econ.clone());
         let gems = SettlementService::with_econ(pool.clone(), econ.clone());
         let queue = TranscodeQueue::new(&redis_url).expect("valid REDIS_URL");
         let media = MediaService::with_econ(pool.clone(), storage.clone(), queue, econ);
