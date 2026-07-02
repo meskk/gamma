@@ -9,11 +9,11 @@ import type { ReactNode } from "react";
 
 import { useAuth } from "@/lib/auth";
 
-// Auth screens bring their own full-bleed background + back button, so the app nav
-// frame is skipped for them. Registration lives inside the email-first /login flow
-// (its "Registrieren" tab), so there is no separate /register route. `/` is a bare
-// entry point that immediately redirects (see app/page.tsx), so it shows no chrome.
-const BARE_ROUTES = new Set(["/", "/login"]);
+// Full-bleed screens that bring their own background + navigation, so the app nav
+// frame is skipped for them: the auth screens (/login — registration is its
+// "Registrieren" tab), the redirecting entry point (/), and the reels feed (/feed,
+// which has its own bottom nav — the Figma "Glass · Reels" design).
+const BARE_ROUTES = new Set(["/", "/login", "/feed"]);
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
