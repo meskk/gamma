@@ -61,6 +61,35 @@
   color: #fff;
 }
 
+/* Stable container for the active reel's media — its single keyed child is swapped
+   on page change, so React always reconciles exactly one layer (no accumulation). */
+.mediaHolder {
+  position: absolute;
+  inset: 0;
+}
+
+/* The one active reel's media/text. Only this layer changes between reels — the
+   chrome (tabs, caption, rail, nav) stays pinned — and it crossfades in on change
+   so the reel "fades" rather than scrolling the whole page. */
+.mediaLayer {
+  position: absolute;
+  inset: 0;
+  animation: reelFade 0.34s ease;
+}
+@keyframes reelFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mediaLayer {
+    animation: none;
+  }
+}
+
 .media {
   position: absolute;
   inset: 0;

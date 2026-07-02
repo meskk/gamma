@@ -1,18 +1,22 @@
 "use client";
 
-// The reels feed: a vertical scroll-snap stack of posts with the "Folge ich / Für
-// dich" tabs, desktop paging chevrons, and the bottom nav — the Figma "Glass ·
-// Reels" screen, wired to the live API. "Für dich" is the cold-start feed; "Folge
+// The reels feed (Figma "Glass · Reels"), wired to the live API. A FADE PAGER:
+// only the active reel's media/text layer changes — it crossfades — while the
+// chrome (tabs, caption, action rail, bottom nav) stays pinned in place and
+// updates to the active post. Paging is via the chevrons, the mouse wheel, a
+// vertical swipe, or the arrow keys. "Für dich" is the cold-start feed; "Folge
 // ich" filters it to the accounts the viewer follows.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import type { Post } from "@contract/Post";
 import type { Follow } from "@contract/Follow";
 
 import { apiFetch } from "@/lib/api";
-import { Reel } from "./Reel";
+import { ActionRail } from "./ActionRail";
+import { ReelMedia } from "./ReelMedia";
 import {
   ChevronUpIcon,
   ChevronDownIcon,
@@ -26,6 +30,19 @@ import styles from "./reels.module.css";
 
 type Tab = "foryou" | "following";
 
+// Compact German relative time. The platform has no username field yet, so the
+// handle is derived from the author id (a real @handle needs a users.username col).
+function relTime(iso: string): string {
+  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return "gerade eben";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `vor ${mins} Min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `vor ${hours} Std`;
+  const days = Math.floor(hours / 24);
+  return `vor ${days} ${days === 1 ? "Tag" : "Tagen"}`;
+}
+
 export function ReelsFeed({ token, userId }: { token: string; userId: string }) {
   const router = useRouter();
   const [posts, setPosts] = useState<Post[] | null>(null);
@@ -34,10 +51,9 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
   const [followed, setFollowed] = useState<Set<string> | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
 
-  const viewportRef = useRef<HTMLDivElement | null>(null);
-  const reelRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const cooldown = useRef(false); // debounces one wheel/swipe gesture to one page
+  const touchStartY = useRef<number | null>(null);
 
-  // Load the feed.
   useEffect(() => {
     let stale = false;
     setPosts(null);
@@ -50,7 +66,6 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
     };
   }, [userId, token]);
 
-  // Load who the viewer follows (drives the "Folge ich" tab). Non-critical.
   useEffect(() => {
     let stale = false;
     apiFetch<Follow[]>(`/users/${userId}/following`, { token })
@@ -70,48 +85,73 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
     return posts;
   }, [posts, tab, followed]);
 
-  // Track the on-screen reel so only it plays and lazy-loads its media.
+  const count = visible?.length ?? 0;
+
+  const page = useCallback(
+    (dir: 1 | -1) => {
+      setActiveIdx((i) => Math.min(Math.max(i + dir, 0), Math.max(count - 1, 0)));
+    },
+    [count],
+  );
+
+  // Debounced paging so one wheel/swipe gesture advances exactly one reel.
+  const pageDebounced = useCallback(
+    (dir: 1 | -1) => {
+      if (cooldown.current) return;
+      cooldown.current = true;
+      page(dir);
+      window.setTimeout(() => {
+        cooldown.current = false;
+      }, 480);
+    },
+    [page],
+  );
+
+  // Arrow keys / space page through the feed.
   useEffect(() => {
-    const vp = viewportRef.current;
-    if (!vp || !visible || visible.length === 0) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting && e.intersectionRatio >= 0.6) {
-            const idx = Number((e.target as HTMLElement).dataset.idx);
-            if (!Number.isNaN(idx)) setActiveIdx(idx);
-          }
-        }
-      },
-      { root: vp, threshold: [0.6] },
-    );
-    reelRefs.current.forEach((el) => el && io.observe(el));
-    return () => io.disconnect();
-  }, [visible]);
+    if (!count) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "ArrowDown" || e.key === "PageDown" || e.key === " ") {
+        e.preventDefault();
+        pageDebounced(1);
+      } else if (e.key === "ArrowUp" || e.key === "PageUp") {
+        e.preventDefault();
+        pageDebounced(-1);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [count, pageDebounced]);
 
   function selectTab(next: Tab) {
     setTab(next);
     setActiveIdx(0);
-    viewportRef.current?.scrollTo({ top: 0 });
   }
 
-  function page(dir: 1 | -1) {
-    const count = visible?.length ?? 0;
-    const next = Math.min(Math.max(activeIdx + dir, 0), Math.max(count - 1, 0));
-    reelRefs.current[next]?.scrollIntoView({ behavior: "smooth" });
+  const active = visible && visible.length > 0 ? visible[Math.min(activeIdx, visible.length - 1)] : null;
+
+  function onWheel(e: React.WheelEvent) {
+    if (Math.abs(e.deltaY) < 12) return;
+    pageDebounced(e.deltaY > 0 ? 1 : -1);
+  }
+  function onTouchStart(e: React.TouchEvent) {
+    touchStartY.current = e.touches[0]?.clientY ?? null;
+  }
+  function onTouchEnd(e: React.TouchEvent) {
+    const start = touchStartY.current;
+    if (start == null) return;
+    const dy = start - (e.changedTouches[0]?.clientY ?? start);
+    if (Math.abs(dy) > 44) pageDebounced(dy > 0 ? 1 : -1);
+    touchStartY.current = null;
   }
 
   function stateBlock(children: ReactNode) {
-    return (
-      <section className={styles.reel}>
-        <div className={styles.center}>{children}</div>
-      </section>
-    );
+    return <div className={styles.center}>{children}</div>;
   }
 
-  let content: ReactNode;
+  let mediaLayer: ReactNode;
   if (error) {
-    content = stateBlock(
+    mediaLayer = stateBlock(
       <>
         <p>{error}</p>
         <button type="button" className={styles.ghostLink} onClick={() => router.refresh()}>
@@ -119,10 +159,10 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
         </button>
       </>,
     );
-  } else if (visible === null || visible === undefined) {
-    content = stateBlock(<p>Lädt…</p>);
+  } else if (visible == null) {
+    mediaLayer = stateBlock(<p>Lädt…</p>);
   } else if (visible.length === 0) {
-    content = stateBlock(
+    mediaLayer = stateBlock(
       tab === "following" ? (
         <>
           <p>Noch nichts von Leuten, denen du folgst.</p>
@@ -139,30 +179,32 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
         </>
       ),
     );
-  } else {
-    reelRefs.current = [];
-    content = visible.map((post, i) => (
-      <Reel
-        key={String(post.id)}
-        post={post}
-        token={token}
-        active={i === activeIdx}
-        ref={(el) => {
-          reelRefs.current[i] = el;
-          if (el) el.dataset.idx = String(i);
-        }}
-      />
-    ));
+  } else if (active) {
+    // Keyed by post id so switching reels remounts + crossfades this layer only.
+    mediaLayer = (
+      <div key={String(active.id)} className={styles.mediaLayer}>
+        <ReelMedia
+          mediaId={active.media_id != null ? String(active.media_id) : null}
+          body={active.body}
+          token={token}
+          active
+        />
+      </div>
+    );
   }
-
-  const hasMany = !!visible && visible.length > 1;
 
   return (
     <div className={styles.stage}>
-      <div className={styles.card}>
-        <div className={styles.viewport} ref={viewportRef}>
-          {content}
-        </div>
+      <div
+        className={styles.card}
+        onWheel={onWheel}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
+        <div className={styles.mediaHolder}>{mediaLayer}</div>
+
+        <div className={styles.topFade} />
+        <div className={styles.bottomFade} />
 
         <div className={styles.tabs} role="tablist" aria-label="Feed">
           <button
@@ -186,14 +228,37 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
             {tab === "foryou" && <span className={styles.tabUnderline} />}
           </button>
         </div>
+
+        {/* Pinned caption — reflects the active reel, doesn't scroll away. */}
+        {active && (
+          <div className={styles.caption}>
+            <div className={styles.handleRow}>
+              <Link href={`/users/${String(active.author_id)}`} className={styles.handle}>
+                @user-{String(active.author_id)}
+              </Link>
+            </div>
+            {active.body && active.media_id != null && (
+              <p className={styles.captionBody}>{active.body}</p>
+            )}
+            <div className={styles.metaRow}>
+              <span className={styles.metaText}>
+                {[active.category, relTime(active.created_at)].filter(Boolean).join(" · ")}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Pinned action rail — keyed by post so its like state resets per reel. */}
+        {active && <ActionRail key={String(active.id)} post={active} token={token} />}
       </div>
 
-      {hasMany && (
+      {count > 1 && (
         <div className={styles.chevrons}>
           <button
             type="button"
             className={`${styles.glass} ${styles.chevBtn}`}
             onClick={() => page(-1)}
+            disabled={activeIdx === 0}
             aria-label="Vorheriges"
           >
             <ChevronUpIcon size={22} />
@@ -202,6 +267,7 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
             type="button"
             className={`${styles.glass} ${styles.chevBtn}`}
             onClick={() => page(1)}
+            disabled={activeIdx >= count - 1}
             aria-label="Nächstes"
           >
             <ChevronDownIcon size={22} />
@@ -214,7 +280,7 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
           type="button"
           className={`${styles.navBtn} ${styles.navActive}`}
           aria-label="Home"
-          onClick={() => reelRefs.current[0]?.scrollIntoView({ behavior: "smooth" })}
+          onClick={() => setActiveIdx(0)}
         >
           <HomeIcon size={28} filled />
         </button>
