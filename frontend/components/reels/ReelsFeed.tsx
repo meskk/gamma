@@ -128,7 +128,8 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
     setActiveIdx(0);
   }
 
-  const active = visible && visible.length > 0 ? visible[Math.min(activeIdx, visible.length - 1)] : null;
+  const idx = count ? Math.min(activeIdx, count - 1) : 0;
+  const active = visible && count > 0 ? visible[idx] : null;
 
   function onWheel(e: React.WheelEvent) {
     if (Math.abs(e.deltaY) < 12) return;
@@ -149,9 +150,9 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
     return <div className={styles.center}>{children}</div>;
   }
 
-  let mediaLayer: ReactNode;
+  let mediaContent: ReactNode;
   if (error) {
-    mediaLayer = stateBlock(
+    mediaContent = stateBlock(
       <>
         <p>{error}</p>
         <button type="button" className={styles.ghostLink} onClick={() => router.refresh()}>
@@ -160,9 +161,9 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
       </>,
     );
   } else if (visible == null) {
-    mediaLayer = stateBlock(<p>Lädt…</p>);
+    mediaContent = stateBlock(<p>Lädt…</p>);
   } else if (visible.length === 0) {
-    mediaLayer = stateBlock(
+    mediaContent = stateBlock(
       tab === "following" ? (
         <>
           <p>Noch nichts von Leuten, denen du folgst.</p>
@@ -179,16 +180,22 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
         </>
       ),
     );
-  } else if (active) {
-    // Keyed by post id so switching reels remounts + crossfades this layer only.
-    mediaLayer = (
-      <div key={String(active.id)} className={styles.mediaLayer}>
-        <ReelMedia
-          mediaId={active.media_id != null ? String(active.media_id) : null}
-          body={active.body}
-          token={token}
-          active
-        />
+  } else {
+    // The sliding track: one full-height slide per reel, translated by the active
+    // index. ONLY this moves; the rail/tabs/caption/nav are pinned outside it. Media
+    // is fetched/played only for the active slide.
+    mediaContent = (
+      <div className={styles.track} style={{ transform: `translateY(-${idx * 100}%)` }}>
+        {visible.map((post, i) => (
+          <div key={String(post.id)} className={styles.slide}>
+            <ReelMedia
+              mediaId={post.media_id != null ? String(post.media_id) : null}
+              body={post.body}
+              token={token}
+              active={i === idx}
+            />
+          </div>
+        ))}
       </div>
     );
   }
@@ -201,7 +208,7 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
       >
-        <div className={styles.mediaHolder}>{mediaLayer}</div>
+        {mediaContent}
 
         <div className={styles.topFade} />
         <div className={styles.bottomFade} />

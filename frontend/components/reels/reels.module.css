@@ -61,32 +61,27 @@
   color: #fff;
 }
 
-/* Stable container for the active reel's media — its single keyed child is swapped
-   on page change, so React always reconciles exactly one layer (no accumulation). */
-.mediaHolder {
+/* The sliding media track. ONLY this moves between reels (Instagram-style vertical
+   slide) — the chrome (tabs, caption, rail, bottom nav) stays pinned and static.
+   The track stacks one full-height slide per reel and is translated by the active
+   index; the card clips it so exactly one reel shows. */
+.track {
   position: absolute;
   inset: 0;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.42s cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform;
 }
-
-/* The one active reel's media/text. Only this layer changes between reels — the
-   chrome (tabs, caption, rail, nav) stays pinned — and it crossfades in on change
-   so the reel "fades" rather than scrolling the whole page. */
-.mediaLayer {
-  position: absolute;
-  inset: 0;
-  animation: reelFade 0.34s ease;
-}
-@keyframes reelFade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+.slide {
+  flex: 0 0 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
 }
 @media (prefers-reduced-motion: reduce) {
-  .mediaLayer {
-    animation: none;
+  .track {
+    transition: none;
   }
 }
 
