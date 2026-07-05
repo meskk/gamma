@@ -39,18 +39,18 @@ export function AppShell({ children }: { children: ReactNode }) {
         {token && (
           <>
             <Link href="/feed">Feed</Link>
-            <Link href="/compose">Compose</Link>
-            {userId && <Link href={`/users/${userId}`}>Profile</Link>}
+            <Link href="/compose">Erstellen</Link>
+            {userId && <Link href={`/users/${userId}`}>Profil</Link>}
             {isOperator && <Link href="/admin">Admin</Link>}
           </>
         )}
         <span style={{ marginLeft: "auto" }}>
           {!ready ? null : token ? (
             <button onClick={logout} type="button">
-              Log out
+              Abmelden
             </button>
           ) : (
-            <Link href="/login">Log in</Link>
+            <Link href="/login">Anmelden</Link>
           )}
         </span>
       </header>

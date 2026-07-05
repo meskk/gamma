@@ -15,19 +15,19 @@ export function PostCard({ post }: { post: Post }) {
       }}
     >
       <div style={{ fontSize: "0.8rem", color: "#888" }}>
-        <Link href={`/users/${post.author_id}`}>user {String(post.author_id)}</Link>
+        <Link href={`/users/${post.author_id}`}>@user-{String(post.author_id)}</Link>
         {post.category ? ` · ${post.category}` : ""}
         {" · "}
         {new Date(post.created_at).toLocaleString()}
       </div>
       <p style={{ margin: "0.4rem 0", whiteSpace: "pre-wrap" }}>
-        {post.body ?? <em>(no text)</em>}
+        {post.body ?? <em>(kein Text)</em>}
       </p>
       {post.media_id != null && (
-        <p style={{ margin: "0.2rem 0", fontSize: "0.8rem", color: "#888" }}>📎 media attached</p>
+        <p style={{ margin: "0.2rem 0", fontSize: "0.8rem", color: "#888" }}>📎 mit Medien</p>
       )}
       <Link href={`/posts/${post.id}`} style={{ fontSize: "0.85rem" }}>
-        Open →
+        Öffnen →
       </Link>
     </article>
   );

@@ -18,7 +18,12 @@ const reported = (postId: number, hidden: boolean) => ({
   hidden,
 });
 
-beforeEach(() => apiFetchMock.mockReset());
+beforeEach(() => {
+  // Block body ON PURPOSE: mockReset() returns the mock, and a function
+  // returned from a vitest hook is invoked as a TEARDOWN callback — which
+  // would call the mock bare and leak an unhandled rejection.
+  apiFetchMock.mockReset();
+});
 afterEach(() => cleanup());
 
 describe("admin reports page", () => {

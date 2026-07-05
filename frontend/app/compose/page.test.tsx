@@ -34,13 +34,13 @@ describe("ComposePage gem-unlock flag (P-1)", () => {
   it("hides the unlock-price field by default, even with a file attached", () => {
     render(<ComposePage />);
     attachFile();
-    expect(screen.queryByLabelText(/Unlock price/)).toBeNull();
+    expect(screen.queryByLabelText(/Preis zum Freischalten/)).toBeNull();
   });
 
   it("shows the price field again when the flag is on", () => {
     featuresMock.gemUnlock = true;
     render(<ComposePage />);
     attachFile();
-    expect(screen.getByLabelText(/Unlock price/)).toBeTruthy();
+    expect(screen.getByLabelText(/Preis zum Freischalten/)).toBeTruthy();
   });
 });

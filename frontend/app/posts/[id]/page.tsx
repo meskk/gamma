@@ -41,20 +41,20 @@ export default function PostDetailPage() {
 
   const error = loadError
     ? loadError instanceof ApiError && loadError.status === 404
-      ? "This post doesn't exist (or was taken down)."
-      : "Could not load this post."
+      ? "Diesen Post gibt es nicht (oder er wurde entfernt)."
+      : "Post konnte nicht geladen werden."
     : actionError;
 
   async function report() {
     if (reported || !token) return;
-    const reason = window.prompt("Why are you reporting this post?");
+    const reason = window.prompt("Warum meldest du diesen Post?");
     if (!reason) return;
     const body: ReportRequest = { reason };
     try {
       await apiFetch<void>(`/posts/${id}/report`, { method: "POST", body, token });
       setReported(true);
     } catch {
-      setActionError("Could not submit the report.");
+      setActionError("Meldung konnte nicht gesendet werden.");
     }
   }
 
@@ -63,20 +63,20 @@ export default function PostDetailPage() {
   return (
     <div>
       <p>
-        <Link href="/feed">← Back to feed</Link>
+        <Link href="/feed">← Zurück zum Feed</Link>
       </p>
       {error && <p style={{ color: "crimson" }}>{error}</p>}
-      {!post && !error && <p>Loading…</p>}
+      {!post && !error && <p>Lädt…</p>}
       {post && (
         <article>
           <div style={{ fontSize: "0.8rem", color: "#888" }}>
-            <Link href={`/users/${post.author_id}`}>user {String(post.author_id)}</Link>
+            <Link href={`/users/${post.author_id}`}>@user-{String(post.author_id)}</Link>
             {post.category ? ` · ${post.category}` : ""}
             {" · "}
             {new Date(post.created_at).toLocaleString()}
           </div>
           <p style={{ fontSize: "1.1rem", whiteSpace: "pre-wrap", margin: "1rem 0" }}>
-            {post.body ?? <em>(no text)</em>}
+            {post.body ?? <em>(kein Text)</em>}
           </p>
           {post.media_id != null && (
             <div style={{ margin: "1rem 0" }}>
@@ -85,10 +85,10 @@ export default function PostDetailPage() {
           )}
           <div style={{ display: "flex", gap: "0.75rem" }}>
             <button type="button" onClick={like} disabled={liked}>
-              {liked ? "♥ Liked" : "♡ Like"}
+              {liked ? "♥ Gefällt dir" : "♡ Gefällt mir"}
             </button>
             <button type="button" onClick={report} disabled={reported}>
-              {reported ? "Reported" : "Report"}
+              {reported ? "Gemeldet" : "Melden"}
             </button>
           </div>
           <Comments postId={id} token={token} />

@@ -45,37 +45,37 @@ export function Comments({ postId, token }: { postId: string; token: string }) {
       setBody("");
       reload();
     } catch {
-      setSubmitError("Could not post your comment.");
+      setSubmitError("Kommentar konnte nicht gesendet werden.");
     } finally {
       setBusy(false);
     }
   }
 
-  const error = loadError ? "Could not load comments." : submitError;
+  const error = loadError ? "Kommentare konnten nicht geladen werden." : submitError;
 
   return (
     <section style={{ marginTop: "1.5rem" }}>
-      <h2 style={{ fontSize: "1.1rem" }}>Comments</h2>
+      <h2 style={{ fontSize: "1.1rem" }}>Kommentare</h2>
       <form onSubmit={submit} style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
         <input
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Add a comment…"
+          placeholder="Kommentieren…"
           style={{ flex: 1 }}
         />
         <button type="submit" disabled={busy || !body.trim()}>
-          Post
+          Senden
         </button>
       </form>
       {error && <p style={{ color: "crimson" }}>{error}</p>}
-      {comments === null && <p>Loading…</p>}
+      {comments === null && <p>Lädt…</p>}
       {comments !== null && comments.length === 0 && (
-        <p style={{ color: "#888" }}>No comments yet.</p>
+        <p style={{ color: "#888" }}>Noch keine Kommentare.</p>
       )}
       {comments?.map((c) => (
         <div key={String(c.id)} style={{ borderTop: "1px solid #eee", padding: "0.5rem 0" }}>
           <div style={{ fontSize: "0.78rem", color: "#888" }}>
-            <Link href={`/users/${c.author_id}`}>user {String(c.author_id)}</Link>
+            <Link href={`/users/${c.author_id}`}>@user-{String(c.author_id)}</Link>
             {" · "}
             {new Date(c.created_at).toLocaleString()}
           </div>

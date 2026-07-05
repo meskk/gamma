@@ -66,7 +66,7 @@ export default function ProfilePage() {
     followOverride ??
     (viewerFollows ? viewerFollows.some((x) => String(x.followee_id) === profileId) : null);
   const followErr = !!followError;
-  const error = userError ? "Could not load this profile." : null;
+  const error = userError ? "Profil konnte nicht geladen werden." : null;
 
   async function toggleFollow() {
     if (following === null || !token) return;
@@ -90,37 +90,37 @@ export default function ProfilePage() {
       {user && (
         <>
           <h1>
-            user {String(user.id)} {isSelf && <small>(you)</small>}
+            @user-{String(user.id)} {isSelf && <small>(du)</small>}
           </h1>
           <p style={{ color: "#666" }}>
-            Joined {new Date(user.created_at).toLocaleDateString()}
-            {followingCount !== null && <> · following {followingCount}</>}
-            {isSelf && balance && <> · {String(balance.balance)} gems</>}
+            Dabei seit {new Date(user.created_at).toLocaleDateString()}
+            {followingCount !== null && <> · folgt {followingCount}</>}
+            {isSelf && balance && <> · {String(balance.balance)} Gems</>}
           </p>
           {user.declared_categories.length > 0 && (
-            <p>Interests: {user.declared_categories.join(", ")}</p>
+            <p>Interessen: {user.declared_categories.join(", ")}</p>
           )}
           {!isSelf && following !== null && (
             <button type="button" onClick={toggleFollow}>
-              {following ? "Unfollow" : "Follow"}
+              {following ? "Entfolgen" : "Folgen"}
             </button>
           )}
           {!isSelf && followErr && (
             <p style={{ color: "crimson" }}>
-              Couldn&apos;t check your follow status.{" "}
+              Follow-Status konnte nicht geprüft werden.{" "}
               <button type="button" onClick={retryFollows}>
-                Retry
+                Erneut versuchen
               </button>
             </p>
           )}
           {isSelf && (
             <p>
-              <Link href="/compose">Write a post →</Link>
+              <Link href="/compose">Post schreiben →</Link>
             </p>
           )}
           <h2>Posts</h2>
-          {posts === null && <p>Loading…</p>}
-          {posts !== null && posts.length === 0 && <p>No posts yet.</p>}
+          {posts === null && <p>Lädt…</p>}
+          {posts !== null && posts.length === 0 && <p>Noch keine Posts.</p>}
           {posts?.map((p) => (
             <PostCard key={String(p.id)} post={p} />
           ))}

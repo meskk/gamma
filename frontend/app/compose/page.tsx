@@ -44,7 +44,9 @@ export default function ComposePage() {
       router.push(`/posts/${created.id}`);
     } catch {
       setError(
-        file ? "Could not upload the media or publish — please try again." : "Could not publish.",
+        file
+          ? "Upload oder Veröffentlichen fehlgeschlagen — bitte erneut versuchen."
+          : "Veröffentlichen fehlgeschlagen.",
       );
       setBusy(false);
     }
@@ -54,10 +56,10 @@ export default function ComposePage() {
 
   return (
     <div>
-      <h1>New post</h1>
+      <h1>Neuer Post</h1>
       <form onSubmit={onSubmit} style={{ display: "grid", gap: "0.75rem", maxWidth: 520 }}>
         <label>
-          What&apos;s on your mind?
+          Was gibt&apos;s Neues?
           <br />
           <textarea
             value={body}
@@ -68,17 +70,17 @@ export default function ComposePage() {
           />
         </label>
         <label>
-          Category <small>(optional)</small>
+          Kategorie <small>(optional)</small>
           <br />
           <input
             type="text"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            placeholder="music, tech, art…"
+            placeholder="Musik, Tech, Kunst…"
           />
         </label>
         <label>
-          Attach media <small>(optional — image / video / audio)</small>
+          Medien anhängen <small>(optional — Bild / Video / Audio)</small>
           <br />
           <input
             type="file"
@@ -88,7 +90,7 @@ export default function ComposePage() {
         </label>
         {file && FEATURES.gemUnlock && (
           <label>
-            Unlock price <small>(gems; 0 = free)</small>
+            Preis zum Freischalten <small>(Gems; 0 = gratis)</small>
             <br />
             <input
               type="number"
@@ -100,7 +102,7 @@ export default function ComposePage() {
         )}
         {error && <p style={{ color: "crimson" }}>{error}</p>}
         <button type="submit" disabled={busy || !body.trim()}>
-          {busy ? "Publishing…" : "Publish"}
+          {busy ? "Wird veröffentlicht…" : "Veröffentlichen"}
         </button>
       </form>
     </div>

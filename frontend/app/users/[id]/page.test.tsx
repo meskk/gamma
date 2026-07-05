@@ -50,20 +50,20 @@ afterEach(() => cleanup());
 describe("ProfilePage", () => {
   it("resets follow state across navigation (no stale Unfollow on the next profile)", async () => {
     const { rerender } = render(<ProfilePage />);
-    await screen.findByRole("heading", { name: /user 5/i });
+    await screen.findByRole("heading", { name: /user-5/i });
     // Viewer follows 5 → the button reads "Unfollow".
-    await screen.findByRole("button", { name: "Unfollow" });
+    await screen.findByRole("button", { name: "Entfolgen" });
 
     // Navigate to profile 9, whom the viewer does NOT follow.
     act(() => {
       paramsRef.current = { id: "9" };
     });
     rerender(<ProfilePage />);
-    await screen.findByRole("heading", { name: /user 9/i });
+    await screen.findByRole("heading", { name: /user-9/i });
 
     // The regression: without the reset, profile 5's `following=true` lingered and
     // showed a stale "Unfollow" for profile 9.
-    await screen.findByRole("button", { name: "Follow" });
-    expect(screen.queryByRole("button", { name: "Unfollow" })).toBeNull();
+    await screen.findByRole("button", { name: "Folgen" });
+    expect(screen.queryByRole("button", { name: "Entfolgen" })).toBeNull();
   });
 });

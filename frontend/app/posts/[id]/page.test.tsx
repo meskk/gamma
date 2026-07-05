@@ -53,9 +53,9 @@ describe("PostDetailPage", () => {
     await screen.findByText("post 1");
 
     // Like post 1 → the button flips to the liked (disabled) state.
-    fireEvent.click(screen.getByRole("button", { name: /Like/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Gefällt/ }));
     await vi.waitFor(() => {
-      expect(screen.getByRole("button", { name: /Like/ }).textContent).toBe("♥ Liked");
+      expect(screen.getByRole("button", { name: /Gefällt/ }).textContent).toBe("♥ Gefällt dir");
     });
 
     // Navigate to post 2 (App Router reuses the mounted component across [id]).
@@ -66,9 +66,9 @@ describe("PostDetailPage", () => {
     await screen.findByText("post 2");
 
     // The regression: without the state reset, `liked` stayed true and the button
-    // was stuck on "♥ Liked" + disabled, so post 2 could never be liked.
-    const likeButton = screen.getByRole("button", { name: /Like/ }) as HTMLButtonElement;
-    expect(likeButton.textContent).toBe("♡ Like");
+    // was stuck on the liked state + disabled, so post 2 could never be liked.
+    const likeButton = screen.getByRole("button", { name: /Gefällt/ }) as HTMLButtonElement;
+    expect(likeButton.textContent).toBe("♡ Gefällt mir");
     expect(likeButton.disabled).toBe(false);
   });
 });
