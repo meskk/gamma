@@ -5,41 +5,12 @@
 // N gems → POST /media/:id/unlock → refetch → play). Access is gated by the asset's
 // own unlock_price, independent of the post.
 
-import { useCallback, useEffect, useState } from "react";
-
-import type { MediaAssetView } from "@contract/MediaAssetView";
-
-import { apiFetch } from "@/lib/api";
+import { useUnlock } from "@/lib/useUnlock";
 
 export function MediaView({ mediaId, token }: { mediaId: string; token: string }) {
-  const [view, setView] = useState<MediaAssetView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [unlocking, setUnlocking] = useState(false);
+  const { view, loadError, unlockError, unlocking, unlock } = useUnlock(mediaId, token);
 
-  const load = useCallback(() => {
-    return apiFetch<MediaAssetView>(`/media/${mediaId}`, { token })
-      .then(setView)
-      .catch(() => setError("Could not load the attached media."));
-  }, [mediaId, token]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function unlock() {
-    setUnlocking(true);
-    setError(null);
-    try {
-      await apiFetch<unknown>(`/media/${mediaId}/unlock`, { method: "POST", token });
-      await load(); // now entitled → playback_url present
-    } catch {
-      setError("Unlock failed — do you have enough gems?");
-    } finally {
-      setUnlocking(false);
-    }
-  }
-
-  if (error) return <p style={{ color: "crimson" }}>{error}</p>;
+  if (loadError) return <p style={{ color: "crimson" }}>Could not load the attached media.</p>;
   if (!view) return <p style={{ color: "#888" }}>Loading media…</p>;
 
   // Entitled and ready → play. (Video uses the raw URL; adaptive HLS is a follow-up.)
@@ -52,7 +23,8 @@ export function MediaView({ mediaId, token }: { mediaId: string; token: string }
     return <a href={url}>Open media</a>;
   }
 
-  // Gated → paywall.
+  // Gated → paywall. An unlock failure keeps the paywall visible (retryable)
+  // with its message, instead of replacing the whole view.
   if (Number(view.unlock_price) > 0) {
     return (
       <div style={{ border: "1px dashed #bbb", borderRadius: 8, padding: "1rem", textAlign: "center" }}>
@@ -60,6 +32,9 @@ export function MediaView({ mediaId, token }: { mediaId: string; token: string }
         <button type="button" onClick={unlock} disabled={unlocking}>
           {unlocking ? "Unlocking…" : `Unlock for ${String(view.unlock_price)} gems`}
         </button>
+        {unlockError && (
+          <p style={{ color: "crimson" }}>Unlock failed — do you have enough gems?</p>
+        )}
       </div>
     );
   }

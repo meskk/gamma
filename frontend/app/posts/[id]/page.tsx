@@ -4,13 +4,12 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import type { NewInteraction } from "@contract/NewInteraction";
 import type { Post } from "@contract/Post";
 import type { ReportRequest } from "@contract/ReportRequest";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { useFetch } from "@/lib/useFetch";
-import type { Wire } from "@/lib/wire";
+import { useLike } from "@/lib/useLike";
 import { Comments } from "@/components/Comments";
 import { MediaView } from "@/components/MediaView";
 import { useRequireAuth } from "@/lib/useRequireAuth";
@@ -29,15 +28,13 @@ export default function PostDetailPage() {
     [token, id],
     { enabled: !!token && !!id },
   );
-  const [liked, setLiked] = useState(false);
+  const { liked, like } = useLike(id, token ?? "");
   const [reported, setReported] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // Per-post interaction state resets on navigation (the fetch state resets
-  // inside useFetch) — a stale `liked` would mislabel the button and make
-  // like() early-return on the NEW post.
+  // Per-post interaction state resets on navigation (fetch state resets inside
+  // useFetch, liked inside useLike).
   useEffect(() => {
-    setLiked(false);
     setReported(false);
     setActionError(null);
   }, [id]);
@@ -47,24 +44,6 @@ export default function PostDetailPage() {
       ? "This post doesn't exist (or was taken down)."
       : "Could not load this post."
     : actionError;
-
-  async function like() {
-    if (liked || !token) return;
-    setLiked(true); // optimistic; the backend dedups likes, so a repeat is a no-op
-    // ids are bigint in the contract but go on the wire as numbers (JSON can't
-    // serialize bigint), so build with a number against Wire<NewInteraction> —
-    // that still typechecks structurally, so a renamed/added field is caught.
-    const body: Wire<NewInteraction> = {
-      type: "like",
-      target_id: null,
-      post_id: Number(id),
-    };
-    try {
-      await apiFetch<void>("/interactions", { method: "POST", body, token });
-    } catch {
-      setLiked(false); // revert on failure
-    }
-  }
 
   async function report() {
     if (reported || !token) return;

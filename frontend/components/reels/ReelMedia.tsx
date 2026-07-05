@@ -5,11 +5,9 @@
 // centred card when there's no media. Media is fetched lazily the first time the
 // reel is near the viewport, and video only plays while the reel is on screen.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import type { MediaAssetView } from "@contract/MediaAssetView";
-
-import { apiFetch } from "@/lib/api";
+import { useUnlock } from "@/lib/useUnlock";
 import { ImageIcon, LockIcon } from "./icons";
 import styles from "./reels.module.css";
 
@@ -21,27 +19,17 @@ type Props = {
 };
 
 export function ReelMedia({ mediaId, body, token, active }: Props) {
-  const [view, setView] = useState<MediaAssetView | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Lazy-fetch the media the first time this reel becomes the active/visible
+  // one — mapped onto the shared unlock flow's `enabled` flag.
   const [requested, setRequested] = useState(false);
-  const [unlocking, setUnlocking] = useState(false);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
-  const load = useCallback(() => {
-    if (!mediaId) return Promise.resolve();
-    setError(null);
-    return apiFetch<MediaAssetView>(`/media/${mediaId}`, { token })
-      .then(setView)
-      .catch(() => setError("Medien konnten nicht geladen werden."));
-  }, [mediaId, token]);
-
-  // Lazy-fetch the media the first time this reel becomes the active/visible one.
   useEffect(() => {
-    if (mediaId && active && !requested) {
-      setRequested(true);
-      void load();
-    }
-  }, [mediaId, active, requested, load]);
+    if (mediaId && active && !requested) setRequested(true);
+  }, [mediaId, active, requested]);
+
+  const { view, loadError, unlockError, unlocking, unlock, reload } = useUnlock(mediaId, token, {
+    enabled: requested,
+  });
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // Only the on-screen reel's video plays; others pause (saves bandwidth/CPU).
   useEffect(() => {
@@ -50,20 +38,6 @@ export function ReelMedia({ mediaId, body, token, active }: Props) {
     if (active) void v.play().catch(() => {});
     else v.pause();
   }, [active, view]);
-
-  async function unlock() {
-    if (!mediaId) return;
-    setUnlocking(true);
-    setError(null);
-    try {
-      await apiFetch<unknown>(`/media/${mediaId}/unlock`, { method: "POST", token });
-      await load();
-    } catch {
-      setError("Freischalten fehlgeschlagen — genug Gems?");
-    } finally {
-      setUnlocking(false);
-    }
-  }
 
   // No media → show the post body as a centred text card (or the image glyph).
   if (!mediaId) {
@@ -80,11 +54,11 @@ export function ReelMedia({ mediaId, body, token, active }: Props) {
     );
   }
 
-  if (error) {
+  if (loadError) {
     return (
       <div className={styles.center}>
-        <p>{error}</p>
-        <button type="button" className={styles.ghostLink} onClick={() => void load()}>
+        <p>Medien konnten nicht geladen werden.</p>
+        <button type="button" className={styles.ghostLink} onClick={reload}>
           Erneut versuchen
         </button>
       </div>
@@ -140,7 +114,8 @@ export function ReelMedia({ mediaId, body, token, active }: Props) {
     );
   }
 
-  // Locked → paywall.
+  // Locked → paywall. An unlock failure keeps the paywall (retryable) and
+  // shows its message beneath the button.
   if (Number(view.unlock_price) > 0) {
     return (
       <div className={styles.center}>
@@ -151,6 +126,7 @@ export function ReelMedia({ mediaId, body, token, active }: Props) {
         <button type="button" className={styles.primaryBtn} onClick={unlock} disabled={unlocking}>
           {unlocking ? "Wird freigeschaltet…" : `Für ${String(view.unlock_price)} Gems freischalten`}
         </button>
+        {unlockError && <p>Freischalten fehlgeschlagen — genug Gems?</p>}
       </div>
     );
   }

@@ -9,7 +9,11 @@ import { usePagedFeed } from "./usePagedFeed";
 
 const post = (id: number) => ({ id, author_id: 1, body: `p${id}` });
 
-afterEach(() => apiFetchMock.mockReset());
+afterEach(() => {
+  // Block body ON PURPOSE — see useLike.test.ts: a returned mock would be
+  // invoked as a teardown callback.
+  apiFetchMock.mockReset();
+});
 
 describe("usePagedFeed", () => {
   it("loads page one and appends deduped pages until the cursor runs out", async () => {

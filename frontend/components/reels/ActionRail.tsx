@@ -10,10 +10,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import type { Post } from "@contract/Post";
-import type { NewInteraction } from "@contract/NewInteraction";
 
-import { apiFetch } from "@/lib/api";
 import { FEATURES } from "@/lib/features";
+import { useLike } from "@/lib/useLike";
 import {
   HeartIcon,
   CommentIcon,
@@ -27,20 +26,9 @@ import styles from "./reels.module.css";
 export function ActionRail({ post, token }: { post: Post; token: string }) {
   const router = useRouter();
   const postId = String(post.id);
-  const [liked, setLiked] = useState(false);
+  const { liked, like } = useLike(postId, token);
   const [saved, setSaved] = useState(false);
   const [shareLabel, setShareLabel] = useState("Teilen");
-
-  async function like() {
-    if (liked) return; // the backend records a like once; there is no un-like yet
-    setLiked(true); // optimistic
-    const body: NewInteraction = { type: "like", target_id: null, post_id: post.id };
-    try {
-      await apiFetch<unknown>("/interactions", { method: "POST", body, token });
-    } catch {
-      setLiked(false); // revert on failure
-    }
-  }
 
   async function share() {
     const url = `${window.location.origin}/posts/${postId}`;
