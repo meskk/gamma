@@ -161,17 +161,27 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | M0.6 | 2026-07-05 | 5644018 | CI + Security auf main ✓ | Wöchentlicher Security-Schedule (Mo 06:00 UTC) |
 | M0.7 | 2026-07-05 | *(GitHub-Setting, kein Commit)* | gh api verifiziert | Branch-Protection: 7 Pflicht-Checks auf main; enforce_admins aus |
 | M0 ✅ | 2026-07-05 | e8e7dfd | CI ✓ + Security ✓ (Runs 28745802538/28745802549) | Meilenstein abgeschlossen |
-| M1.1+M1.4 (teilw.) | 2026-07-05 | *(dieser Commit)* | Docs | Owner-Antworten eingearbeitet: Backlog P-1..P-3, AI-Block-Prinzip + Payout-Grenze, 10k-Ziel, HLS verschoben; Restfragen in §8 |
+| M1.1+M1.4 (teilw.) | 2026-07-05 | 8ec3636 | Docs | Owner-Antworten eingearbeitet: Backlog P-1..P-3, AI-Block-Prinzip + Payout-Grenze, 10k-Ziel, HLS verschoben |
+| M1.1+M1.4 (Forts.) | 2026-07-05 | *(dieser Commit)* | Docs | P-1-Matrix entschieden; P-2-Parameter (3 %/6 Mon., Creator-Overrides); P-4 Private Area (non-custodial) neu; AI-Vorschlagswesen präzisiert |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
-### P-1 — Launch-Funktionsumfang definieren *(in 1a; Owner-Session nötig)*
-Festlegen, welche Funktionen Usern zum Start sichtbar/nutzbar sind. Vorgehen: eine
-Feature-Matrix (sichtbar / versteckt / operator-only) über den existierenden Bestand —
-Posts, Kommentare, Likes/Interaktionen, Follows, Feed (For-you/Following), Compose +
-Medien-Upload, Paid-Unlocks, Gems-Anzeige, Profil, Referral (P-2) — die der Owner
-abtickt. **Akzeptanz:** Matrix hier eingetragen; Frontend blendet Nicht-Launch-Features
-aus (Config, kein Code-Löschen).
+### P-1 — Launch-Funktionsumfang *(ENTSCHIEDEN 2026-07-05)*
+| Feature | Launch | Anmerkung |
+|---|---|---|
+| Posts, Kommentare, Likes, Follows | sichtbar | Kern; füttert die Payout-Formel |
+| Feed (For-you + Folge ich) | sichtbar | |
+| Compose + Medien-Upload | sichtbar | Bild/Video/Audio |
+| Profil-Seiten, Gems-Kontostand | sichtbar | |
+| Referral-Link | sichtbar | sobald P-2 gebaut |
+| Melden (Report) | sichtbar | |
+| Tip-Button (Reel-Leiste) | **versteckt** | heute nur Attrappe; eigenes Item, wenn gebaut |
+| Save-Button (Reel-Leiste) | **versteckt** | speichert nur lokal — nichts vortäuschen |
+| Gem-Paid-Unlock (Bestand) | **versteckt** | Launch-Modell für bezahlten Content ist P-4 (Private Area), nicht der Gem-Unlock; Code bleibt (Config-Ausblendung, kein Löschen) |
+| Admin-Bereich | operator-only | fix |
+
+**Akzeptanz:** Frontend blendet die drei versteckten Features per Config aus
+(kein Code-Löschen); ein Test pro Ausblendung.
 
 ### P-2 — Referral-System *(in 1a; Bau nach dem Auth-Cluster, vor 1a-β)*
 User werben User per Referral-Link; der Referrer erhält einen Anteil (Cut) an den
@@ -182,10 +192,35 @@ Gem-Erträgen der Geworbenen. Design-Leitplanken (aus der Architektur zwingend):
 - **Anti-Abuse:** Referral-Erträge zählen nur aus Nutzern hinter dem Bot-Gate
   (`v_i = true`) — sonst ist Referral + Bots ein direkter Harvest-Vektor.
 - Empfehlung: nur EINE Referral-Ebene (mehrstufig = Pyramiden-Optik + Abuse-Fläche).
-**Offen (Owner):** Cut-Höhe (bps), Dauer (lebenslang vs. erste N Epochen).
+**ENTSCHIEDEN (2026-07-05):** Default **3 % für 6 Monate** (≈183 Tages-Epochen),
+beides als econ-params-Knöpfe (`referral_bps_default`, `referral_duration_epochs`).
+Zusätzlich **Creator-Verträge**: pro Nutzer überschreibbare Konditionen (z. B. 5 %
+mit frei definierter Laufzeit), gesetzt über einen operator-only Endpoint
+(`referral_terms`-Override: user_id, bps, gültig_bis). Eine Ebene.
 **Akzeptanz:** Registrierung nimmt Referral-Code an; Settlement bucht den Cut als
-eigene `ledger_entries`-Art (`referral`); Summen bleiben exakt (Hamilton); Tests
-decken Konservierung + Gate ab.
+eigene `ledger_entries`-Art (`referral`); Override-Endpoint operator-only mit
+Audit-Spur; Summen bleiben exakt (Hamilton); Tests decken Konservierung + Gate +
+Override-Ablauf ab.
+
+### P-4 — Private Area: non-custodial Creator-Marktplatz *(Scoping offen)*
+Owner-Vision (2026-07-05): Die Plattform ist im Vordergrund wie Instagram (öffentliche
+Posts, Feed). Auf jedem Profil gibt es einen **vierten Reiter „Private Area"**: Der
+Nutzer entscheidet, ob dieser Bereich öffentlich ist oder **nur gegen Bezahlung**
+sichtbar, und bepreist seinen Content selbst. Kauf läuft **non-custodial** — die
+Plattform ist reiner Mittelmann und hält NIE Kundengelder (bewusste Konsequenz der
+fehlenden Verwahrlizenz): entweder (a) Fiat über Drittanbieter (z. B. Stripe Connect,
+Direct Charge + Application Fee = unser Cut) oder (b) Wallet-zu-Wallet per Smart
+Contract mit Protokoll-Cut.
+**Einordnung:** Das konkretisiert Rail 1 aus dem Dossier (Creator-Marktplatz) und
+ERSETZT den Gem-Paid-Unlock als Launch-Modell für bezahlten Content (P-1: Bestand
+wird versteckt, nicht gelöscht).
+**Empfohlene Sequenz:** Stripe-Pfad zuerst (juristisch + technisch der kürzeste Weg,
+Cut sauber als Application Fee); Wallet-/Smart-Contract-Pfad als zweite Ausbaustufe
+(Chain-Wahl, Wallet-Connect, Contract-Audit — eigenes Gate).
+**Offen (Owner):** Ist die Private Area **launch-blockierend** (1a) oder kommt sie
+mit 1a-β? Cut-Höhe (%)? Nur Abo-artiger Zugang zum ganzen Bereich oder auch
+Einzel-Content-Kauf? **Rechts-Check** (Plattformhaftung, Steuern, Adult-Content-Policy)
+vor dem Bau — passt zu den dokumentierten Anwalt-Next-Steps der Monetarisierungsstrategie.
 
 ### P-3 — Payout-Rail über Drittanbieter *(1a-β)*
 Echte Auszahlungen (gedeckelt) laufen zunächst über einen Drittanbieter — KYC liegt
@@ -280,6 +315,13 @@ Triage) + wöchentlicher Schedule-Lauf.
   econ-params-gegateter Faktor im Gewichtsmodell zulässig, nie als freie Zuteilung
   durch das Modell. Grund: Auditierbarkeit, Reproduzierbarkeit, fail-closed —
   ein Modell-Output ist nicht deterministisch nachrechenbar, eine Gewichtsformel schon.
+- **AI-Vorschlagswesen (Human-in-the-Loop, Owner-Präzisierung 2026-07-05):** Die AI
+  tätigt keine Payouts und trifft keine finale Entscheidung. Sie LERNT und erzeugt
+  **begründete Vorschläge** (z. B. Bot-Gate-Flags, Parameter-Empfehlungen), die der
+  Operator bestätigt; erst dann wirken sie — ausschließlich über die bestehenden
+  operator-only Pfade (`PUT /users/:id/verification`, econ-params-Versionsbump).
+  Konsequenz für **ADR 0009**: Das Signal-/Vorschlags-Schema braucht
+  Begründungsfelder (Evidenz/`reason`), damit Vorschläge reviewbar sind.
 - **Payout-Rail:** Drittanbieter zuerst (P-3); eigenes KYC später evaluiert.
 - **Referral-System:** gewollt → P-2.
 - **Skalierungsziel:** stabil bis **10.000 Nutzer**; Wachstum = mehr Hardware,
@@ -292,14 +334,18 @@ Triage) + wöchentlicher Schedule-Lauf.
   bleibt verlustfrei by design).
 
 **Weiter offen (Owner):**
-1. P-1-Feature-Matrix abticken (welche Funktionen zum Launch sichtbar sind).
-2. Referral-Parameter: Cut-Höhe (`referral_bps`), Dauer, (Empfehlung: 1 Ebene).
-3. Payout-Drittanbieter auswählen (P-3).
-4. Modell-Spezifikation im Detail — welche Signale genau (Qualitäts-Score,
+1. ~~P-1-Feature-Matrix~~ ✅ entschieden (siehe P-1).
+2. ~~Referral-Parameter~~ ✅ entschieden: 3 % / 6 Monate Default, Creator-Overrides
+   operator-gesetzt (siehe P-2).
+3. **P-4-Scoping:** Private Area launch-blockierend (1a) oder 1a-β? Cut-Höhe?
+   Bereichs-Zugang vs. Einzelkauf? Rechts-Check terminieren.
+4. Payout-/Zahlungs-Drittanbieter auswählen (P-3 + P-4-Fiat-Pfad; naheliegend:
+   derselbe Anbieter, z. B. Stripe Connect).
+5. Modell-Spezifikation im Detail — welche Signale genau (Qualitäts-Score,
    Bot-Likelihood, Embeddings?), Backfill-Ziel *(→ ADR 0009 / M2.3–M2.4)*.
-5. GPU-Provider, EU-Region, Monatsbudget.
-6. ADR-0008-Timing — vor 1a-β auflösen (empfohlen) oder formal 1b-Eingangstor?
-7. Domain + VM-Provider/Region (z. B. Hetzner DE); Monitoring-Default
+6. GPU-Provider, EU-Region, Monatsbudget.
+7. ADR-0008-Timing — vor 1a-β auflösen (empfohlen) oder formal 1b-Eingangstor?
+8. Domain + VM-Provider/Region (z. B. Hetzner DE); Monitoring-Default
    (Uptime-Ping + `/metrics`) gilt als angenommen, falls kein Widerspruch.
 
 ## 9. Ops-Index
