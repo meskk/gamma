@@ -54,14 +54,18 @@ jobs:
       # bucket gamma-media — matching the MinIO container below, so no overrides needed.
 
     steps:
-      # Actions pinned to immutable version tags. TODO: pin to the full commit SHA
-      # (e.g. actions/checkout@<40-hex> # v4.2.2) — a tag is mutable; a SHA is not.
-      # Resolving SHAs needs network access this offline change can't reach.
-      - uses: actions/checkout@v4.2.2 # TODO: pin to SHA
-      - uses: dtolnay/rust-toolchain@stable # TODO: pin to SHA (this action has no versioned tags; SHA-pin is the only fix)
+      # Actions pinned to full commit SHAs — a tag is mutable, a SHA is not. The
+      # trailing comment records the human-readable version each SHA was resolved
+      # from; bump both together.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # SHA of the `stable` ref; the toolchain is now selected via `with:` because
+      # a SHA ref no longer encodes it (rust-toolchain.toml still pins the version
+      # cargo actually uses).
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable branch, 2026 snapshot
         with:
+          toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2.7.8 # TODO: pin to SHA
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
         with:
           workspaces: backend
 
@@ -70,11 +74,11 @@ jobs:
 
       - name: Start MinIO (S3-compatible object store for the media tests)
         run: |
-          # Pinned image tag (immutable dated release) rather than :latest, so a MinIO
-          # release can't silently change CI. TODO: pin to a @sha256 digest.
+          # Pinned to the content digest (tag RELEASE.2025-04-22T22-12-26Z at pin
+          # time) — a digest is immutable, a tag is not.
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=gamma -e MINIO_ROOT_PASSWORD=gammasecret \
-            minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+            minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e server /data
           echo "waiting for MinIO…"
           ready=""
           for _ in $(seq 1 30); do
@@ -120,9 +124,9 @@ jobs:
         working-directory: services/ingestion
 
     steps:
-      # TODO: pin these to full commit SHAs (see the note in build-and-test).
-      - uses: actions/checkout@v4.2.2 # TODO: pin to SHA
-      - uses: actions/setup-python@v5.4.0 # TODO: pin to SHA
+      # SHA-pinned; see the note in build-and-test.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
           python-version: "3.12"
 
@@ -153,7 +157,7 @@ jobs:
         working-directory: services/ingestion
 
     steps:
-      - uses: actions/checkout@v4.2.2 # TODO: pin to SHA
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Build the ingestion image (the declared deploy unit)
         run: docker build -t gamma-ingestion:ci .
 
@@ -168,9 +172,9 @@ jobs:
         working-directory: frontend
 
     steps:
-      # TODO: pin these to full commit SHAs (see the note in build-and-test).
-      - uses: actions/checkout@v4.2.2 # TODO: pin to SHA
-      - uses: actions/setup-node@v4.2.0 # TODO: pin to SHA
+      # SHA-pinned; see the note in build-and-test.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
         with:
           node-version: "22"
           cache: npm
