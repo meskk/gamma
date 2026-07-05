@@ -89,6 +89,10 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [interests, setInterests] = useState("");
+  // Referral code from a shared invite link (/login?ref=CODE, P-2). Held in
+  // state so an INVALID code can be dropped after its error — the person can
+  // still register, they just don't credit anyone.
+  const [refCode, setRefCode] = useState<string | null>(() => searchParams.get("ref"));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // In-flight request generation. Every state transition (tab switch, back) bumps
@@ -235,7 +239,12 @@ function LoginForm() {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-      await register({ email, password, declared_categories });
+      await register({
+        email,
+        password,
+        declared_categories,
+        referral_code: refCode ?? undefined,
+      });
       router.push(redirectTarget());
     } catch (err) {
       if (gen !== flowGen.current) return;
@@ -243,7 +252,11 @@ function LoginForm() {
       // Map on the backend's stable machine-readable code, not just HTTP status:
       // `email_taken` (409), `weak_password`/`invalid_email` (400).
       const code = err instanceof ApiError ? err.code : "";
-      if (code === "email_taken") {
+      if (code === "invalid_referral_code") {
+        // Drop the bad code so the NEXT attempt goes through without it.
+        setRefCode(null);
+        setError("Der Einladungscode ist ungültig — er wird ignoriert, versuch es erneut.");
+      } else if (code === "email_taken") {
         setError("Diese E-Mail ist bereits registriert — wechsle zu „Anmelden“.");
       } else if (code === "weak_password") {
         setError("Passwort zu kurz (mindestens 8 Zeichen).");

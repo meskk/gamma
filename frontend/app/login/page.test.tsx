@@ -160,6 +160,57 @@ describe("LoginPage", () => {
     });
   });
 
+  it("passes ?ref= from an invite link into the registration (P-2)", async () => {
+    searchParamsRef.current = new URLSearchParams("ref=abc123def456");
+    mockCheckEmail(false);
+    registerMock.mockResolvedValue(undefined);
+    render(<LoginPage />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Registrieren" }));
+    typeEmail("invited@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Weiter" }));
+    const pw = await screen.findByLabelText("Passwort");
+    fireEvent.change(pw, { target: { value: "longenoughpw" } });
+    fireEvent.click(screen.getByRole("button", { name: "Weiter" }));
+    await screen.findByLabelText(/Interessen/);
+    fireEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
+
+    await waitFor(() =>
+      expect(registerMock).toHaveBeenCalledWith(
+        expect.objectContaining({ referral_code: "abc123def456" }),
+      ),
+    );
+  });
+
+  it("drops an invalid referral code after its error so retry succeeds", async () => {
+    searchParamsRef.current = new URLSearchParams("ref=badcode");
+    mockCheckEmail(false);
+    registerMock.mockRejectedValueOnce(new ApiError(400, "invalid_referral_code"));
+    registerMock.mockResolvedValueOnce(undefined);
+    render(<LoginPage />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Registrieren" }));
+    typeEmail("retry@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Weiter" }));
+    const pw = await screen.findByLabelText("Passwort");
+    fireEvent.change(pw, { target: { value: "longenoughpw" } });
+    fireEvent.click(screen.getByRole("button", { name: "Weiter" }));
+    await screen.findByLabelText(/Interessen/);
+    fireEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
+
+    // First attempt fails with the specific message…
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert").textContent).toMatch(/Einladungscode/);
+
+    // …the retry registers WITHOUT the bad code.
+    fireEvent.click(screen.getByRole("button", { name: "Konto erstellen" }));
+    await waitFor(() =>
+      expect(registerMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ referral_code: undefined }),
+      ),
+    );
+  });
+
   it("shows a static alert + countdown button on a 429 login, surviving a tab switch", async () => {
     mockCheckEmail(true);
     // No retryAfter on the error → the UI falls back to a 30s cooldown.
