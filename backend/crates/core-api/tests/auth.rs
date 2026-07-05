@@ -217,6 +217,164 @@ async fn weak_password_and_bad_email_rejected(pool: PgPool) {
     );
 }
 
+/// Log in with (email, password), returning the response.
+async fn login(router: &axum::Router, email: &str, password: &str) -> axum::http::Response<Body> {
+    post_json(
+        router,
+        "/v1/auth/login",
+        serde_json::json!({ "email": email, "password": password }),
+    )
+    .await
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn sixth_attempt_throttled_even_with_correct_password(pool: PgPool) {
+    let router = app(AppState::new(pool));
+    assert_eq!(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({ "email": "throttle@example.com", "password": "supersecret" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    // Failures 1-5 are 401 (the free band is 1-4; the 5th failure SETS the lock
+    // but is itself still an ordinary wrong-password rejection).
+    for i in 1..=5 {
+        assert_eq!(
+            login(&router, "throttle@example.com", "wrong-password")
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED,
+            "failure {i} should be 401"
+        );
+    }
+
+    // Now the email is locked: even the RIGHT password is rejected with 429,
+    // a parseable Retry-After, and the shared rate_limited error code.
+    let resp = login(&router, "throttle@example.com", "supersecret").await;
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    let retry: u64 = resp
+        .headers()
+        .get("retry-after")
+        .expect("Retry-After header")
+        .to_str()
+        .unwrap()
+        .parse()
+        .expect("Retry-After must be integer seconds");
+    assert!(
+        (1..=60).contains(&retry),
+        "first lock is 60s; Retry-After was {retry}"
+    );
+    assert_eq!(json_body(resp).await["error"], "rate_limited");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn unknown_email_throttles_identically(pool: PgPool) {
+    let router = app(AppState::new(pool));
+
+    // No such account — the observable sequence must match the real-account
+    // case exactly (401 ×5, then 429), or the throttle becomes an enumeration
+    // oracle.
+    for i in 1..=5 {
+        assert_eq!(
+            login(&router, "ghost@example.com", "wrong-password")
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED,
+            "failure {i} should be 401"
+        );
+    }
+    let resp = login(&router, "ghost@example.com", "wrong-password").await;
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(resp.headers().get("retry-after").is_some());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn successful_login_resets_the_failure_count(pool: PgPool) {
+    let router = app(AppState::new(pool));
+    assert_eq!(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({ "email": "reset@example.com", "password": "supersecret" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    // 4 failures (the free band), then a success clears the count…
+    for _ in 0..4 {
+        login(&router, "reset@example.com", "wrong-password").await;
+    }
+    assert_eq!(
+        login(&router, "reset@example.com", "supersecret")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    // …so 4 MORE failures still don't lock (a stale count would: 4+4 > 5).
+    for _ in 0..4 {
+        assert_eq!(
+            login(&router, "reset@example.com", "wrong-password")
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        login(&router, "reset@example.com", "supersecret")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn expired_lock_allows_login_again(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    assert_eq!(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({ "email": "expired@example.com", "password": "supersecret" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+
+    // Simulate a lock that has already run out.
+    sqlx::query(
+        "INSERT INTO login_throttle (email, failed_count, last_failed_at, locked_until)
+         VALUES ($1, 7, now() - interval '1 hour', now() - interval '1 second')",
+    )
+    .bind("expired@example.com")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Expired lock no longer blocks, and the success clears the history…
+    assert_eq!(
+        login(&router, "expired@example.com", "supersecret")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    // …so one fresh failure is a plain 401 (count restarted), not a 429.
+    assert_eq!(
+        login(&router, "expired@example.com", "wrong-password")
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn me_without_or_with_bad_token_is_401(pool: PgPool) {
     let router = app(AppState::new(pool));

@@ -4,12 +4,13 @@ use std::sync::LazyLock;
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
 use crate::auth::model::{AuthResponse, LoginRequest, Principal, RegisterRequest};
 use crate::auth::repository::AuthRepository;
+use crate::auth::throttle;
 use crate::error::ApiError;
 use db::PgPool;
 
@@ -62,6 +63,22 @@ impl AuthService {
 
     pub async fn login(&self, req: LoginRequest) -> Result<AuthResponse, ApiError> {
         let email = req.email.trim().to_lowercase();
+
+        // Throttle fast-path BEFORE the argon2 work. Unknown emails accumulate
+        // throttle rows exactly like real ones (keyed by email, see migration
+        // 0017), so this adds no enumeration or timing oracle — and a locked
+        // email can't burn our CPU. A locked attempt does NOT count as a new
+        // failure, so retrying can't extend a lock (griefing stays bounded).
+        let throttle_row = self.repo.throttle_state(&email).await?;
+        if let Some((_, Some(locked_until))) = throttle_row {
+            let now = Utc::now();
+            if locked_until > now {
+                return Err(ApiError::TooManyRequests {
+                    retry_after_secs: retry_after_secs(locked_until, now),
+                });
+            }
+        }
+
         let creds = self.repo.credentials_by_email(&email).await?;
 
         // Always run exactly one argon2 verify — against a dummy hash when the email
@@ -76,8 +93,23 @@ impl AuthService {
         let ok = spawn_hash(move || Ok(verify_password(&password, &hash))).await?;
 
         match user_id {
-            Some(id) if ok => self.issue_session(id).await,
-            _ => Err(ApiError::Unauthorized),
+            Some(id) if ok => {
+                // Success forgets the failure history (only if there was any —
+                // the common no-failure login stays a pure read path).
+                if throttle_row.is_some() {
+                    self.repo.clear_login_throttle(&email).await?;
+                }
+                self.issue_session(id).await
+            }
+            _ => {
+                // Count the failure; from the policy threshold on, set the lock.
+                let count = self.repo.record_login_failure(&email).await?;
+                if let Some(lock) = throttle::lock_duration(count.try_into().unwrap_or(0)) {
+                    let until = Utc::now() + Duration::seconds(lock.as_secs() as i64);
+                    self.repo.set_login_lock(&email, until).await?;
+                }
+                Err(ApiError::Unauthorized)
+            }
         }
     }
 
@@ -119,6 +151,13 @@ impl AuthService {
             .await?;
         Ok(AuthResponse { token, user_id })
     }
+}
+
+/// Whole seconds until `locked_until`, rounded UP so a client that waits the
+/// advertised `Retry-After` is never rejected again, and never below 1.
+fn retry_after_secs(locked_until: DateTime<Utc>, now: DateTime<Utc>) -> u64 {
+    let ms = (locked_until - now).num_milliseconds().max(0);
+    (((ms + 999) / 1000).max(1)) as u64
 }
 
 /// A unique-violation on email means the address is taken.
