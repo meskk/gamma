@@ -160,6 +160,53 @@ describe("LoginPage", () => {
     });
   });
 
+  it("shows a static alert + countdown button on a 429 login, surviving a tab switch", async () => {
+    mockCheckEmail(true);
+    // No retryAfter on the error → the UI falls back to a 30s cooldown.
+    loginMock.mockRejectedValue(new ApiError(429, "rate_limited"));
+    render(<LoginPage />);
+
+    typeEmail("me@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Weiter" }));
+    const pw = await screen.findByLabelText("Passwort");
+    fireEvent.change(pw, { target: { value: "whatever42" } });
+    fireEvent.click(screen.getByRole("button", { name: "Anmelden" }));
+
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert").textContent).toBe("Zu viele Versuche — bitte warte kurz.");
+    const btn = screen.getByRole("button", { name: /Warte \d+ s/ }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(pushMock).not.toHaveBeenCalled();
+
+    // The cooldown deliberately survives a tab switch — the server-side limit
+    // is real regardless of which tab is showing.
+    fireEvent.click(screen.getByRole("tab", { name: "Registrieren" }));
+    const after = screen.getByRole("button", { name: /Warte \d+ s/ }) as HTMLButtonElement;
+    expect(after.disabled).toBe(true);
+  });
+
+  it("re-enables submit once the Retry-After cooldown has run out", async () => {
+    mockCheckEmail(true);
+    loginMock.mockRejectedValue(new ApiError(429, "rate_limited", 1));
+    render(<LoginPage />);
+
+    typeEmail("me@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Weiter" }));
+    const pw = await screen.findByLabelText("Passwort");
+    fireEvent.change(pw, { target: { value: "whatever42" } });
+    fireEvent.click(screen.getByRole("button", { name: "Anmelden" }));
+
+    await screen.findByRole("alert");
+    // After the 1s cooldown the normal label returns and the button is usable.
+    await waitFor(
+      () => {
+        const btn = screen.getByRole("button", { name: "Anmelden" }) as HTMLButtonElement;
+        expect(btn.disabled).toBe(false);
+      },
+      { timeout: 3000 },
+    );
+  });
+
   it("does not corrupt state when the tab is switched mid-flow (regression, finding 1)", async () => {
     // A deferred check-email lets us switch tabs while the request is in flight.
     let resolveCheck: ((v: { exists: boolean }) => void) | null = null;

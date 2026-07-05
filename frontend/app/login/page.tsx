@@ -16,7 +16,7 @@
 // "Methoden-Wähler" from the design collapses to a direct email field.
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useRef, useState, type FormEvent } from "react";
+import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 
 import type { EmailCheckRequest } from "@contract/EmailCheckRequest";
 import type { EmailCheckResult } from "@contract/EmailCheckResult";
@@ -96,6 +96,38 @@ function LoginForm() {
   // the flow has moved on — this defeats the stale-closure race where a slow
   // check-email/login response lands after the user changed tabs or stepped back.
   const flowGen = useRef(0);
+  // Rate-limit cooldown (server 429 + Retry-After). Remaining whole seconds in
+  // state (drives the button countdown); the actual deadline in a ref so ticks
+  // recompute from the clock instead of drifting. DELIBERATELY not reset by tab
+  // switches or flowGen bumps — the server-side limit is real either way.
+  const [cooldownLeft, setCooldownLeft] = useState(0);
+  const cooldownDeadline = useRef(0);
+  const cooldownActive = cooldownLeft > 0;
+
+  function startCooldown(secs: number) {
+    cooldownDeadline.current = Date.now() + secs * 1000;
+    setCooldownLeft(Math.max(1, secs));
+  }
+
+  useEffect(() => {
+    if (!cooldownActive) return;
+    const id = window.setInterval(() => {
+      setCooldownLeft(Math.max(0, Math.ceil((cooldownDeadline.current - Date.now()) / 1000)));
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [cooldownActive]);
+
+  /** Shared 429 handling for the real submit steps: start the countdown and show
+   * a STATIC alert (the ticking number lives only in the button label, so screen
+   * readers aren't spammed every second). */
+  function handleRateLimit(err: unknown): boolean {
+    if (err instanceof ApiError && err.status === 429) {
+      startCooldown(err.retryAfter ?? 30);
+      setError("Zu viele Versuche — bitte warte kurz.");
+      return true;
+    }
+    return false;
+  }
 
   // Redirect target after a successful login (finding: preserve intended URL). Only
   // honour local paths — never an absolute/protocol-relative URL (open-redirect).
@@ -179,6 +211,7 @@ function LoginForm() {
       router.push(redirectTarget());
     } catch (err) {
       if (gen !== flowGen.current) return;
+      if (handleRateLimit(err)) return;
       // Login bad-password is a 401 (code "unauthorized"); anything else is a
       // transient failure.
       setError(
@@ -206,6 +239,7 @@ function LoginForm() {
       router.push(redirectTarget());
     } catch (err) {
       if (gen !== flowGen.current) return;
+      if (handleRateLimit(err)) return;
       // Map on the backend's stable machine-readable code, not just HTTP status:
       // `email_taken` (409), `weak_password`/`invalid_email` (400).
       const code = err instanceof ApiError ? err.code : "";
@@ -263,8 +297,14 @@ function LoginForm() {
         : mode === "login"
           ? "Anmelden"
           : "Weiter";
-  // Keep an accessible name on the busy button rather than a bare "…".
-  const busyLabel = busy ? { children: "…", "aria-label": "Wird verarbeitet…" } : { children: primaryLabel };
+  // Keep an accessible name on the busy button rather than a bare "…". During a
+  // rate-limit cooldown the countdown replaces the label; the alert text stays
+  // static so assistive tech hears one message, not a ticking number.
+  const busyLabel = busy
+    ? { children: "…", "aria-label": "Wird verarbeitet…" }
+    : cooldownActive
+      ? { children: `Warte ${cooldownLeft} s…` }
+      : { children: primaryLabel };
 
   return (
     <div className="glass-login">
@@ -437,7 +477,7 @@ function LoginForm() {
           <button
             type="submit"
             className="gl-primary"
-            disabled={busy}
+            disabled={busy || cooldownActive}
             style={{ width: "100%", padding: "15px 0", borderRadius: 999, background: "rgba(255,255,255,0.22)", border: "1.2px solid rgba(255,255,255,0.42)", boxShadow: "0 8px 20px rgba(0,0,0,0.4)", color: "#fff", fontSize: 15, fontWeight: 500, cursor: "pointer", transition: "background 0.15s" }}
             {...busyLabel}
           />
