@@ -184,7 +184,11 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | P-2/R3 | 2026-07-05 | f9973c8 | fmt+clippy+test --all ✓ (4 Unit- + 2 Integrationstests) | Konservierender Settlement-Cut (pure, eine Ebene, Floor; nur verifizierte Referrer; 'referral'-Journal; doppelter Fail-closed-Check) |
 | P-2/R4 | 2026-07-05 | b10b614 | fmt+clippy+test --all ✓, Bindings ✓ (1 neuer Test) | PUT /users/:id/referral-terms (operator-only, Upsert, Audit-Log) |
 | P-2/R5 | 2026-07-05 | 69c8efc | FE-Gates ✓ (2 neue Tests) | Einladungslink /login?ref=CODE → Registrierung; ungültiger Code wird nach Fehler verworfen |
-| P-2 ✅ | 2026-07-05 | *(dieser Commit)* | E2E im Browser: /login?ref=… → Registrierung → DB-Zeile 300 bps/183 Epochen ✓ | Referral-System komplett (Anzeige des eigenen Links folgt mit der Finance-Area, P-5) |
+| P-2 ✅ | 2026-07-05 | be853d5 | E2E im Browser: /login?ref=… → Registrierung → DB-Zeile 300 bps/183 Epochen ✓ | Referral-System komplett (Anzeige des eigenen Links folgt mit der Finance-Area, P-5) |
+| M2.8 | 2026-07-05 | c68a119 | fmt+clippy+test --all ✓, FE-Typecheck ✓ (1 neuer Test) | Service-Rolle: Signals-Write unter Maschinen-Identität; keine Operator-Rechte; RUNBOOK-Provisionierung |
+| B1 | 2026-07-05 | c3be0a9 | fmt+clippy+test --all ✓ (2 Unit- + 2 neue Integrationstests) | Feed-Cursor: eingefrorene Ranking-Uhr + Keyset, FeedPage-Binding, invalid/stale → 400 |
+| D1–D3 | 2026-07-05 | 4dbe7c2 | FE-Gates ✓ (5 neue Tests) | usePagedFeed (20er-Seiten, Legacy-Fallback, Dedupe) + ReelsFeed-Prefetch ab 3 Slides vor Ende |
+| B1+D ✅ | 2026-07-05 | *(dieser Commit)* | E2E im Browser: Seite 1 (20 Slides) → Blättern → Cursor-Request → 25 Slides ✓ | Feed-Paging komplett (Backend + Frontend) |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
