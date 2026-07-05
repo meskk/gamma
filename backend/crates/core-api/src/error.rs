@@ -22,6 +22,9 @@ pub enum ApiError {
     Forbidden,
     /// A conflicting resource already exists (e.g. email taken) → 409.
     Conflict(&'static str),
+    /// Too many attempts (rate limit / login throttle) → 429. Carries the wait in
+    /// seconds, surfaced as a `Retry-After` header so clients can render a countdown.
+    TooManyRequests { retry_after_secs: u64 },
     /// A database operation failed → 500 (details logged, not leaked to clients).
     Database(sqlx::Error),
     /// Any other internal failure → 500. Message is logged, not returned.
@@ -77,23 +80,50 @@ struct ErrorBody {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, code) = match self {
-            ApiError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-            ApiError::Validation(code) => (StatusCode::BAD_REQUEST, code),
-            ApiError::PaymentRequired => (StatusCode::PAYMENT_REQUIRED, "payment_required"),
-            ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
-            ApiError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
-            ApiError::Conflict(code) => (StatusCode::CONFLICT, code),
+        let (status, code, retry_after_secs) = match self {
+            ApiError::NotFound => (StatusCode::NOT_FOUND, "not_found", None),
+            ApiError::Validation(code) => (StatusCode::BAD_REQUEST, code, None),
+            ApiError::PaymentRequired => (StatusCode::PAYMENT_REQUIRED, "payment_required", None),
+            ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized", None),
+            ApiError::Forbidden => (StatusCode::FORBIDDEN, "forbidden", None),
+            ApiError::Conflict(code) => (StatusCode::CONFLICT, code, None),
+            ApiError::TooManyRequests { retry_after_secs } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limited",
+                Some(retry_after_secs),
+            ),
             ApiError::Database(err) => {
                 // Log the real error; return an opaque code so we never leak SQL.
                 tracing::error!(%err, "database error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", None)
             }
             ApiError::Internal(msg) => {
                 tracing::error!(%msg, "internal error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", None)
             }
         };
-        (status, Json(ErrorBody { error: code })).into_response()
+        let mut resp = (status, Json(ErrorBody { error: code })).into_response();
+        if let Some(secs) = retry_after_secs {
+            resp.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(secs),
+            );
+        }
+        resp
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn too_many_requests_maps_to_429_with_retry_after() {
+        let resp = ApiError::TooManyRequests {
+            retry_after_secs: 90,
+        }
+        .into_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(resp.headers().get("retry-after").unwrap(), "90");
     }
 }
