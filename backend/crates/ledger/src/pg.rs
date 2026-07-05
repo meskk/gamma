@@ -136,6 +136,32 @@ pub async fn mint_epoch_tx(
     Ok(PtAmount(minted))
 }
 
+/// Journal an applied referral cut, within the caller's transaction. No balance
+/// moves here — the epoch's mint rows already carry the POST-cut amounts; this
+/// entry documents WHY the referred user's mint is smaller than their computed
+/// share (`user_id` = the referrer who received the cut, `ref_id` = the
+/// referred user it came from). Balance reconstruction must therefore ignore
+/// 'referral' rows, exactly like 'unlock_burn'.
+pub async fn referral_cut_tx(
+    conn: &mut PgConnection,
+    referrer_id: i64,
+    referred_id: i64,
+    amount: i64,
+    epoch_k: i64,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"INSERT INTO ledger_entries (user_id, epoch_k, kind, amount, ref_type, ref_id)
+           VALUES ($1, $2, 'referral', $3, 'referred_user', $4)"#,
+        referrer_id,
+        epoch_k,
+        amount,
+        referred_id
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Record a burn (destruction with no holder) for audit, within the caller's
 /// transaction. No balance moves — the destroyed amount is the part of a debit
 /// that was never credited; this entry makes that destruction explicit. It has

@@ -176,6 +176,151 @@ async fn settles_epoch_mints_by_weight_and_is_idempotent(pool: PgPool) {
     assert_eq!(svc.gem_balance(a).await.unwrap().balance, bal_a);
 }
 
+/// Insert a referral row directly (R2 covers the registration path; here we
+/// only need the settlement-side effect).
+async fn seed_referral(pool: &PgPool, referred: i64, referrer: i64, bps: i32, valid_until: i64) {
+    sqlx::query(
+        "INSERT INTO referrals (referred_id, referrer_id, bps, valid_until_epoch)
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(referred)
+    .bind(referrer)
+    .bind(bps)
+    .bind(valid_until)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn referral_cut_is_conserving_and_journaled(pool: PgPool) {
+    let a = verified_user(&pool).await; // earns (receives engagement)
+    let b = verified_user(&pool).await; // engages
+    let r = verified_user(&pool).await; // referred `a`; no interactions at all
+
+    let post_a = PostRepository::new(pool.clone())
+        .create(&NewPost {
+            author_id: a,
+            category: None,
+            body: "a's post".into(),
+            media_id: None,
+        })
+        .await
+        .expect("post")
+        .id;
+
+    let epoch_k = current_epoch() - 1;
+    seed_interaction(
+        &pool,
+        b,
+        None,
+        Some(post_a),
+        InteractionType::Like.code(),
+        1.0,
+        epoch_k,
+    )
+    .await;
+    // 10% cut, window still open in epoch_k.
+    seed_referral(&pool, a, r, 1_000, epoch_k).await;
+
+    let svc = SettlementService::new(pool.clone());
+    let summary = svc.settle(epoch_k).await.unwrap();
+
+    let bal_a = svc.gem_balance(a).await.unwrap().balance;
+    let bal_b = svc.gem_balance(b).await.unwrap().balance;
+    let bal_r = svc.gem_balance(r).await.unwrap().balance;
+
+    // The referrer earned purely via the cut…
+    assert!(bal_r > 0, "verified referrer must receive the cut");
+    // …which is exactly 10% (floored) of a's ORIGINAL payout…
+    let original_a = bal_a + bal_r;
+    assert_eq!(bal_r, original_a * 1_000 / 10_000);
+    // …and nothing was created or destroyed.
+    assert_eq!(bal_a + bal_b + bal_r, summary.emission);
+
+    // The redirect is journaled: referrer credited, referred as the source.
+    let journal: (i64, i64) = sqlx::query_as(
+        "SELECT user_id, ref_id FROM ledger_entries
+         WHERE kind = 'referral' AND epoch_k = $1 AND amount = $2",
+    )
+    .bind(epoch_k)
+    .bind(bal_r)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(journal, (r, a));
+
+    // Idempotent: a re-settle changes neither balances nor journal count.
+    svc.settle(epoch_k).await.unwrap();
+    assert_eq!(svc.gem_balance(r).await.unwrap().balance, bal_r);
+    let referral_rows: (i64,) =
+        sqlx::query_as("SELECT count(*) FROM ledger_entries WHERE kind = 'referral'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(referral_rows.0, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn unverified_referrer_and_expired_window_get_no_cut(pool: PgPool) {
+    let a = verified_user(&pool).await;
+    let b = verified_user(&pool).await;
+    // Unverified referrer (bot gate closed).
+    let bot = UserRepository::new(pool.clone())
+        .create(&NewUser {
+            declared_categories: vec![],
+            bot_gate_v: false,
+        })
+        .await
+        .expect("user")
+        .id;
+    // Verified referrer whose window is already over.
+    let late = verified_user(&pool).await;
+
+    let post_a = PostRepository::new(pool.clone())
+        .create(&NewPost {
+            author_id: a,
+            category: None,
+            body: "a's post".into(),
+            media_id: None,
+        })
+        .await
+        .expect("post")
+        .id;
+
+    let epoch_k = current_epoch() - 1;
+    seed_interaction(
+        &pool,
+        b,
+        None,
+        Some(post_a),
+        InteractionType::Like.code(),
+        1.0,
+        epoch_k,
+    )
+    .await;
+    // bot referred `a` (window active) — but is unverified.
+    seed_referral(&pool, a, bot, 1_000, epoch_k).await;
+    // late referred `b` — verified, but the window closed BEFORE this epoch.
+    seed_referral(&pool, b, late, 1_000, epoch_k - 1).await;
+
+    let svc = SettlementService::new(pool.clone());
+    let summary = svc.settle(epoch_k).await.unwrap();
+
+    // No cut flowed anywhere; the earners keep their full payouts.
+    assert_eq!(svc.gem_balance(bot).await.unwrap().balance, 0);
+    assert_eq!(svc.gem_balance(late).await.unwrap().balance, 0);
+    let bal_a = svc.gem_balance(a).await.unwrap().balance;
+    let bal_b = svc.gem_balance(b).await.unwrap().balance;
+    assert_eq!(bal_a + bal_b, summary.emission);
+    let referral_rows: (i64,) =
+        sqlx::query_as("SELECT count(*) FROM ledger_entries WHERE kind = 'referral'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(referral_rows.0, 0);
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn settlement_is_resumable_without_double_mint(pool: PgPool) {
     let a = verified_user(&pool).await;

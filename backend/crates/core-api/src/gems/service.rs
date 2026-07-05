@@ -9,7 +9,7 @@ use domain::{Epoch, PtAmount, UserId};
 use econ_params::EconParams;
 use gem_engine::{build_user_inputs, compute_payouts, Edge, UserMeta};
 use ledger::{LedgerBackend, PgLedger};
-use settlement::emission_for;
+use settlement::{emission_for, referral};
 
 use crate::error::ApiError;
 use crate::gems::model::{GemBalance, SettlementSummary};
@@ -130,11 +130,44 @@ impl SettlementService {
 
         // 4. Distribute by weight. Conservation (Σ payouts == emission) is a pure,
         //    fail-closed check done BEFORE any DB write.
-        let payouts = compute_payouts(&inputs, params, emission_pt);
+        let mut payouts = compute_payouts(&inputs, params, emission_pt);
         let distributed: u128 = payouts.values().map(|p| p.0).sum();
         if distributed != emission_pt.0 {
             return Err(ApiError::Internal(format!(
                 "conservation: distributed {distributed} != emission {}",
+                emission_pt.0
+            )));
+        }
+
+        // 4b. Referral cuts (P-2): redirect each referred earner's frozen-bps cut
+        //     to their referrer — pure, conserving, one level deep (see
+        //     settlement::referral). Eligibility here: the referral window covers
+        //     this epoch AND the referrer is behind the bot gate (an unverified
+        //     referrer receives nothing; the referred keeps their full payout —
+        //     otherwise inviting bots would be a harvest vector).
+        let payout_ids: Vec<i64> = payouts.keys().map(|u| u.0 as i64).collect();
+        let raw_referrals = gems.active_referrals(epoch_k, &payout_ids).await?;
+        let referrer_ids: Vec<i64> = raw_referrals.iter().map(|(_, r, _)| *r).collect();
+        let referrer_verified: std::collections::BTreeMap<i64, bool> = users
+            .verified_flags(&referrer_ids)
+            .await?
+            .into_iter()
+            .collect();
+        let cuts: Vec<referral::ReferralCut> = raw_referrals
+            .iter()
+            .filter(|(_, referrer, _)| referrer_verified.get(referrer).copied().unwrap_or(false))
+            .map(|(referred, referrer, bps)| referral::ReferralCut {
+                referred: UserId(*referred as u64),
+                referrer: UserId(*referrer as u64),
+                bps: (*bps).clamp(0, 10_000) as u16,
+            })
+            .collect();
+        let transfers = referral::apply_referral_cuts(&mut payouts, &cuts);
+        // Fail-closed re-check: redistribution must not have changed the total.
+        let redistributed: u128 = payouts.values().map(|p| p.0).sum();
+        if redistributed != emission_pt.0 {
+            return Err(ApiError::Internal(format!(
+                "conservation after referral cuts: {redistributed} != emission {}",
                 emission_pt.0
             )));
         }
@@ -173,6 +206,21 @@ impl SettlementService {
             let payout_vec: Vec<(UserId, PtAmount)> =
                 payouts.iter().map(|(u, a)| (*u, *a)).collect();
             ledger::mint_epoch_tx(&mut tx, epoch, &payout_vec).await?;
+            // Journal each applied cut alongside its epoch's mints (same tx, so
+            // a rollback removes both; mints already carry the post-cut amounts,
+            // these rows document the redirects for audit).
+            for t in &transfers {
+                let amount = i64::try_from(t.amount.0)
+                    .map_err(|_| ApiError::Internal("referral cut exceeds i64".into()))?;
+                ledger::referral_cut_tx(
+                    &mut tx,
+                    t.referrer.0 as i64,
+                    t.referred.0 as i64,
+                    amount,
+                    epoch_k,
+                )
+                .await?;
+            }
         }
         let first_time =
             GemRepository::claim_epoch_tx(&mut tx, epoch_k, emission, user_count).await?;

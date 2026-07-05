@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO ledger_entries (user_id, epoch_k, kind, amount, ref_type, ref_id)\n           VALUES ($1, $2, 'referral', $3, 'referred_user', $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e4d75501197a5f4eecd15457736dc6b198e150e3fc4bae23ee1178546b3a0367"
+}

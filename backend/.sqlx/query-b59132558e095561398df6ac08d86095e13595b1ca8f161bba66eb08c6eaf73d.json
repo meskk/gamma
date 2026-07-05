@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT referred_id, referrer_id, bps FROM referrals\n            WHERE valid_until_epoch >= $1 AND referred_id = ANY($2)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "referred_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "referrer_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "bps",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b59132558e095561398df6ac08d86095e13595b1ca8f161bba66eb08c6eaf73d"
+}

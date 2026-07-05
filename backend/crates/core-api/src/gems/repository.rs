@@ -34,6 +34,30 @@ impl GemRepository {
         .await
     }
 
+    /// Referrals still ACTIVE in `epoch_k` (inclusive) whose referred user is in
+    /// `referred_ids`: `(referred_id, referrer_id, bps)`. The bps were frozen at
+    /// registration (P-2), so this read is all settlement needs.
+    pub async fn active_referrals(
+        &self,
+        epoch_k: i64,
+        referred_ids: &[i64],
+    ) -> Result<Vec<(i64, i64, i32)>, sqlx::Error> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT referred_id, referrer_id, bps FROM referrals
+            WHERE valid_until_epoch >= $1 AND referred_id = ANY($2)
+            "#,
+            epoch_k,
+            referred_ids
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.referred_id, r.referrer_id, r.bps))
+            .collect())
+    }
+
     /// Serialize settlers of the SAME epoch with a transaction-scoped advisory lock
     /// (auto-released on commit/rollback). Two concurrent settlers — the scheduler
     /// and a manual `POST /epochs/:k/settle`, or two scheduler instances — would

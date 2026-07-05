@@ -9,6 +9,8 @@
 //! (Dossier App. B.2, six invariants). This scaffold implements the two that the
 //! off-chain ledger can already check; the LP/escrow ones land with the 1b backing.
 
+pub mod referral;
+
 use domain::{Epoch, PtAmount};
 use econ_params::EconParams;
 use gem_engine::{compute_payouts, UserInputs};
