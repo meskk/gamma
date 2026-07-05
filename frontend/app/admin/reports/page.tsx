@@ -1,39 +1,39 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { ReportedPost } from "@contract/ReportedPost";
 
 import { apiFetch } from "@/lib/api";
+import { useFetch } from "@/lib/useFetch";
 import { useRequireOperator } from "@/lib/useRequireOperator";
 
 export default function ReportsPage() {
   const { token, ready, isOperator } = useRequireOperator();
-  const [reports, setReports] = useState<ReportedPost[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    if (!token) return;
-    apiFetch<ReportedPost[]>("/reports", { token })
-      .then(setReports)
-      .catch(() => setError("Could not load the moderation queue."));
-  }, [token]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  // useFetch adds the stale-guard this page never had (a latent bug class),
+  // and load-after-action becomes reload().
+  const {
+    data: reports,
+    error: loadError,
+    reload,
+  } = useFetch<ReportedPost[]>(() => apiFetch("/reports", { token }), [token], {
+    enabled: !!token,
+  });
+  const [actionError, setActionError] = useState<string | null>(null);
 
   async function act(postId: string, action: "takedown" | "restore") {
     try {
       await apiFetch<unknown>(`/posts/${postId}/${action}`, { method: "POST", token });
-      load();
+      reload();
     } catch {
-      setError("Action failed.");
+      setActionError("Action failed.");
     }
   }
 
   if (!ready || !isOperator) return null;
+
+  const error = loadError ? "Could not load the moderation queue." : actionError;
 
   return (
     <div>

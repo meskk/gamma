@@ -1,29 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { BackfillResult } from "@contract/BackfillResult";
 import type { IngestionStatus } from "@contract/IngestionStatus";
 
 import { apiFetch } from "@/lib/api";
+import { useFetch } from "@/lib/useFetch";
 import { useRequireOperator } from "@/lib/useRequireOperator";
 
 export default function IngestionPage() {
   const { token, ready, isOperator } = useRequireOperator();
-  const [status, setStatus] = useState<IngestionStatus | null>(null);
+  // Load errors stay silent (as before): the page is a status display; the
+  // backfill button has its own message.
+  const { data: status, reload } = useFetch<IngestionStatus>(
+    () => apiFetch("/admin/ingestion/status", { token }),
+    [token],
+    { enabled: !!token },
+  );
   const [msg, setMsg] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    if (!token) return;
-    apiFetch<IngestionStatus>("/admin/ingestion/status", { token })
-      .then(setStatus)
-      .catch(() => {});
-  }, [token]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   async function backfill() {
     setMsg(null);
@@ -33,7 +29,7 @@ export default function IngestionPage() {
         token,
       });
       setMsg(`Enqueued ${String(r.enqueued)} posts (cursor ${String(r.last_id)}).`);
-      load();
+      reload();
     } catch {
       setMsg("Backfill failed.");
     }
