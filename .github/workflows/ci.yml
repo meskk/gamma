@@ -161,6 +161,30 @@ jobs:
       - name: Build the ingestion image (the declared deploy unit)
         run: docker build -t gamma-ingestion:ci .
 
+  # The backend's deploy unit (M4.2): one image, three binaries (core-api,
+  # transcode_worker, settlement_scheduler — the command picks). Built here so
+  # a broken Dockerfile / missing .sqlx entry / toolchain drift is caught
+  # before deploy. Release build — the slowest job, deliberately independent
+  # of build-and-test so neither delays the other.
+  backend-docker:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build the backend image (the declared deploy unit)
+        run: docker build -t gamma-backend:ci .
+      - name: Image smoke — every binary answers --help or starts
+        run: |
+          # The binaries exit non-zero without env/services; asserting the
+          # entrypoints EXIST and are runnable catches copy/strip mistakes.
+          for bin in core-api transcode_worker settlement_scheduler; do
+            docker run --rm --entrypoint /bin/bash gamma-backend:ci -c "command -v $bin"
+          done
+
   # The Next.js frontend (frontend/). Typechecks against the committed ts-rs
   # contract (backend/bindings/*.ts via the @contract alias), so a backend API
   # shape change that wasn't reflected in the frontend breaks CI here, and builds.
