@@ -6,19 +6,8 @@
 use std::net::SocketAddr;
 
 use core_api::rate_limit::{self, AuthRateLimit};
+use core_api::util::env_parsed;
 use core_api::{app_with_limits, AppState};
-
-/// Parse an env var as `T`, or fall back to `default` if it is unset. A PRESENT but
-/// unparseable value is a misconfiguration and panics at startup — better than
-/// silently falling back to a default the operator didn't intend.
-fn env_parsed<T: std::str::FromStr>(name: &str, default: T) -> T {
-    match std::env::var(name) {
-        Ok(v) => v
-            .parse()
-            .unwrap_or_else(|_| panic!("{name} is set but not a valid value: {v:?}")),
-        Err(_) => default,
-    }
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -47,6 +36,33 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState::new(pool);
     state.storage.ensure_bucket().await?;
     tracing::info!("object storage bucket ready");
+
+    // Housekeeping: periodic sweep of expired sessions and stale login-throttle
+    // rows. Lives in the API binary — sessions are OWNED by the API (parking this
+    // in the settlement scheduler would leak sessions on any deployment that runs
+    // the API alone) — and both sweeps are idempotent DELETEs, so several API
+    // replicas running them concurrently is harmless. The first tick fires
+    // immediately (sweep on boot), then every GAMMA_HOUSEKEEPING_INTERVAL_SECS.
+    let auth = state.auth.clone();
+    let housekeeping_secs: u64 = env_parsed("GAMMA_HOUSEKEEPING_INTERVAL_SECS", 3600);
+    tokio::spawn(async move {
+        let mut tick =
+            tokio::time::interval(std::time::Duration::from_secs(housekeeping_secs.max(1)));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            match auth.purge_expired_sessions().await {
+                Ok(n) if n > 0 => tracing::info!(removed = n, "purged expired sessions"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = ?e, "session purge failed"),
+            }
+            match auth.sweep_stale_login_throttle().await {
+                Ok(n) if n > 0 => tracing::info!(removed = n, "swept stale login-throttle rows"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = ?e, "login-throttle sweep failed"),
+            }
+        }
+    });
 
     // Two per-IP rate-limit layers (both in crate::rate_limit, both off under
     // GAMMA_RATE_LIMIT_DISABLED, both sharing the GAMMA_TRUST_PROXY key choice):

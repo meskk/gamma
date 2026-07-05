@@ -21,6 +21,7 @@ pub mod rate_limit;
 pub mod signals;
 pub mod state;
 pub mod users;
+pub mod util;
 pub mod worker;
 
 mod health;

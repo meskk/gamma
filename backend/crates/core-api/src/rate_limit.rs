@@ -25,18 +25,7 @@ use tower_governor::key_extractor::SmartIpKeyExtractor;
 use tower_governor::{GovernorError, GovernorLayer};
 
 use crate::error::ApiError;
-
-/// Parse an env var as `T`, or fall back to `default` if unset. A PRESENT but
-/// unparseable value is a misconfiguration and panics at startup — better than
-/// silently running with a default the operator didn't intend.
-fn env_parsed<T: std::str::FromStr>(name: &str, default: T) -> T {
-    match std::env::var(name) {
-        Ok(v) => v
-            .parse()
-            .unwrap_or_else(|_| panic!("{name} is set but not a valid value: {v:?}")),
-        Err(_) => default,
-    }
-}
+use crate::util::env_parsed;
 
 /// Whether rate limiting is globally disabled (local dev / in-process tests).
 pub fn disabled() -> bool {

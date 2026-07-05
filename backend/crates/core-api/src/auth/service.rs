@@ -14,10 +14,13 @@ use crate::auth::throttle;
 use crate::error::ApiError;
 use db::PgPool;
 
-/// How long a session is valid.
-const SESSION_DAYS: i64 = 30;
 /// Minimum password length.
 const MIN_PASSWORD_LEN: usize = 8;
+
+/// How long a session is valid, in days (`GAMMA_SESSION_TTL_DAYS`, default 30).
+fn session_ttl_days() -> i64 {
+    crate::util::env_parsed("GAMMA_SESSION_TTL_DAYS", 30)
+}
 
 /// A valid argon2 hash of a throwaway password, computed once. `login` verifies
 /// against it when the email is unknown, so a failed login runs the SAME argon2
@@ -125,6 +128,12 @@ impl AuthService {
         Ok(self.repo.delete_expired_sessions().await?)
     }
 
+    /// Drop login-throttle rows with no failure for 24h (housekeeping).
+    /// Returns how many were removed.
+    pub async fn sweep_stale_login_throttle(&self) -> Result<u64, ApiError> {
+        Ok(self.repo.sweep_stale_login_throttle().await?)
+    }
+
     /// Whether an account exists for `email` (the email-first login step). Normalises
     /// the email exactly as register/login do, so the check matches what a later
     /// login would look up.
@@ -145,7 +154,7 @@ impl AuthService {
 
     async fn issue_session(&self, user_id: i64) -> Result<AuthResponse, ApiError> {
         let token = new_token();
-        let expires_at = Utc::now() + Duration::days(SESSION_DAYS);
+        let expires_at = Utc::now() + Duration::days(session_ttl_days());
         self.repo
             .create_session(&hash_token(&token), user_id, expires_at)
             .await?;

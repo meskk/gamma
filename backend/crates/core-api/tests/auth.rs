@@ -376,6 +376,73 @@ async fn expired_lock_allows_login_again(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn purge_removes_only_expired_sessions(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+
+    // A live session (via register)…
+    let reg = json_body(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({ "email": "purge@example.com", "password": "supersecret" }),
+        )
+        .await,
+    )
+    .await;
+    let token = reg["token"].as_str().unwrap().to_string();
+    let user_id = reg["user_id"].as_i64().unwrap();
+
+    // …plus one already-expired session for the same user.
+    sqlx::query(
+        "INSERT INTO sessions (token_hash, user_id, expires_at)
+         VALUES ('expired-hash', $1, now() - interval '1 day')",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let auth = core_api::auth::AuthService::new(pool);
+    assert_eq!(auth.purge_expired_sessions().await.unwrap(), 1);
+
+    // The live token survived the purge.
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/auth/me")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn throttle_sweep_removes_only_stale_rows(pool: PgPool) {
+    // One stale row (idle > 24h) and one fresh one.
+    sqlx::query(
+        "INSERT INTO login_throttle (email, failed_count, last_failed_at)
+         VALUES ('stale@example.com', 3, now() - interval '25 hours'),
+                ('fresh@example.com', 3, now())",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let auth = core_api::auth::AuthService::new(pool.clone());
+    assert_eq!(auth.sweep_stale_login_throttle().await.unwrap(), 1);
+
+    let remaining: (String,) = sqlx::query_as("SELECT email FROM login_throttle")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(remaining.0, "fresh@example.com");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn me_without_or_with_bad_token_is_401(pool: PgPool) {
     let router = app(AppState::new(pool));
 
