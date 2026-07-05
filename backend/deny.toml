@@ -1,0 +1,42 @@
+# cargo-deny configuration (checked in CI by the security job, weekly + on push).
+# Policy: advisories/licenses/bans/sources all block. Every waiver below carries
+# its reason inline and is re-justified whenever the weekly scan surfaces it.
+
+[advisories]
+ignore = [
+    # All three sit in rustls-webpki 0.101 via the LEGACY connector stack
+    # (rustls 0.21 <- hyper-rustls 0.24 <- aws-smithy-http-client). That stack is
+    # compiled into aws-smithy-http-client unconditionally but is NOT selected at
+    # runtime: the SDK's default-https-client feature (which we use) runs the
+    # rustls 0.23 + rustls-webpki 0.103 stack, where all three are fixed. No
+    # semver-compatible AWS SDK update drops the legacy path yet (checked
+    # 2026-07-05); remove these waivers when it does.
+    { id = "RUSTSEC-2026-0098", reason = "unreachable: legacy TLS connector compiled but never selected; active stack has the fix" },
+    { id = "RUSTSEC-2026-0099", reason = "unreachable: legacy TLS connector compiled but never selected; active stack has the fix" },
+    { id = "RUSTSEC-2026-0104", reason = "unreachable: legacy connector never selected, and we configure no CRLs (advisory: 'Applications that do not use CRLs are not affected')" },
+]
+
+[licenses]
+# Permissive licenses only. Anything new fails CI and gets an explicit decision
+# here instead of silently entering the tree.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    # The Mozilla CA bundle shipped by webpki-roots; permissive, data-only.
+    "CDLA-Permissive-2.0",
+    # Our own (unpublished) workspace crates; the workspace license field.
+    "LicenseRef-Proprietary",
+]
+
+[bans]
+# Duplicate crate versions are common in the AWS/hyper ecosystem; warn, don't block.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

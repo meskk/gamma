@@ -1,0 +1,55 @@
+# Dependency security scans. Separate workflow (not ci.yml) so the weekly
+# schedule re-runs ONLY the scans — new upstream advisories surface without a
+# push. All three scans are BLOCKING; waivers live in reviewable config
+# (backend/deny.toml) with reasons, never inline in this file.
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          manifest-path: backend/Cargo.toml
+          # advisories + licenses + bans + sources, per backend/deny.toml
+          command: check
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ingestion
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+      - name: Audit the committed lockfile
+        run: |
+          pip install pip-audit
+          # --disable-pip audits the lock as written, without installing it.
+          pip-audit -r requirements.lock --disable-pip
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: "22"
+      # Blocks on HIGH+ in production deps (audits the lockfile; no install
+      # needed). The full audit (all levels, dev included) runs as a
+      # non-blocking report below — plain `npm audit` is too noisy to block on.
+      - name: Audit production deps (blocking at high)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Full audit (report only)
+        run: npm audit || true

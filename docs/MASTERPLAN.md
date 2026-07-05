@@ -149,7 +149,9 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | M0.1 | 2026-07-05 | a1a4a0b | FE: typecheck+lint+test+build ✓ | devIndicators committet |
 | M0.2 | 2026-07-05 | d7e9a55 | CI auf main | Merge + Tag `phase1a-baseline` |
 | M0.3 | 2026-07-05 | d848de3 | Docs | MASTERPLAN.md angelegt |
-| M0.4 | 2026-07-05 | *(dieser Commit)* | CI auf main | Actions auf SHA, MinIO auf Digest gepinnt |
+| M0.4 | 2026-07-05 | 7e3d086 | CI auf main ✓ (Run 28745581000) | Actions auf SHA, MinIO auf Digest gepinnt |
+| M0.5a | 2026-07-05 | ef88de1 | fmt+clippy+test --all ✓ | anyhow-Advisory gefixt, aws-sdk-s3 Bump |
+| M0.5b | 2026-07-05 | *(dieser Commit)* | lokal: cargo deny ✓, pip-audit ✓, npm audit(high) ✓ | Security-Workflow blockierend; Triage: 3 webpki-Waiver (Legacy-Pfad, ungenutzt), npm 2× moderate (postcss via Next, unter High-Schwelle) |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner)
 
