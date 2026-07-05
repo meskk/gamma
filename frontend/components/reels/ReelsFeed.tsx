@@ -11,10 +11,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import type { Post } from "@contract/Post";
 import type { Follow } from "@contract/Follow";
 
 import { apiFetch } from "@/lib/api";
+import { usePagedFeed } from "@/lib/usePagedFeed";
 import { ActionRail } from "./ActionRail";
 import { ReelMedia } from "./ReelMedia";
 import {
@@ -45,26 +45,15 @@ function relTime(iso: string): string {
 
 export function ReelsFeed({ token, userId }: { token: string; userId: string }) {
   const router = useRouter();
-  const [posts, setPosts] = useState<Post[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Cursor-paged feed (D1/D2): pages of 20, more loaded as the viewer nears
+  // the end of the track.
+  const { posts, error, loadMore, reload } = usePagedFeed(userId, token);
   const [tab, setTab] = useState<Tab>("foryou");
   const [followed, setFollowed] = useState<Set<string> | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
 
   const cooldown = useRef(false); // debounces one wheel/swipe gesture to one page
   const touchStartY = useRef<number | null>(null);
-
-  useEffect(() => {
-    let stale = false;
-    setPosts(null);
-    setError(null);
-    apiFetch<Post[]>(`/users/${userId}/feed?limit=50`, { token })
-      .then((p) => !stale && setPosts(p))
-      .catch(() => !stale && setError("Feed konnte nicht geladen werden."));
-    return () => {
-      stale = true;
-    };
-  }, [userId, token]);
 
   useEffect(() => {
     let stale = false;
@@ -131,6 +120,15 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
   const idx = count ? Math.min(activeIdx, count - 1) : 0;
   const active = visible && count > 0 ? visible[idx] : null;
 
+  // Prefetch: nearing the end of the visible track pulls the next page. A
+  // no-op once the cursor is exhausted (the hook is single-flight), so firing
+  // on every index change is safe. On the "Folge ich" tab this keeps fetching
+  // pages to filter client-side — the server-side following feed is the real
+  // fix and stays on the 1b list.
+  useEffect(() => {
+    if (count > 0 && idx >= count - 3) loadMore();
+  }, [idx, count, loadMore]);
+
   function onWheel(e: React.WheelEvent) {
     if (Math.abs(e.deltaY) < 12) return;
     pageDebounced(e.deltaY > 0 ? 1 : -1);
@@ -155,7 +153,7 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
     mediaContent = stateBlock(
       <>
         <p>{error}</p>
-        <button type="button" className={styles.ghostLink} onClick={() => router.refresh()}>
+        <button type="button" className={styles.ghostLink} onClick={reload}>
           Neu laden
         </button>
       </>,
