@@ -180,6 +180,11 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | M2.1 ✓(vorhanden) | 2026-07-05 | — | Befund | GET /posts/:id/signals existiert bereits (operator-only — vor ADR 0009 korrekt); kein Commit nötig |
 | P-1 | 2026-07-05 | 2c99498 | FE-Gates ✓ (4 neue Tests) | Launch-Ausblendungen: Tip/Save/Gem-Preis hinter NEXT_PUBLIC_FEATURE_*-Flags |
 | P-2/R1 | 2026-07-05 | 0725671 | fmt+clippy+test --all ✓ | Migration 0018 (referral_code, referrals, referral_terms, Ledger-Kind) + econ-params v2 (300 bps / 183 Epochen) |
+| P-2/R2 | 2026-07-05 | 97585de | fmt+clippy+test --all ✓, Bindings + FE-Typecheck ✓ (4 neue Tests) | Registrierung nimmt Codes an (Terms-Snapshot, 400 bei Tippfehler); /auth/me liefert eigenen Code |
+| P-2/R3 | 2026-07-05 | f9973c8 | fmt+clippy+test --all ✓ (4 Unit- + 2 Integrationstests) | Konservierender Settlement-Cut (pure, eine Ebene, Floor; nur verifizierte Referrer; 'referral'-Journal; doppelter Fail-closed-Check) |
+| P-2/R4 | 2026-07-05 | b10b614 | fmt+clippy+test --all ✓, Bindings ✓ (1 neuer Test) | PUT /users/:id/referral-terms (operator-only, Upsert, Audit-Log) |
+| P-2/R5 | 2026-07-05 | 69c8efc | FE-Gates ✓ (2 neue Tests) | Einladungslink /login?ref=CODE → Registrierung; ungültiger Code wird nach Fehler verworfen |
+| P-2 ✅ | 2026-07-05 | *(dieser Commit)* | E2E im Browser: /login?ref=… → Registrierung → DB-Zeile 300 bps/183 Epochen ✓ | Referral-System komplett (Anzeige des eigenen Links folgt mit der Finance-Area, P-5) |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
@@ -200,7 +205,7 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 **Akzeptanz:** Frontend blendet die drei versteckten Features per Config aus
 (kein Code-Löschen); ein Test pro Ausblendung.
 
-### P-2 — Referral-System *(in 1a; Bau nach dem Auth-Cluster, vor 1a-β)*
+### P-2 — Referral-System *(✅ GEBAUT 2026-07-05; Link-Anzeige folgt mit P-5)*
 User werben User per Referral-Link; der Referrer erhält einen Anteil (Cut) an den
 Gem-Erträgen der Geworbenen. Design-Leitplanken (aus der Architektur zwingend):
 - Cut-Höhe als **econ-params-Knob** (`referral_bps`), niemals hardcoded.
