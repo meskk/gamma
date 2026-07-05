@@ -8,6 +8,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Mondays 06:00 UTC: new upstream advisories surface without a push.
+    - cron: "0 6 * * 1"
 
 jobs:
   cargo-deny:
