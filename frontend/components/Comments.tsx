@@ -1,36 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import type { Comment } from "@contract/Comment";
 import type { NewComment } from "@contract/NewComment";
 import type { NewInteraction } from "@contract/NewInteraction";
 
 import { apiFetch } from "@/lib/api";
+import { useFetch } from "@/lib/useFetch";
 import type { Wire } from "@/lib/wire";
 
 export function Comments({ postId, token }: { postId: string; token: string }) {
-  const [comments, setComments] = useState<Comment[] | null>(null);
+  const {
+    data: comments,
+    error: loadError,
+    reload,
+  } = useFetch<Comment[]>(() => apiFetch(`/posts/${postId}/comments`, { token }), [postId, token]);
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    apiFetch<Comment[]>(`/posts/${postId}/comments`, { token })
-      .then(setComments)
-      .catch(() => setError("Could not load comments."));
-  }, [postId, token]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!body.trim()) return;
     setBusy(true);
-    setError(null);
+    setSubmitError(null);
     try {
       const newComment: NewComment = { body: body.trim() };
       await apiFetch<Comment>(`/posts/${postId}/comments`, {
@@ -48,13 +43,15 @@ export function Comments({ postId, token }: { postId: string; token: string }) {
       };
       apiFetch<void>("/interactions", { method: "POST", body: interaction, token }).catch(() => {});
       setBody("");
-      load();
+      reload();
     } catch {
-      setError("Could not post your comment.");
+      setSubmitError("Could not post your comment.");
     } finally {
       setBusy(false);
     }
   }
+
+  const error = loadError ? "Could not load comments." : submitError;
 
   return (
     <section style={{ marginTop: "1.5rem" }}>
