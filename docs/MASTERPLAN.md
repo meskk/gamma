@@ -162,7 +162,8 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | M0.7 | 2026-07-05 | *(GitHub-Setting, kein Commit)* | gh api verifiziert | Branch-Protection: 7 Pflicht-Checks auf main; enforce_admins aus |
 | M0 ✅ | 2026-07-05 | e8e7dfd | CI ✓ + Security ✓ (Runs 28745802538/28745802549) | Meilenstein abgeschlossen |
 | M1.1+M1.4 (teilw.) | 2026-07-05 | 8ec3636 | Docs | Owner-Antworten eingearbeitet: Backlog P-1..P-3, AI-Block-Prinzip + Payout-Grenze, 10k-Ziel, HLS verschoben |
-| M1.1+M1.4 (Forts.) | 2026-07-05 | *(dieser Commit)* | Docs | P-1-Matrix entschieden; P-2-Parameter (3 %/6 Mon., Creator-Overrides); P-4 Private Area (non-custodial) neu; AI-Vorschlagswesen präzisiert |
+| M1.1+M1.4 (Forts.) | 2026-07-05 | b941601 | Docs | P-1-Matrix entschieden; P-2-Parameter (3 %/6 Mon., Creator-Overrides); P-4 Private Area (non-custodial) neu; AI-Vorschlagswesen präzisiert |
+| M1.1+M1.4 (Forts. 2) | 2026-07-05 | *(dieser Commit)* | Docs | P-5 Finance-Area + YouTube-Earnings-Modell (keine Coin-Distribution; geschuldete Balance, Schwelle, Phantom-Connect; Super-Post/Like = Burn-Multiplier-UI) |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
@@ -221,6 +222,31 @@ Cut sauber als Application Fee); Wallet-/Smart-Contract-Pfad als zweite Ausbaust
 mit 1a-β? Cut-Höhe (%)? Nur Abo-artiger Zugang zum ganzen Bereich oder auch
 Einzel-Content-Kauf? **Rechts-Check** (Plattformhaftung, Steuern, Adult-Content-Policy)
 vor dem Bau — passt zu den dokumentierten Anwalt-Next-Steps der Monetarisierungsstrategie.
+
+### P-5 — Finance-/Wallet-Bereich + YouTube-Earnings-Modell *(Scoping mit P-4)*
+Owner-Vision (2026-07-05): **Es werden überhaupt keine Coins distribuiert** (rechtliche
+Leitplanke, bestätigt). Stattdessen agiert die Plattform **wie YouTube**: Nutzer sehen
+eine **Balance, die die Plattform ihnen schuldet** (Verbindlichkeit, kein Token).
+Auszahlung erst **ab einer Schwelle**, in Fiat oder Krypto, über die non-custodialen
+Pfade aus P-3/P-4. Mit der Balance können Nutzer außerdem in der Plattform
+**Super-Posts / Super-Likes** machen (Boosts).
+Bestandteile:
+- **Finance-Area** in der App: Balance-Anzeige, Transaktionshistorie (direkt aus dem
+  vorhandenen `ledger_entries`-Journal), Auszahlungsantrag ab Schwelle
+  (`payout_threshold` als econ-params-Knob), Wallet-Connect (Phantom/Solana) als
+  Verknüpfung fürs Krypto-Auszahlungsziel.
+- **Super-Post/Super-Like:** mappt auf den VORHANDENEN konkaven Burn-Multiplier der
+  Gewichtsformel (Einsatz erhöht Gewicht/Sichtbarkeit, konkav gegen Pay-to-win);
+  Knöpfe existieren in `econ-params` (`burn_scale`, κ) — das Feature ist die
+  UI + Ledger-Buchung dazu, keine neue Ökonomie.
+- **Gems ↔ Balance:** Wie die 1a-Punkte-Gems in die geschuldete Balance übergehen
+  (Umrechnung bei 1a-β, Anzeige beider Größen?), definiert ein eigener ADR mit dem
+  Dossier — offen.
+**Rechts-Check (Pflicht vor Bau):** In-Platform ausgebbare geschuldete Balance +
+Auszahlungsfunktion ist E-Geld-nah — genau dafür existieren die dokumentierten
+Anwalts-Next-Steps der Monetarisierungsstrategie; Schwelle, Verjährung, Steuern klären.
+**Offen (Owner):** Schwellenhöhe; startet der Finance-Bereich mit 1a-β (empfohlen)
+oder früher als reine Anzeige?
 
 ### P-3 — Payout-Rail über Drittanbieter *(1a-β)*
 Echte Auszahlungen (gedeckelt) laufen zunächst über einen Drittanbieter — KYC liegt
@@ -332,6 +358,12 @@ Triage) + wöchentlicher Schedule-Lauf.
   bei gutem Netz muss es gut laufen (deckt die bestehende Single-Bitrate ab).
 - **GPU: mieten → später kaufen** (bestätigt die hinterlegte Strategie; Migration
   bleibt verlustfrei by design).
+- **Earnings-Modell = „wie YouTube" (Owner, 2026-07-05):** KEINE Coin-Distribution,
+  in keiner Phase ohne Lizenz. Nutzer-Erträge sind eine **geschuldete Balance**
+  (Plattform-Verbindlichkeit), auszahlbar ab Schwelle in Fiat/Krypto über
+  non-custodiale Drittpfade, in-platform nutzbar für Boosts → P-5. Produktvision
+  hängt zusammen: Social-Kern + Private Area (P-4) + Finance-Area (P-5) sind EIN
+  kohärentes Ganzes und werden zusammen designt, aber gestuft gebaut.
 
 **Weiter offen (Owner):**
 1. ~~P-1-Feature-Matrix~~ ✅ entschieden (siehe P-1).
