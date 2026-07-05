@@ -1,0 +1,164 @@
+"use client";
+
+// The full-bleed background of a reel: the post's media (image/video/audio) when
+// present and entitled, a paywall when the media is locked, or the post's text as a
+// centred card when there's no media. Media is fetched lazily the first time the
+// reel is near the viewport, and video only plays while the reel is on screen.
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import type { MediaAssetView } from "@contract/MediaAssetView";
+
+import { apiFetch } from "@/lib/api";
+import { ImageIcon, LockIcon } from "./icons";
+import styles from "./reels.module.css";
+
+type Props = {
+  mediaId: string | null;
+  body: string | null;
+  token: string;
+  active: boolean;
+};
+
+export function ReelMedia({ mediaId, body, token, active }: Props) {
+  const [view, setView] = useState<MediaAssetView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [requested, setRequested] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  const load = useCallback(() => {
+    if (!mediaId) return Promise.resolve();
+    setError(null);
+    return apiFetch<MediaAssetView>(`/media/${mediaId}`, { token })
+      .then(setView)
+      .catch(() => setError("Medien konnten nicht geladen werden."));
+  }, [mediaId, token]);
+
+  // Lazy-fetch the media the first time this reel becomes the active/visible one.
+  useEffect(() => {
+    if (mediaId && active && !requested) {
+      setRequested(true);
+      void load();
+    }
+  }, [mediaId, active, requested, load]);
+
+  // Only the on-screen reel's video plays; others pause (saves bandwidth/CPU).
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (active) void v.play().catch(() => {});
+    else v.pause();
+  }, [active, view]);
+
+  async function unlock() {
+    if (!mediaId) return;
+    setUnlocking(true);
+    setError(null);
+    try {
+      await apiFetch<unknown>(`/media/${mediaId}/unlock`, { method: "POST", token });
+      await load();
+    } catch {
+      setError("Freischalten fehlgeschlagen — genug Gems?");
+    } finally {
+      setUnlocking(false);
+    }
+  }
+
+  // No media → show the post body as a centred text card (or the image glyph).
+  if (!mediaId) {
+    return (
+      <div className={styles.placeholder}>
+        {body ? (
+          <p className={styles.textBody}>{body}</p>
+        ) : (
+          <span className={styles.placeholderIcon}>
+            <ImageIcon size={72} />
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className={styles.center}>
+        <p>{error}</p>
+        <button type="button" className={styles.ghostLink} onClick={() => void load()}>
+          Erneut versuchen
+        </button>
+      </div>
+    );
+  }
+
+  if (!view) {
+    return (
+      <div className={styles.placeholder}>
+        <span className={styles.placeholderIcon}>
+          <ImageIcon size={72} />
+        </span>
+      </div>
+    );
+  }
+
+  // Entitled + ready → play. (Video is the presigned raw URL; adaptive HLS via the
+  // /media/:id/manifest endpoint is a follow-up once an HLS player is wired in.)
+  if (view.playback_url) {
+    const url = view.playback_url;
+    if (view.kind === "video") {
+      return (
+        <div className={styles.media}>
+          <video
+            ref={videoRef}
+            className={styles.mediaEl}
+            src={url}
+            muted
+            loop
+            playsInline
+            preload="metadata"
+          />
+        </div>
+      );
+    }
+    if (view.kind === "audio") {
+      return (
+        <div className={styles.placeholder}>
+          <div className={styles.audioCard}>
+            {body ? <p className={styles.textBody}>{body}</p> : null}
+            <audio src={url} controls loop />
+          </div>
+        </div>
+      );
+    }
+    // image (default) — a presigned remote URL, not a bundled asset, so next/image
+    // optimisation doesn't apply; a plain <img> is correct here.
+    return (
+      <div className={styles.media}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className={styles.mediaEl} src={url} alt="" />
+      </div>
+    );
+  }
+
+  // Locked → paywall.
+  if (Number(view.unlock_price) > 0) {
+    return (
+      <div className={styles.center}>
+        <span className={styles.lockIcon}>
+          <LockIcon size={40} />
+        </span>
+        <p>Dieses {view.kind === "video" ? "Video" : "Medium"} ist gesperrt.</p>
+        <button type="button" className={styles.primaryBtn} onClick={unlock} disabled={unlocking}>
+          {unlocking ? "Wird freigeschaltet…" : `Für ${String(view.unlock_price)} Gems freischalten`}
+        </button>
+      </div>
+    );
+  }
+
+  // Free but still transcoding.
+  return (
+    <div className={styles.center}>
+      <p>Medium wird noch verarbeitet…</p>
+    </div>
+  );
+}

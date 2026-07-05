@@ -1,4 +1,7 @@
 # Pin the toolchain so a clone on any machine builds identically (portability).
+# An explicit version, not "stable" — "stable" floats to whatever is newest, so two
+# clones (or a clone vs. CI) can silently build with different compilers. Bump this
+# deliberately when adopting a newer toolchain, in step with CI.
 [toolchain]
-channel = "stable"
+channel = "1.96.0"
 components = ["rustfmt", "clippy"]

@@ -7,7 +7,11 @@ name = "gamma-ingestion"
 version = "0.1.0"
 description = "AI ingestion service for the Gamma platform — consumes new posts from Redis, analyses them, and writes content signals back through the core API (ADR 0006)."
 readme = "README.md"
-requires-python = ">=3.11"
+# 3.12 is what CI tests, the Dockerfile runs (python:3.12-slim), and the lockfile is
+# resolved against (pip-compile with Python 3.12). Keep this in step with those so
+# the declared floor can't drift below what is actually built and tested. (The future
+# Mac Studio model box will run 3.12+; bump in lockstep when that lands.)
+requires-python = ">=3.12"
 dependencies = [
     "redis>=5.0",
     "httpx>=0.27",
@@ -34,7 +38,7 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "W", "UP", "B", "BLE"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 files = ["src"]
 disallow_untyped_defs = true
 warn_return_any = true

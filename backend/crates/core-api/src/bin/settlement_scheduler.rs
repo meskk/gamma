@@ -12,9 +12,10 @@ use chrono::Utc;
 use core_api::gems::service::SettlementService;
 use domain::Epoch;
 
-/// How many recently-closed epochs to (re-)settle each tick — a catch-up window
-/// for downtime. Idempotency makes re-settling already-done epochs a cheap no-op.
-const LOOKBACK: i64 = 3;
+/// Default catch-up window (in epochs) re-settled each tick. Overridable via
+/// GAMMA_SETTLEMENT_LOOKBACK so a longer outage (beyond a few days) can be caught
+/// up without lost epochs. Idempotency makes re-settling done epochs a cheap no-op.
+const DEFAULT_LOOKBACK: i64 = 3;
 /// Poll cadence. Epochs are daily, so this only needs to be well under a day; a
 /// few minutes keeps settlement prompt after an epoch closes without busy-looping.
 const TICK: Duration = Duration::from_secs(300);
@@ -33,10 +34,15 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&database_url, 5).await?;
     let settlement = SettlementService::with_econ(pool, core_api::load_econ_params());
 
-    tracing::info!("settlement scheduler started (lookback {LOOKBACK} epochs)");
+    let lookback: i64 = std::env::var("GAMMA_SETTLEMENT_LOOKBACK")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_LOOKBACK);
+
+    tracing::info!("settlement scheduler started (lookback {lookback} epochs)");
     loop {
         let current = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i64;
-        match settlement.settle_closed_epochs(current, LOOKBACK).await {
+        match settlement.settle_closed_epochs(current, lookback).await {
             Ok(summaries) => {
                 for s in summaries.iter().filter(|s| !s.already_settled) {
                     tracing::info!(

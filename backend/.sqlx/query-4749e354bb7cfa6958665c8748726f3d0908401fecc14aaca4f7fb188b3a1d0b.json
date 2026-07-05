@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT emission, user_count FROM epoch_settlements WHERE epoch_k = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "emission",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_count",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "4749e354bb7cfa6958665c8748726f3d0908401fecc14aaca4f7fb188b3a1d0b"
+}

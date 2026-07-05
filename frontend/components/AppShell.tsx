@@ -4,12 +4,22 @@
 // Functional styling only — the external designer restyles later.
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { useAuth } from "@/lib/auth";
 
+// Full-bleed screens that bring their own background + navigation, so the app nav
+// frame is skipped for them: the auth screens (/login — registration is its
+// "Registrieren" tab), the redirecting entry point (/), and the reels feed (/feed,
+// which has its own bottom nav — the Figma "Glass · Reels" design).
+const BARE_ROUTES = new Set(["/", "/login", "/feed"]);
+
 export function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const { token, userId, ready, logout, isOperator } = useAuth();
+
+  if (BARE_ROUTES.has(pathname)) return <>{children}</>;
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", maxWidth: 720, margin: "0 auto", padding: "1rem" }}>

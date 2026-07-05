@@ -12,7 +12,6 @@ REQUIRED = {
 def test_defaults_when_only_required_set():
     c = Config.from_env(dict(REQUIRED))
     assert c.analyzer == "heuristic"
-    assert c.model_version == "heuristic-v0"
     assert c.redis_url == "redis://localhost:6379"
     assert c.queue_key == "gamma:ingestion"
     assert c.api_base_url == "http://localhost:8080/v1"
@@ -29,13 +28,11 @@ def test_overrides_are_read():
     env = dict(
         REQUIRED,
         GAMMA_ANALYZER="model",
-        GAMMA_MODEL_VERSION="real-v2",
         REDIS_URL="redis://r:6379",
         GAMMA_POLL_TIMEOUT_SECONDS="2",
     )
     c = Config.from_env(env)
     assert c.analyzer == "model"
-    assert c.model_version == "real-v2"
     assert c.redis_url == "redis://r:6379"
     assert c.poll_timeout_seconds == 2.0
 
@@ -80,3 +77,12 @@ def test_dead_letter_key_derives_from_queue_key():
     # Explicit override wins.
     c = Config.from_env(dict(REQUIRED, GAMMA_INGESTION_DEAD_QUEUE="some:other:dead"))
     assert c.dead_letter_key == "some:other:dead"
+
+
+def test_processing_key_derives_from_queue_key():
+    # Reliable-queue processing list defaults to "<queue_key>:processing".
+    c = Config.from_env(dict(REQUIRED, GAMMA_INGESTION_QUEUE="custom:q"))
+    assert c.processing_key == "custom:q:processing"
+    # Explicit override wins.
+    c = Config.from_env(dict(REQUIRED, GAMMA_INGESTION_PROCESSING_QUEUE="some:other:proc"))
+    assert c.processing_key == "some:other:proc"

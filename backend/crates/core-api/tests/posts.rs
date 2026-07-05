@@ -48,16 +48,19 @@ async fn repository_create_get_list(pool: PgPool) {
     assert_eq!(fetched.body.as_deref(), Some("hello world"));
     assert_eq!(fetched.author_id, author);
 
-    let recent = repo.list(None, 10).await.expect("list");
+    let recent = repo.list(None, 10, 0).await.expect("list");
     assert_eq!(recent.len(), 1);
 
     // Author filter: matching author returns it, a different author returns nothing.
     assert_eq!(
-        repo.list(Some(author), 10).await.expect("by author").len(),
+        repo.list(Some(author), 10, 0)
+            .await
+            .expect("by author")
+            .len(),
         1
     );
     assert_eq!(
-        repo.list(Some(author + 999), 10)
+        repo.list(Some(author + 999), 10, 0)
             .await
             .expect("other")
             .len(),

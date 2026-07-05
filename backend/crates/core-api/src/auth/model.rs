@@ -64,3 +64,21 @@ pub struct AuthResponse {
     pub token: String,
     pub user_id: i64,
 }
+
+/// Request for the email-first login step: enter the email, then the UI asks for a
+/// password to sign in (if it exists) or to create an account (if it doesn't).
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct EmailCheckRequest {
+    pub email: String,
+}
+
+/// Whether an account already exists for the email. NOTE: this deliberately reveals
+/// account existence (user enumeration) to enable the email-first UX — an accepted
+/// product trade-off; the endpoint must stay rate-limited (see the per-route
+/// rate-limit follow-up).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct EmailCheckResult {
+    pub exists: bool,
+}

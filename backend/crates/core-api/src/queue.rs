@@ -1,8 +1,14 @@
 //! Redis-backed transcode job queue.
 //!
 //! A finalized video/audio asset is enqueued (LPUSH) and the transcode worker
-//! consumes it (RPOP) out of band, so ffmpeg never blocks a request. A Redis LIST
-//! is enough at our scale; a stream with acks is a later durability upgrade.
+//! consumes it out of band, so ffmpeg never blocks a request. The worker consumes
+//! with a RELIABLE pattern — `RPOPLPUSH` the id onto a processing list, and only
+//! `LREM` it off once the job reaches a terminal state (transcoded or marked
+//! failed). A crash mid-transcode leaves the id on the processing list, and
+//! `recover_stranded()` (run at worker startup) re-queues it, so a job is never
+//! lost (at-least-once). Transcoding overwrites its own HLS output, so a re-run is
+//! harmless. A single transcode worker is assumed, so one shared processing list
+//! suffices.
 
 use redis::AsyncCommands;
 use thiserror::Error;
@@ -43,6 +49,11 @@ impl TranscodeQueue {
         &self.key
     }
 
+    /// The processing list that holds reserved-but-not-yet-acked jobs.
+    fn processing_key(&self) -> String {
+        format!("{}:processing", self.key)
+    }
+
     /// Push an asset id onto the queue.
     pub async fn enqueue(&self, asset_id: i64) -> Result<(), QueueError> {
         let mut conn = self.client.get_multiplexed_async_connection().await?;
@@ -51,10 +62,45 @@ impl TranscodeQueue {
     }
 
     /// Pop the next asset id, or `None` if the queue is empty (non-blocking).
+    /// Non-reliable (no processing list) — used by tests to assert queue contents.
+    /// The worker uses `reserve`/`ack` instead.
     pub async fn dequeue(&self) -> Result<Option<i64>, QueueError> {
         let mut conn = self.client.get_multiplexed_async_connection().await?;
         let id: Option<i64> = conn.rpop(&self.key, None).await?;
         Ok(id)
+    }
+
+    /// Reliably reserve the next job: atomically move its id from the queue onto the
+    /// processing list (`RPOPLPUSH`) and return it, or `None` if the queue is empty.
+    /// The id stays on the processing list until `ack`ed, so a crash before ack does
+    /// not lose it.
+    pub async fn reserve(&self) -> Result<Option<i64>, QueueError> {
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        let id: Option<i64> = conn.rpoplpush(&self.key, self.processing_key()).await?;
+        Ok(id)
+    }
+
+    /// Acknowledge a reserved job as done (terminal state reached): remove it from
+    /// the processing list. Idempotent — a missing entry removes zero.
+    pub async fn ack(&self, asset_id: i64) -> Result<(), QueueError> {
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        let _: i64 = conn.lrem(self.processing_key(), 1, asset_id).await?;
+        Ok(())
+    }
+
+    /// Re-queue every job stranded on the processing list by a prior crash (run once
+    /// at worker startup). Returns how many were recovered.
+    pub async fn recover_stranded(&self) -> Result<u64, QueueError> {
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        let mut moved = 0u64;
+        loop {
+            let id: Option<i64> = conn.rpoplpush(self.processing_key(), &self.key).await?;
+            if id.is_none() {
+                break;
+            }
+            moved += 1;
+        }
+        Ok(moved)
     }
 }
 

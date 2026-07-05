@@ -108,9 +108,15 @@ impl PostService {
 
     /// Recent visible posts; when `author_id` is `Some`, only that author's (a
     /// profile feed).
-    pub async fn list(&self, author_id: Option<i64>, limit: i64) -> Result<Vec<Post>, ApiError> {
+    pub async fn list(
+        &self,
+        author_id: Option<i64>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Post>, ApiError> {
         let limit = limit.clamp(1, MAX_LIST_LIMIT);
-        Ok(self.repo.list(author_id, limit).await?)
+        let offset = offset.max(0);
+        Ok(self.repo.list(author_id, limit, offset).await?)
     }
 
     /// Record a user's report of a post. Idempotent per (post, reporter). 404 if

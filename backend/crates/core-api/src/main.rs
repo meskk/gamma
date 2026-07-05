@@ -7,7 +7,20 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use core_api::{app, AppState};
+use tower_governor::key_extractor::SmartIpKeyExtractor;
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+
+/// Parse an env var as `T`, or fall back to `default` if it is unset. A PRESENT but
+/// unparseable value is a misconfiguration and panics at startup — better than
+/// silently falling back to a default the operator didn't intend.
+fn env_parsed<T: std::str::FromStr>(name: &str, default: T) -> T {
+    match std::env::var(name) {
+        Ok(v) => v
+            .parse()
+            .unwrap_or_else(|_| panic!("{name} is set but not a valid value: {v:?}")),
+        Err(_) => default,
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -28,7 +41,8 @@ async fn main() -> anyhow::Result<()> {
     let database_url = std::env::var("DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("DATABASE_URL must be set (see .env.example)"))?;
 
-    let pool = db::connect(&database_url, 10).await?;
+    let pool_size: u32 = env_parsed("GAMMA_DB_POOL_SIZE", 10);
+    let pool = db::connect(&database_url, pool_size).await?;
     db::run_migrations(&pool).await?;
     tracing::info!("database connected and migrations applied");
 
@@ -49,23 +63,41 @@ async fn main() -> anyhow::Result<()> {
     if std::env::var("GAMMA_RATE_LIMIT_DISABLED").as_deref() == Ok("true") {
         tracing::warn!("per-IP rate limit DISABLED (GAMMA_RATE_LIMIT_DISABLED=true)");
     } else {
-        let per_second: u64 = std::env::var("GAMMA_RATE_LIMIT_PER_SECOND")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(10);
-        let burst: u32 = std::env::var("GAMMA_RATE_LIMIT_BURST")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(50);
-        let governor = Arc::new(
-            GovernorConfigBuilder::default()
-                .per_second(per_second)
-                .burst_size(burst)
-                .finish()
-                .expect("valid rate-limit config"),
-        );
-        service = service.layer(GovernorLayer { config: governor });
-        tracing::info!(per_second, burst, "per-IP rate limit enabled");
+        // A present-but-invalid value now fails loudly (env_parsed) instead of
+        // silently reverting to the default.
+        let per_second: u64 = env_parsed("GAMMA_RATE_LIMIT_PER_SECOND", 10);
+        let burst: u32 = env_parsed("GAMMA_RATE_LIMIT_BURST", 50);
+        // Behind a reverse proxy every request's PEER ip is the proxy's, so the
+        // default PeerIpKeyExtractor collapses the per-IP limit into a single global
+        // bucket. Set GAMMA_TRUST_PROXY=true ONLY when a trusted proxy sets
+        // X-Forwarded-For (otherwise a client can spoof it to dodge the limit), and
+        // the SmartIpKeyExtractor keys on the forwarded client IP instead.
+        if std::env::var("GAMMA_TRUST_PROXY").as_deref() == Ok("true") {
+            let governor = Arc::new(
+                GovernorConfigBuilder::default()
+                    .per_second(per_second)
+                    .burst_size(burst)
+                    .key_extractor(SmartIpKeyExtractor)
+                    .finish()
+                    .expect("valid rate-limit config"),
+            );
+            service = service.layer(GovernorLayer { config: governor });
+            tracing::info!(
+                per_second,
+                burst,
+                "per-IP rate limit enabled (trusting X-Forwarded-For)"
+            );
+        } else {
+            let governor = Arc::new(
+                GovernorConfigBuilder::default()
+                    .per_second(per_second)
+                    .burst_size(burst)
+                    .finish()
+                    .expect("valid rate-limit config"),
+            );
+            service = service.layer(GovernorLayer { config: governor });
+            tracing::info!(per_second, burst, "per-IP rate limit enabled (peer IP)");
+        }
     }
 
     let bind = std::env::var("CORE_API_BIND").unwrap_or_else(|_| "0.0.0.0:8080".into());

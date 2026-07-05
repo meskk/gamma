@@ -22,6 +22,13 @@ class AuthError(ApiError):
     """The bearer token was rejected (401) — it likely expired; re-login."""
 
 
+class ForbiddenError(ApiError):
+    """The credentials are valid but lack permission (403) — e.g. the operator role
+    was revoked. This is a SYSTEMIC failure of the whole worker, not a poison post:
+    re-login won't help and every post would fail identically, so the worker must
+    stop rather than shovel the entire backlog into the dead-letter queue."""
+
+
 class TransientError(ApiError):
     """A retryable failure: a network/transport error or a 5xx server response.
     The real (slower) model widens the window for these, so they are retried with
@@ -101,6 +108,10 @@ class ApiClient:
         )
         if resp.status_code == 401:
             raise AuthError(f"put_signals({post_id}) unauthorized")
+        if resp.status_code == 403:
+            # Valid token, insufficient permission (operator role revoked): systemic,
+            # not per-post — surface it so the worker stops instead of dead-lettering.
+            raise ForbiddenError(f"put_signals({post_id}) forbidden")
         if resp.status_code >= 500:
             raise TransientError(f"put_signals({post_id}) failed: {resp.status_code}")
         if resp.status_code != 204:

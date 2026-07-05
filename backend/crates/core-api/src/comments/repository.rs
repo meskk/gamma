@@ -38,9 +38,15 @@ impl CommentRepository {
         .await
     }
 
-    /// A visible post's comments, oldest first. Comments on a taken-down
-    /// (`hidden_at` set) post are excluded — moderation hides the thread too.
-    pub async fn list_for_post(&self, post_id: i64) -> Result<Vec<Comment>, sqlx::Error> {
+    /// A visible post's comments, oldest first, bounded by `limit`/`offset` so a
+    /// pathological thread can't return an unbounded result set. Comments on a
+    /// taken-down (`hidden_at` set) post are excluded — moderation hides the thread.
+    pub async fn list_for_post(
+        &self,
+        post_id: i64,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Comment>, sqlx::Error> {
         sqlx::query_as!(
             Comment,
             r#"
@@ -49,8 +55,11 @@ impl CommentRepository {
             JOIN posts p ON p.id = c.post_id
             WHERE c.post_id = $1 AND p.hidden_at IS NULL
             ORDER BY c.created_at ASC
+            LIMIT $2 OFFSET $3
             "#,
-            post_id
+            post_id,
+            limit,
+            offset
         )
         .fetch_all(&self.pool)
         .await

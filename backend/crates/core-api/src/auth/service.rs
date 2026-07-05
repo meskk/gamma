@@ -1,5 +1,7 @@
 //! Auth business logic: password hashing (argon2), token issuance, verification.
 
+use std::sync::LazyLock;
+
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use chrono::{Duration, Utc};
@@ -15,6 +17,13 @@ use db::PgPool;
 const SESSION_DAYS: i64 = 30;
 /// Minimum password length.
 const MIN_PASSWORD_LEN: usize = 8;
+
+/// A valid argon2 hash of a throwaway password, computed once. `login` verifies
+/// against it when the email is unknown, so a failed login runs the SAME argon2
+/// work whether or not the account exists — closing the response-latency oracle
+/// that would otherwise reveal which emails are registered.
+static DUMMY_HASH: LazyLock<String> =
+    LazyLock::new(|| hash_password("timing-equalizer-not-a-real-password").expect("dummy hash"));
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -37,7 +46,11 @@ impl AuthService {
             return Err(ApiError::Validation("weak_password"));
         }
 
-        let hash = hash_password(&req.password)?;
+        // argon2 is deliberately CPU/memory-heavy; run it on the blocking pool so a
+        // burst of registrations can't starve the async runtime's worker threads
+        // (which would stall every other request, including /health).
+        let password = req.password;
+        let hash = spawn_hash(move || hash_password(&password)).await?;
         let user_id = self
             .repo
             .create_user(&email, &hash, &req.declared_categories)
@@ -49,16 +62,43 @@ impl AuthService {
 
     pub async fn login(&self, req: LoginRequest) -> Result<AuthResponse, ApiError> {
         let email = req.email.trim().to_lowercase();
-        let (user_id, hash) = self
-            .repo
-            .credentials_by_email(&email)
-            .await?
-            .ok_or(ApiError::Unauthorized)?;
+        let creds = self.repo.credentials_by_email(&email).await?;
 
-        if !verify_password(&req.password, &hash) {
-            return Err(ApiError::Unauthorized);
+        // Always run exactly one argon2 verify — against a dummy hash when the email
+        // is unknown — so response latency is the same for existing and non-existing
+        // accounts (no enumeration oracle). And run it off the async runtime
+        // (spawn_blocking) so concurrent logins can't exhaust the worker threads.
+        let (user_id, hash) = match creds {
+            Some((id, h)) => (Some(id), h),
+            None => (None, DUMMY_HASH.clone()),
+        };
+        let password = req.password;
+        let ok = spawn_hash(move || Ok(verify_password(&password, &hash))).await?;
+
+        match user_id {
+            Some(id) if ok => self.issue_session(id).await,
+            _ => Err(ApiError::Unauthorized),
         }
-        self.issue_session(user_id).await
+    }
+
+    /// Revoke the session behind this bearer token (logout). Idempotent: revoking an
+    /// already-gone token is a no-op.
+    pub async fn logout(&self, token: &str) -> Result<(), ApiError> {
+        self.repo.delete_session(&hash_token(token)).await?;
+        Ok(())
+    }
+
+    /// Purge expired sessions (housekeeping). Returns how many were removed.
+    pub async fn purge_expired_sessions(&self) -> Result<u64, ApiError> {
+        Ok(self.repo.delete_expired_sessions().await?)
+    }
+
+    /// Whether an account exists for `email` (the email-first login step). Normalises
+    /// the email exactly as register/login do, so the check matches what a later
+    /// login would look up.
+    pub async fn email_exists(&self, email: &str) -> Result<bool, ApiError> {
+        let email = email.trim().to_lowercase();
+        Ok(self.repo.email_exists(&email).await?)
     }
 
     /// Resolve a bearer token to the authenticated principal (id + role), or
@@ -89,6 +129,18 @@ fn map_create_error(err: sqlx::Error) -> ApiError {
         }
     }
     ApiError::Database(err)
+}
+
+/// Run a CPU-heavy argon2 closure on tokio's blocking pool, flattening the join
+/// error into an `ApiError` so callers just `?` it.
+async fn spawn_hash<T, F>(f: F) -> Result<T, ApiError>
+where
+    F: FnOnce() -> Result<T, ApiError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| ApiError::Internal(format!("password hashing task failed: {e}")))?
 }
 
 fn hash_password(password: &str) -> Result<String, ApiError> {

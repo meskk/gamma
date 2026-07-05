@@ -91,9 +91,16 @@ impl PostRepository {
         .await
     }
 
-    /// Most recent visible posts first, capped by `limit` (the caller clamps it).
-    /// When `author_id` is `Some`, only that author's posts (the profile feed).
-    pub async fn list(&self, author_id: Option<i64>, limit: i64) -> Result<Vec<Post>, sqlx::Error> {
+    /// Most recent visible posts first, paged by `limit`/`offset` (the caller
+    /// clamps them). When `author_id` is `Some`, only that author's posts (the
+    /// profile feed). `offset` makes older posts reachable — previously the list
+    /// could only ever return the newest page.
+    pub async fn list(
+        &self,
+        author_id: Option<i64>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Post>, sqlx::Error> {
         sqlx::query_as!(
             Post,
             r#"
@@ -101,10 +108,11 @@ impl PostRepository {
             FROM posts
             WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)
             ORDER BY created_at DESC
-            LIMIT $2
+            LIMIT $2 OFFSET $3
             "#,
             author_id,
-            limit
+            limit,
+            offset
         )
         .fetch_all(&self.pool)
         .await

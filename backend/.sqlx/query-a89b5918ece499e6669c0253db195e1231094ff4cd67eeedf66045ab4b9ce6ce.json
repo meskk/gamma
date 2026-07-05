@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT follower_id, followee_id, created_at\n            FROM follows\n            WHERE follower_id = $1\n            ORDER BY created_at DESC\n            ",
+  "query": "\n            SELECT follower_id, followee_id, created_at\n            FROM follows\n            WHERE follower_id = $1\n            ORDER BY created_at DESC\n            LIMIT $2 OFFSET $3\n            ",
   "describe": {
     "columns": [
       {
@@ -21,6 +21,8 @@
     ],
     "parameters": {
       "Left": [
+        "Int8",
+        "Int8",
         "Int8"
       ]
     },
@@ -30,5 +32,5 @@
       false
     ]
   },
-  "hash": "a7d738cbe74db255e2e7d7d7d87027f645b106d1d0116e8ac2ae4b6f79455fa5"
+  "hash": "a89b5918ece499e6669c0253db195e1231094ff4cd67eeedf66045ab4b9ce6ce"
 }

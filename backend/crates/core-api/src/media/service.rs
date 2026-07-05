@@ -28,6 +28,20 @@ const HLS_SEGMENT_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 /// starts at 1), and gem_balances has no FK, so id 0 is a safe company bucket.
 const COMPANY_ACCOUNT_ID: i64 = 0;
 
+/// Hard ceiling on a finalized upload's size (2 GiB). A presigned PUT can't bound
+/// the request body on its own (that needs an S3 POST policy), so the cap is
+/// enforced here at finalize: an object over the limit is rejected and best-effort
+/// deleted rather than recorded as a usable asset — closing the "upload arbitrary
+/// terabytes to the bucket" hole.
+const MAX_UPLOAD_BYTES: i64 = 2 * 1024 * 1024 * 1024;
+
+/// Upper bound on an asset's unlock price (the whole 21M-PEER supply in base
+/// units). A price can never exceed the total possible supply, and bounding it here
+/// keeps the unlock fee split (`price * fee_bps`) well inside i64 — an unbounded
+/// price would overflow the multiply (a panic under the money crates'
+/// overflow-checks, silent wrap without them).
+const MAX_UNLOCK_PRICE: i64 = 21_000_000 * domain::PT_ONE as i64;
+
 #[derive(Clone)]
 pub struct MediaService {
     repo: MediaRepository,
@@ -72,6 +86,9 @@ impl MediaService {
         if req.unlock_price < 0 {
             return Err(ApiError::Validation("negative_price"));
         }
+        if req.unlock_price > MAX_UNLOCK_PRICE {
+            return Err(ApiError::Validation("price_too_high"));
+        }
 
         let asset = self
             .repo
@@ -115,6 +132,13 @@ impl MediaService {
             .head(&asset.object_key)
             .await?
             .ok_or(ApiError::Validation("not_uploaded"))?;
+
+        if size > MAX_UPLOAD_BYTES {
+            // Best-effort remove the oversized object; even if delete fails, it is
+            // never recorded as a usable asset.
+            let _ = self.storage.delete_object(&asset.object_key).await;
+            return Err(ApiError::Validation("upload_too_large"));
+        }
 
         let ready = self.repo.mark_ready(asset.id, size).await?;
 

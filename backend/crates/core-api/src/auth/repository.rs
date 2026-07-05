@@ -52,6 +52,17 @@ impl AuthRepository {
         Ok(row.and_then(|r| r.password_hash.map(|h| (r.id, h))))
     }
 
+    /// Whether an account exists for this (already-normalised) email. Powers the
+    /// email-first login step.
+    pub async fn email_exists(&self, email: &str) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM users WHERE email = $1) AS "exists!""#,
+            email
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
     pub async fn create_session(
         &self,
         token_hash: &str,
@@ -67,6 +78,24 @@ impl AuthRepository {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Delete a session by its token hash (logout / revocation). Idempotent — a
+    /// missing row affects zero rows and is not an error.
+    pub async fn delete_session(&self, token_hash: &str) -> Result<(), sqlx::Error> {
+        sqlx::query!("DELETE FROM sessions WHERE token_hash = $1", token_hash)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Delete all expired sessions (housekeeping; the `sessions_expires_at` index in
+    /// migration 0016 keeps this cheap). Returns how many were removed.
+    pub async fn delete_expired_sessions(&self) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query!("DELETE FROM sessions WHERE expires_at <= now()")
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected())
     }
 
     /// The (user id, role) behind a live (unexpired) session token hash, or

@@ -8,6 +8,7 @@ import type { NewComment } from "@contract/NewComment";
 import type { NewInteraction } from "@contract/NewInteraction";
 
 import { apiFetch } from "@/lib/api";
+import type { Wire } from "@/lib/wire";
 
 export function Comments({ postId, token }: { postId: string; token: string }) {
   const [comments, setComments] = useState<Comment[] | null>(null);
@@ -38,11 +39,13 @@ export function Comments({ postId, token }: { postId: string; token: string }) {
         token,
       });
       // Fire the comment interaction telemetry alongside the write (best-effort).
-      const interaction = {
+      // post_id is bigint in the contract but a number on the wire; Wire<> keeps
+      // the field contract intact instead of erasing it with `as unknown as`.
+      const interaction: Wire<NewInteraction> = {
         type: "comment",
         target_id: null,
         post_id: Number(postId),
-      } as unknown as NewInteraction;
+      };
       apiFetch<void>("/interactions", { method: "POST", body: interaction, token }).catch(() => {});
       setBody("");
       load();

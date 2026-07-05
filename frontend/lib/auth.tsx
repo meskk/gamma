@@ -45,6 +45,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function loadSession(t: string) {
     const me = await apiFetch<CurrentUser>("/auth/me", { token: t });
+    // Deliberate Phase-1a decision: the bearer token lives in sessionStorage
+    // (JS-readable) rather than an HttpOnly cookie, to keep the SPA + Bearer flow
+    // simple. The compensating control is the Content-Security-Policy set in
+    // next.config.mjs, which constrains script/connect origins to shrink the XSS
+    // token-exfiltration surface. Revisit (HttpOnly cookie) if/when this hardens.
     sessionStorage.setItem(TOKEN_KEY, t);
     setToken(t);
     setUserId(String(me.user_id));
@@ -68,12 +73,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setReady(true));
   }, []);
 
-  // A 401 on any AUTHENTICATED request (signalled by api.ts) means the session
-  // expired — log out globally. logout() only clears state/storage and makes no
-  // fetch, so there is no loop.
+  // A 401 on any AUTHENTICATED request (signalled by api.ts) means the session is
+  // already dead server-side — just clear local state. Uses clearSession (NOT
+  // logout), so it never fires another request and can't loop.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const onUnauthorized = () => logout();
+    const onUnauthorized = () => clearSession();
     window.addEventListener("gamma:unauthorized", onUnauthorized);
     return () => window.removeEventListener("gamma:unauthorized", onUnauthorized);
   }, []);
@@ -89,11 +94,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await loadSession(resp.token);
   }
 
-  function logout() {
+  // Clear local session state only (no request). Used by the 401 handler, where
+  // the server session is already gone.
+  function clearSession() {
     sessionStorage.removeItem(TOKEN_KEY);
     setToken(null);
     setUserId(null);
     setRole(null);
+  }
+
+  // User-initiated logout: REVOKE the session server-side (POST /auth/logout) so a
+  // leaked/copied token can't be replayed for the rest of its 30-day life, then
+  // clear locally. Best-effort — an already-invalid token or a network blip still
+  // logs the user out locally.
+  async function logout() {
+    const t = sessionStorage.getItem(TOKEN_KEY);
+    if (t) {
+      try {
+        await apiFetch("/auth/logout", { method: "POST", token: t });
+      } catch {
+        // token already invalid or backend unreachable — the local clear is enough
+      }
+    }
+    clearSession();
   }
 
   return (

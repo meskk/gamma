@@ -1,0 +1,409 @@
+/* Reels feed — matches the Figma "Glass · Reels" frame (node 154:60). Component-
+   scoped (CSS module) so it doesn't leak globally. Values (colours, gradients,
+   glass, radii, spacing) are taken directly from the design context. */
+
+.stage {
+  position: fixed;
+  inset: 0;
+  background: #070709;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-inter), system-ui, sans-serif;
+  overflow: hidden;
+}
+
+/* The phone-sized card: a centred rounded panel on desktop, full-bleed on mobile.
+   It clips the scrolling reels and hosts the non-scrolling overlays (tabs). */
+.card {
+  position: relative;
+  width: 470px;
+  height: min(900px, 94vh);
+  max-height: 100%;
+  border-radius: 30px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px -10px rgba(0, 0, 0, 0.6);
+}
+
+/* The scroll layer inside the card. Vertical scroll-snap gives one-reel paging. */
+.viewport {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.viewport::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .card {
+    width: 100vw;
+    height: 100dvh;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+/* One full-height slide. */
+.reel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  overflow: hidden;
+  background: linear-gradient(131deg, #30303a 0%, #0e0e12 62.5%);
+  color: #fff;
+}
+
+/* The sliding media track. ONLY this moves between reels (Instagram-style vertical
+   slide) — the chrome (tabs, caption, rail, bottom nav) stays pinned and static.
+   The track stacks one full-height slide per reel and is translated by the active
+   index; the card clips it so exactly one reel shows. */
+.track {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.42s cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform;
+}
+.slide {
+  flex: 0 0 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .track {
+    transition: none;
+  }
+}
+
+.media {
+  position: absolute;
+  inset: 0;
+}
+.mediaEl {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Text posts / no media: centred body text (or the image glyph if empty). */
+.placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 40px;
+}
+.placeholderIcon {
+  color: rgba(255, 255, 255, 0.28);
+}
+.textBody {
+  font-size: 22px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.96);
+  text-align: center;
+  max-height: 58%;
+  overflow: hidden;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
+  white-space: pre-wrap;
+}
+.audioCard {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  align-items: center;
+}
+
+/* Gradient overlays for legibility (top + bottom). */
+.topFade {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 160px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0));
+  pointer-events: none;
+}
+.bottomFade {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 340px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.78));
+  pointer-events: none;
+}
+
+/* Top tabs. */
+.tabs {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  z-index: 3;
+}
+.tab {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+.tabActive {
+  color: #fff;
+  font-weight: 600;
+}
+.tabUnderline {
+  height: 3px;
+  width: 100%;
+  background: #fff;
+  border-radius: 2px;
+}
+
+/* Caption, bottom-left. Sits above the floating bottom-nav pill (which straddles
+   the card's bottom edge), so it clears the nav even when the viewport shortens the
+   card. */
+.caption {
+  position: absolute;
+  left: 24px;
+  bottom: 86px;
+  width: 300px;
+  max-width: 62%;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  z-index: 3;
+}
+.handleRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.handle {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  text-decoration: none;
+}
+.handle:hover {
+  text-decoration: underline;
+}
+.verified {
+  color: #4aa3ff;
+  display: inline-flex;
+}
+.captionBody {
+  font-size: 14px;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.92);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.metaRow {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.9);
+}
+.metaText {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Right action rail. */
+.rail {
+  position: absolute;
+  right: 14px;
+  bottom: 96px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+.railItem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+.railLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* The shared glass button (rail items, chevrons, and — larger — the nav pill). */
+.glass {
+  background: rgba(255, 255, 255, 0.16);
+  border: 1.2px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.circleBtn {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    transform 0.12s ease,
+    background 0.12s ease;
+}
+.circleBtn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+.circleBtn:active {
+  transform: scale(0.92);
+}
+.circleBtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.liked {
+  color: #ff3b5c;
+}
+.saved {
+  color: #ffd54a;
+}
+
+/* Chevrons: desktop-only paging aids, just to the right of the centred card
+   (outside it, so they are siblings of the card, not clipped by its overflow). */
+.chevrons {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin-left: 265px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chevBtn {
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    transform 0.12s ease,
+    background 0.12s ease;
+}
+.chevBtn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+.chevBtn:active {
+  transform: scale(0.92);
+}
+@media (max-width: 900px) {
+  .chevrons {
+    display: none;
+  }
+}
+
+/* Bottom nav pill. */
+.bottomNav {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 32px;
+  align-items: center;
+  padding: 16px 30px;
+  border-radius: 999px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+  z-index: 5;
+}
+.navBtn {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  display: flex;
+  transition: color 0.12s ease;
+}
+.navBtn:hover,
+.navActive {
+  color: #fff;
+}
+.navBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.navBtn:disabled:hover {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* Full-slide status messages (loading / error / empty / locked media). */
+.center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 15px;
+  padding: 0 36px;
+  text-align: center;
+}
+.primaryBtn {
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0e0e12;
+  background: #fff;
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 22px;
+  cursor: pointer;
+}
+.primaryBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.ghostLink {
+  color: #fff;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.lockIcon {
+  color: rgba(255, 255, 255, 0.85);
+}

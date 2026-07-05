@@ -8,14 +8,13 @@ def analyze(post: dict) -> dict:
     return HeuristicAnalyzer().analyze(post)
 
 
-def _config(analyzer: str = "heuristic", model_version: str = "heuristic-v0") -> Config:
+def _config(analyzer: str = "heuristic") -> Config:
     return Config(
         redis_url="redis://x",
         queue_key="gamma:ingestion",
         api_base_url="http://x/v1",
         operator_email="op@example.com",
         operator_password="pw",
-        model_version=model_version,
         poll_timeout_seconds=1.0,
         request_timeout_seconds=1.0,
         analyzer=analyzer,
@@ -51,6 +50,24 @@ def test_whitespace_only_body_has_no_content():
     assert s["word_count"] == 0
 
 
+def test_cjk_post_is_not_collapsed_to_one_word():
+    # An unspaced CJK essay must not read as 1 word / 0 reading-seconds. Each CJK
+    # codepoint counts as a word, so a long passage scales sensibly.
+    body = "这是一篇很长的中文文章需要一些时间来阅读" * 5  # 20 CJK chars * 5 = 100
+    s = analyze({"id": 10, "body": body, "category": None})
+    assert s["has_body"] is True
+    assert s["word_count"] == 100
+    # 100 words / 200 wpm * 60 = 30s — crucially NOT 0 for a long post.
+    assert s["reading_seconds"] == 30
+
+
+def test_mixed_latin_and_cjk_counts_both():
+    # A Latin word plus CJK codepoints in the same post both contribute.
+    s = analyze({"id": 11, "body": "hello 世界 world", "category": None})
+    # "hello" (1) + "世界" (2 CJK) + "world" (1) = 4.
+    assert s["word_count"] == 4
+
+
 def test_is_deterministic():
     post = {"id": 4, "body": "the quick brown fox", "category": "nature"}
     assert analyze(post) == analyze(post)
@@ -69,10 +86,10 @@ def test_model_version_is_owned_by_the_analyzer():
     assert HeuristicAnalyzer().model_version == "heuristic-v0"
 
 
-def test_factory_ignores_model_version_for_heuristic():
-    # Even if GAMMA_MODEL_VERSION is set to something else, the heuristic still
-    # reports its own intrinsic "heuristic-v0" — the selector and label can't drift.
-    a = make_analyzer(_config(analyzer="heuristic", model_version="mislabel-v9"))
+def test_factory_builds_heuristic_with_its_own_label():
+    # The factory has no model-version knob to pass through — the heuristic reports
+    # its own intrinsic "heuristic-v0", so the label can't drift from the code.
+    a = make_analyzer(_config(analyzer="heuristic"))
     assert isinstance(a, HeuristicAnalyzer)
     assert a.model_version == "heuristic-v0"
 

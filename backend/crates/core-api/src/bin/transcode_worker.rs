@@ -29,6 +29,17 @@ async fn main() -> anyhow::Result<()> {
     let queue = TranscodeQueue::new(&redis_url)?;
     let media = MediaService::new(pool, storage, queue.clone());
 
+    // Recover any jobs a previous instance reserved but never finished (crash mid-
+    // transcode), so they are retried rather than stranded on the processing list.
+    match queue.recover_stranded().await {
+        Ok(0) => {}
+        Ok(n) => tracing::warn!(
+            recovered = n,
+            "re-queued transcode jobs stranded by a prior crash"
+        ),
+        Err(err) => tracing::warn!(error = %err, "failed to recover stranded transcode jobs"),
+    }
+
     tracing::info!("transcode worker started");
     loop {
         match process_one(&media, &queue).await {

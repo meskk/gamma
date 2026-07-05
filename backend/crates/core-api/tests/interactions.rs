@@ -20,6 +20,12 @@ use tower::ServiceExt;
 
 mod common;
 
+/// The ω_type weight for a type under the default econ-params (weights now live in
+/// econ-params, not hardcoded — see `InteractionType::weight`).
+fn omega(t: InteractionType) -> f64 {
+    t.weight(&econ_params::EconParams::default().interaction_weights)
+}
+
 // interaction_events now has FKs (migration 0015), so events must reference real
 // rows. These seed the minimal actor/target/post a capture test needs.
 async fn seed_user(pool: &PgPool) -> i64 {
@@ -66,7 +72,7 @@ async fn record_stamps_epoch_and_weight(pool: PgPool) {
     let expected_epoch = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i32;
     assert_eq!(event.epoch_k, expected_epoch);
     assert_eq!(event.type_code, InteractionType::Comment.code());
-    assert_eq!(event.weight, InteractionType::Comment.weight());
+    assert_eq!(event.weight, omega(InteractionType::Comment));
 
     // Readable back per epoch (the graph-build input).
     let in_epoch = InteractionRepository::new(pool)
@@ -190,11 +196,49 @@ async fn interaction_on_missing_post_is_404(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+#[sqlx::test(migrations = "../../migrations")]
+async fn target_directed_interactions_dedup_regardless_of_post(pool: PgPool) {
+    // Anti-inflation regression: N interactions directed at the SAME user with
+    // different post_ids must collapse to ONE edge. `post_id` is cleared when
+    // `target_id` is set, so it can no longer multiply the dedup key
+    // (actor, type, epoch, target_id, post_id) into N duplicate edges — the bypass
+    // that defeated the 0009 unique index.
+    let actor = seed_user(&pool).await;
+    let target = seed_user(&pool).await;
+    let p1 = seed_post(&pool, target).await;
+    let p2 = seed_post(&pool, target).await;
+    let svc = InteractionService::new(pool.clone());
+
+    let mk = |post| NewInteraction {
+        actor_id: actor,
+        r#type: InteractionType::Follow,
+        target_id: Some(target),
+        post_id: Some(post),
+    };
+    let first = svc.record(mk(p1)).await.expect("first");
+    let again = svc.record(mk(p2)).await.expect("second");
+    assert_eq!(
+        first.id, again.id,
+        "a different post_id must not create a second edge to the same target"
+    );
+
+    let epoch = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i32;
+    let all = InteractionRepository::new(pool)
+        .list_by_epoch(epoch)
+        .await
+        .expect("list");
+    assert_eq!(
+        all.len(),
+        1,
+        "target-directed interactions dedup regardless of post_id"
+    );
+}
+
 #[test]
 fn weights_order_like_below_comment_below_share() {
     // Pure check on the ω_type ordering the graph relies on — no DB needed.
-    assert!(InteractionType::Like.weight() < InteractionType::Comment.weight());
-    assert!(InteractionType::Comment.weight() < InteractionType::Share.weight());
+    assert!(omega(InteractionType::Like) < omega(InteractionType::Comment));
+    assert!(omega(InteractionType::Comment) < omega(InteractionType::Share));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -225,6 +269,6 @@ async fn http_record_returns_typed_view(pool: PgPool) {
     let view: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(view["type"], "share");
     assert_eq!(view["actor_id"].as_i64().unwrap(), actor);
-    assert_eq!(view["weight"], InteractionType::Share.weight());
+    assert_eq!(view["weight"], omega(InteractionType::Share));
     assert!(view["epoch_k"].as_i64().unwrap() > 0);
 }

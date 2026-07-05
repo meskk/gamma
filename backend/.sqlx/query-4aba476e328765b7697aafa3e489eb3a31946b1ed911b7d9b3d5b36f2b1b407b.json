@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, author_id, category, body, created_at, popularity_score, media_id\n            FROM posts\n            WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)\n            ORDER BY created_at DESC\n            LIMIT $2\n            ",
+  "query": "\n            SELECT id, author_id, category, body, created_at, popularity_score, media_id\n            FROM posts\n            WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)\n            ORDER BY created_at DESC\n            LIMIT $2 OFFSET $3\n            ",
   "describe": {
     "columns": [
       {
@@ -42,6 +42,7 @@
     "parameters": {
       "Left": [
         "Int8",
+        "Int8",
         "Int8"
       ]
     },
@@ -55,5 +56,5 @@
       true
     ]
   },
-  "hash": "8e9fc794858b2f7b6b3a1fabdfc7274cf3290aa0c528a746db30453804815002"
+  "hash": "4aba476e328765b7697aafa3e489eb3a31946b1ed911b7d9b3d5b36f2b1b407b"
 }

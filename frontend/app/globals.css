@@ -1,0 +1,12 @@
+/* Minimal global reset. Applies app-wide (imported once in the root layout) so no
+   page needs to mutate `html, body` from a page-scoped <style> — which would leak a
+   global that pops back on navigation. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+}

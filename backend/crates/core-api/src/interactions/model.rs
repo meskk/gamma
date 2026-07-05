@@ -44,15 +44,16 @@ impl InteractionType {
         }
     }
 
-    /// ω_type — the edge weight this interaction contributes to the graph.
-    /// like < comment < share; dwell is a weak signal; follow is structural.
-    pub fn weight(self) -> f64 {
+    /// ω_type — the edge weight this interaction contributes to the graph, read
+    /// from the versioned econ-params (NOT hardcoded: these weights scale every
+    /// payout, so a retune is a `version` bump, not a code change — ADR 0003).
+    pub fn weight(self, weights: &econ_params::InteractionWeights) -> f64 {
         match self {
-            InteractionType::Dwell => 0.5,
-            InteractionType::Like => 1.0,
-            InteractionType::Follow => 2.0,
-            InteractionType::Comment => 3.0,
-            InteractionType::Share => 5.0,
+            InteractionType::Dwell => weights.dwell,
+            InteractionType::Like => weights.like,
+            InteractionType::Follow => weights.follow,
+            InteractionType::Comment => weights.comment,
+            InteractionType::Share => weights.share,
         }
     }
 }
