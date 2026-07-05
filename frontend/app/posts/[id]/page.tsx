@@ -9,6 +9,7 @@ import type { Post } from "@contract/Post";
 import type { ReportRequest } from "@contract/ReportRequest";
 
 import { ApiError, apiFetch } from "@/lib/api";
+import { useFetch } from "@/lib/useFetch";
 import type { Wire } from "@/lib/wire";
 import { Comments } from "@/components/Comments";
 import { MediaView } from "@/components/MediaView";
@@ -19,41 +20,33 @@ export default function PostDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
 
-  const [post, setPost] = useState<Post | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Note (UI-lie limitation): the `Post` contract carries no per-viewer "liked"
+  // flag, so we can't hydrate `liked` from the server — after a reload a post the
+  // viewer already liked shows "♡ Like" until they interact. Backend fix required
+  // (add a `liked_by_me` field to `Post`); until then this is a known cosmetic gap.
+  const { data: post, error: loadError } = useFetch<Post>(
+    () => apiFetch(`/posts/${id}`, { token }),
+    [token, id],
+    { enabled: !!token && !!id },
+  );
   const [liked, setLiked] = useState(false);
   const [reported, setReported] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
+  // Per-post interaction state resets on navigation (the fetch state resets
+  // inside useFetch) — a stale `liked` would mislabel the button and make
+  // like() early-return on the NEW post.
   useEffect(() => {
-    if (!token || !id) return;
-    // Reset per-post state before fetching so navigating between posts never
-    // carries over stale data — in particular a stale `liked`/`reported` from the
-    // previous post (which would mislabel the buttons and make like() early-return).
-    setPost(null);
-    setError(null);
     setLiked(false);
     setReported(false);
-    // Guard against out-of-order resolution: a slow response for a previous `id`
-    // must not overwrite the newer post once navigation has moved on.
-    let stale = false;
-    // Note (UI-lie limitation): the `Post` contract carries no per-viewer "liked"
-    // flag, so we can't hydrate `liked` from the server — after a reload a post the
-    // viewer already liked shows "♡ Like" until they interact. Backend fix required
-    // (add a `liked_by_me` field to `Post`); until then this is a known cosmetic gap.
-    apiFetch<Post>(`/posts/${id}`, { token })
-      .then((p) => !stale && setPost(p))
-      .catch((e) => {
-        if (stale) return;
-        setError(
-          e instanceof ApiError && e.status === 404
-            ? "This post doesn't exist (or was taken down)."
-            : "Could not load this post.",
-        );
-      });
-    return () => {
-      stale = true;
-    };
-  }, [token, id]);
+    setActionError(null);
+  }, [id]);
+
+  const error = loadError
+    ? loadError instanceof ApiError && loadError.status === 404
+      ? "This post doesn't exist (or was taken down)."
+      : "Could not load this post."
+    : actionError;
 
   async function like() {
     if (liked || !token) return;
@@ -82,7 +75,7 @@ export default function PostDetailPage() {
       await apiFetch<void>(`/posts/${id}/report`, { method: "POST", body, token });
       setReported(true);
     } catch {
-      setError("Could not submit the report.");
+      setActionError("Could not submit the report.");
     }
   }
 

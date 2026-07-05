@@ -10,6 +10,7 @@ import type { Post } from "@contract/Post";
 import type { User } from "@contract/User";
 
 import { apiFetch } from "@/lib/api";
+import { useFetch } from "@/lib/useFetch";
 import { PostCard } from "@/components/PostCard";
 import { useRequireAuth } from "@/lib/useRequireAuth";
 
@@ -18,68 +19,66 @@ export default function ProfilePage() {
   const params = useParams<{ id: string }>();
   const profileId = params.id;
   const isSelf = userId === profileId;
+  const enabled = !!token && !!profileId;
 
-  const [user, setUser] = useState<User | null>(null);
-  const [posts, setPosts] = useState<Post[] | null>(null);
-  const [followingCount, setFollowingCount] = useState<number | null>(null);
-  const [balance, setBalance] = useState<GemBalance | null>(null);
-  const [following, setFollowing] = useState<boolean | null>(null);
-  // Distinguishes "still loading the viewer's follow list" (following === null,
-  // followErr === null) from "the follow list failed" (followErr set) so we can
-  // offer a retry instead of silently hiding the Follow button forever.
-  const [followErr, setFollowErr] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Bumped to re-run only the viewer's follow-list fetch on "Retry".
-  const [followReload, setFollowReload] = useState(0);
+  // Four independent reads, each stale-guarded and reset-on-navigation by
+  // useFetch (this page used to hand-roll all of that in one big effect).
+  const { data: user, error: userError } = useFetch<User>(
+    () => apiFetch(`/users/${profileId}`, { token }),
+    [token, profileId],
+    { enabled },
+  );
+  const { data: postsData, error: postsError } = useFetch<Post[]>(
+    () => apiFetch(`/posts?author_id=${profileId}&limit=50`, { token }),
+    [token, profileId],
+    { enabled },
+  );
+  const { data: followingList } = useFetch<Follow[]>(
+    () => apiFetch(`/users/${profileId}/following`, { token }),
+    [token, profileId],
+    { enabled },
+  );
+  const { data: balance } = useFetch<GemBalance>(
+    () => apiFetch(`/users/${profileId}/gems`, { token }),
+    [token, profileId],
+    { enabled: enabled && isSelf },
+  );
+  // The viewer's own follow list decides the Follow/Unfollow button; its
+  // failure gets an explicit Retry (reload) instead of hiding the button.
+  const {
+    data: viewerFollows,
+    error: followError,
+    reload: retryFollows,
+  } = useFetch<Follow[]>(
+    () => apiFetch(`/users/${userId}/following`, { token }),
+    [token, userId, profileId],
+    { enabled: enabled && !isSelf && !!userId },
+  );
 
-  useEffect(() => {
-    if (!token || !profileId) return;
-    // Reset all per-profile state before fetching so stale data/error from a
-    // previously-viewed profile never flashes alongside the new one.
-    setUser(null);
-    setPosts(null);
-    setFollowingCount(null);
-    setBalance(null);
-    setFollowing(null);
-    setFollowErr(false);
-    setError(null);
-    // Guard against out-of-order resolution: a slow response for a previously-
-    // viewed profile must not overwrite the profile we navigated to.
-    let stale = false;
-    apiFetch<User>(`/users/${profileId}`, { token })
-      .then((u) => !stale && setUser(u))
-      .catch(() => !stale && setError("Could not load this profile."));
-    apiFetch<Post[]>(`/posts?author_id=${profileId}&limit=50`, { token })
-      .then((p) => !stale && setPosts(p))
-      .catch(() => !stale && setPosts([]));
-    apiFetch<Follow[]>(`/users/${profileId}/following`, { token })
-      .then((f) => !stale && setFollowingCount(f.length))
-      .catch(() => {});
-    if (isSelf) {
-      apiFetch<GemBalance>(`/users/${profileId}/gems`, { token })
-        .then((b) => !stale && setBalance(b))
-        .catch(() => {});
-    } else if (userId) {
-      apiFetch<Follow[]>(`/users/${userId}/following`, { token })
-        .then((f) => !stale && setFollowing(f.some((x) => String(x.followee_id) === profileId)))
-        .catch(() => !stale && setFollowErr(true));
-    }
-    return () => {
-      stale = true;
-    };
-  }, [token, userId, profileId, isSelf, followReload]);
+  // Optimistic follow toggle: a local override on top of the server truth,
+  // cleared when navigating to another profile.
+  const [followOverride, setFollowOverride] = useState<boolean | null>(null);
+  useEffect(() => setFollowOverride(null), [profileId]);
+
+  const posts = postsData ?? (postsError ? [] : null);
+  const followingCount = followingList ? followingList.length : null;
+  const following =
+    followOverride ??
+    (viewerFollows ? viewerFollows.some((x) => String(x.followee_id) === profileId) : null);
+  const followErr = !!followError;
+  const error = userError ? "Could not load this profile." : null;
 
   async function toggleFollow() {
     if (following === null || !token) return;
     const next = !following;
-    setFollowing(next); // optimistic
+    setFollowOverride(next); // optimistic
     try {
       await apiFetch<void>(`/me/following/${profileId}`, {
         method: next ? "PUT" : "DELETE",
         token,
       });
     } catch {
-      setFollowing(!next); // revert on failure
+      setFollowOverride(!next); // revert on failure
     }
   }
 
@@ -109,7 +108,7 @@ export default function ProfilePage() {
           {!isSelf && followErr && (
             <p style={{ color: "crimson" }}>
               Couldn&apos;t check your follow status.{" "}
-              <button type="button" onClick={() => setFollowReload((n) => n + 1)}>
+              <button type="button" onClick={retryFollows}>
                 Retry
               </button>
             </p>
