@@ -17,6 +17,7 @@ pub mod interactions;
 pub mod media;
 pub mod posts;
 pub mod queue;
+pub mod rate_limit;
 pub mod signals;
 pub mod state;
 pub mod users;
@@ -114,8 +115,21 @@ fn cors_layer() -> CorsLayer {
 /// they are operational probes (load balancers / orchestrators) that belong at a
 /// fixed path.
 pub fn app(state: AppState) -> Router {
+    app_with_limits(state, None)
+}
+
+/// `app`, plus the TIGHT per-IP bucket on `/v1/auth/*` when `auth_limit` is
+/// `Some` (the binary passes `AuthRateLimit::from_env()`; tests and disabled
+/// environments pass `None`). The loose edge backstop is NOT applied here — it
+/// wraps the whole service in the binary (`rate_limit::edge_from_env`), so the
+/// in-process test router stays un-throttled by default.
+pub fn app_with_limits(state: AppState, auth_limit: Option<rate_limit::AuthRateLimit>) -> Router {
+    let auth_routes = match auth_limit {
+        Some(cfg) => rate_limit::auth_layer(auth::handler::routes(), cfg),
+        None => auth::handler::routes(),
+    };
     let v1 = Router::new()
-        .merge(auth::handler::routes())
+        .merge(auth_routes)
         .merge(users::handler::routes())
         .merge(posts::handler::routes())
         .merge(comments::handler::routes())
