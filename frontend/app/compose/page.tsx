@@ -7,6 +7,7 @@ import type { NewPost } from "@contract/NewPost";
 import type { Post } from "@contract/Post";
 
 import { apiFetch } from "@/lib/api";
+import { FEATURES } from "@/lib/features";
 import type { Wire } from "@/lib/wire";
 import { uploadMedia } from "@/lib/mediaUpload";
 import { useRequireAuth } from "@/lib/useRequireAuth";
@@ -30,7 +31,8 @@ export default function ComposePage() {
       // Upload the attachment first (presigned flow), then reference it on the post.
       let mediaId: number | null = null;
       if (file) {
-        const asset = await uploadMedia(file, price, token);
+        // With gem unlocks hidden (P-1 launch matrix), every upload is free.
+        const asset = await uploadMedia(file, FEATURES.gemUnlock ? price : 0, token);
         mediaId = Number(asset.id);
       }
       const payload: Wire<NewPost> = {
@@ -84,7 +86,7 @@ export default function ComposePage() {
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
         </label>
-        {file && (
+        {file && FEATURES.gemUnlock && (
           <label>
             Unlock price <small>(gems; 0 = free)</small>
             <br />

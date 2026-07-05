@@ -13,6 +13,7 @@ import type { Post } from "@contract/Post";
 import type { NewInteraction } from "@contract/NewInteraction";
 
 import { apiFetch } from "@/lib/api";
+import { FEATURES } from "@/lib/features";
 import {
   HeartIcon,
   CommentIcon,
@@ -88,18 +89,20 @@ export function ActionRail({ post, token }: { post: Post; token: string }) {
         <span className={styles.railLabel}>Kommentar</span>
       </div>
 
-      <div className={styles.railItem}>
-        <button
-          type="button"
-          className={`${styles.glass} ${styles.circleBtn}`}
-          disabled
-          title="Trinkgeld — bald verfügbar (Phase 1b)"
-          aria-label="Trinkgeld (bald verfügbar)"
-        >
-          <CoinIcon size={26} />
-        </button>
-        <span className={styles.railLabel}>Tip</span>
-      </div>
+      {FEATURES.tips && (
+        <div className={styles.railItem}>
+          <button
+            type="button"
+            className={`${styles.glass} ${styles.circleBtn}`}
+            disabled
+            title="Trinkgeld — bald verfügbar (Phase 1b)"
+            aria-label="Trinkgeld (bald verfügbar)"
+          >
+            <CoinIcon size={26} />
+          </button>
+          <span className={styles.railLabel}>Tip</span>
+        </div>
+      )}
 
       <div className={styles.railItem}>
         <button
@@ -113,18 +116,20 @@ export function ActionRail({ post, token }: { post: Post; token: string }) {
         <span className={styles.railLabel}>{shareLabel}</span>
       </div>
 
-      <div className={styles.railItem}>
-        <button
-          type="button"
-          className={`${styles.glass} ${styles.circleBtn} ${saved ? styles.saved : ""}`}
-          onClick={() => setSaved((s) => !s)}
-          aria-pressed={saved}
-          aria-label={saved ? "Gespeichert" : "Speichern"}
-          title="Nur lokal — serverseitiges Speichern folgt"
-        >
-          <BookmarkIcon size={26} filled={saved} />
-        </button>
-      </div>
+      {FEATURES.saves && (
+        <div className={styles.railItem}>
+          <button
+            type="button"
+            className={`${styles.glass} ${styles.circleBtn} ${saved ? styles.saved : ""}`}
+            onClick={() => setSaved((s) => !s)}
+            aria-pressed={saved}
+            aria-label={saved ? "Gespeichert" : "Speichern"}
+            title="Nur lokal — serverseitiges Speichern folgt"
+          >
+            <BookmarkIcon size={26} filled={saved} />
+          </button>
+        </div>
+      )}
 
       <div className={styles.railItem}>
         <span className={`${styles.glass} ${styles.circleBtn}`} aria-hidden="true">
