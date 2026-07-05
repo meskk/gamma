@@ -43,8 +43,9 @@ Ops-Readiness für eine kleine 1a-β (gedeckelte Fiat-Auszahlung).
 M0–M4 abgeschlossen = Phase 1a fertig.
 
 **1b-Eingangstore (nicht vergessen, nicht jetzt bauen):** HttpOnly-Cookie+CSRF statt
-sessionStorage-Token; Secrets-Manager; Ingestion-Service-Account statt geteilter
-Operator-Credentials; ggf. ADR-0008-Auflösung falls M1 sie auf 1b verschiebt.
+sessionStorage-Token; Secrets-Manager; ggf. ADR-0008-Auflösung falls M1 sie auf 1b
+verschiebt. *(Der Ingestion-Service-Account wurde per Owner-Entscheidung auf M2.8
+vorgezogen.)*
 
 ## 3. Meilensteine
 
@@ -110,8 +111,11 @@ unbekannte E-Mails, identische Sequenz); Frontend-Test weist Cooldown-UI nach.
    `services/ingestion/src/gamma_ingestion/analyzer.py`); CI bleibt hardwarefrei.
 5. GPU-Bring-up (EU-Cloud-Miete), `GAMMA_ANALYZER=model`, RUNBOOK-Deltas.
 6. Korpus-Backfill über Admin-Endpoints; DLQ beobachten.
-7. *(nur falls M1 ja sagt)* Feed-Ranker liest `content_signals` — Config-Flag,
+7. *(M1 hat ja gesagt)* Feed-Ranker liest `content_signals` — Config-Flag,
    nie Payout-relevant.
+8. Service-Account für den AI-Block: eigene, minimal berechtigte Identität statt
+   geteilter Operator-Credentials (vorgezogen aus den 1b-Gates — Konsequenz der
+   Owner-Entscheidung „AI ist ein eigenständiger, sicher getrennter Block").
 
 **Done-Kriterium:** kein `NotImplementedError` mehr; echte Signale für den
 Bestandskorpus; Lesepfad typisiert in `bindings/`.
@@ -156,12 +160,39 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | M0.5b | 2026-07-05 | f22715a | lokal: cargo deny ✓, pip-audit ✓, npm audit(high) ✓; CI Security-Run 28745802549 ✓ | Security-Workflow blockierend; Triage: 3 webpki-Waiver (Legacy-Pfad, ungenutzt), npm 2× moderate (postcss via Next, unter High-Schwelle) |
 | M0.6 | 2026-07-05 | 5644018 | CI + Security auf main ✓ | Wöchentlicher Security-Schedule (Mo 06:00 UTC) |
 | M0.7 | 2026-07-05 | *(GitHub-Setting, kein Commit)* | gh api verifiziert | Branch-Protection: 7 Pflicht-Checks auf main; enforce_admins aus |
-| M0 ✅ | 2026-07-05 | *(dieser Commit)* | CI ✓ + Security ✓ (Runs 28745802538/28745802549) | Meilenstein abgeschlossen |
+| M0 ✅ | 2026-07-05 | e8e7dfd | CI ✓ + Security ✓ (Runs 28745802538/28745802549) | Meilenstein abgeschlossen |
+| M1.1+M1.4 (teilw.) | 2026-07-05 | *(dieser Commit)* | Docs | Owner-Antworten eingearbeitet: Backlog P-1..P-3, AI-Block-Prinzip + Payout-Grenze, 10k-Ziel, HLS verschoben; Restfragen in §8 |
 
-## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner)
+## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
-*Noch leer. Jedes Item bekommt: Beschreibung (1 Absatz), Akzeptanzkriterien,
-Entscheidung in/out Phase 1a.*
+### P-1 — Launch-Funktionsumfang definieren *(in 1a; Owner-Session nötig)*
+Festlegen, welche Funktionen Usern zum Start sichtbar/nutzbar sind. Vorgehen: eine
+Feature-Matrix (sichtbar / versteckt / operator-only) über den existierenden Bestand —
+Posts, Kommentare, Likes/Interaktionen, Follows, Feed (For-you/Following), Compose +
+Medien-Upload, Paid-Unlocks, Gems-Anzeige, Profil, Referral (P-2) — die der Owner
+abtickt. **Akzeptanz:** Matrix hier eingetragen; Frontend blendet Nicht-Launch-Features
+aus (Config, kein Code-Löschen).
+
+### P-2 — Referral-System *(in 1a; Bau nach dem Auth-Cluster, vor 1a-β)*
+User werben User per Referral-Link; der Referrer erhält einen Anteil (Cut) an den
+Gem-Erträgen der Geworbenen. Design-Leitplanken (aus der Architektur zwingend):
+- Cut-Höhe als **econ-params-Knob** (`referral_bps`), niemals hardcoded.
+- **Konservierend:** Der Cut kommt AUS dem Payout des Geworbenen, es wird nichts
+  zusätzlich gemintet — Invariante i (Σ payouts == emission) bleibt exakt.
+- **Anti-Abuse:** Referral-Erträge zählen nur aus Nutzern hinter dem Bot-Gate
+  (`v_i = true`) — sonst ist Referral + Bots ein direkter Harvest-Vektor.
+- Empfehlung: nur EINE Referral-Ebene (mehrstufig = Pyramiden-Optik + Abuse-Fläche).
+**Offen (Owner):** Cut-Höhe (bps), Dauer (lebenslang vs. erste N Epochen).
+**Akzeptanz:** Registrierung nimmt Referral-Code an; Settlement bucht den Cut als
+eigene `ledger_entries`-Art (`referral`); Summen bleiben exakt (Hamilton); Tests
+decken Konservierung + Gate ab.
+
+### P-3 — Payout-Rail über Drittanbieter *(1a-β)*
+Echte Auszahlungen (gedeckelt) laufen zunächst über einen Drittanbieter — KYC liegt
+beim Anbieter; eigenes KYC wird später evaluiert (passt zur hinterlegten
+Fiat-Revenue-Share-Strategie). **Offen (Owner):** Anbieterwahl (z. B. Stripe Connect /
+PayPal Payouts / Wise), Länderabdeckung, Gebühren. **Akzeptanz:** dokumentierter
+(halb-)manueller Payout-Prozess für die Beta in OPERATIONS.md.
 
 ## 6. Soll-Architektur (Referenz; Urteile & Designs)
 
@@ -234,19 +265,42 @@ Triage) + wöchentlicher Schedule-Lauf.
 - ADR-Nummern: 0009 = Signal-Schema (M2.3); **0010** = Gewichtsformel-Entscheidung
   (löst den Schwebezustand von ADR 0008 auf; Deadline: vor 1a-β, nicht früher).
 
-**Offen (Owner beantwortet in M1.4):**
-1. Die angedeuteten Produktänderungen — welche genau? Welche 1a-blockierend? *(→ M3)*
-2. Feed-Ranking — sollen `content_signals` den 1a-Feed beeinflussen
-   (Boost/Filter/nur Anzeige)? *(→ M2.7 + ADR 0009)*
-3. Modell-Definition — was berechnet das Modell (Qualität/Moderation/Embeddings)?
-   Latenz-/Durchsatzziel Backfill? *(→ M2.4)*
-4. GPU-Miete — Provider, EU-Region, Monatsbudget.
-5. ADR-0008-Timing — vor 1a-β auflösen oder formal 1b-Eingangstor?
-6. 1a-β-Parameter — Beta-Größe, Invite-Mechanik, gedeckelte Fiat-Auszahlung
-   (manuell ok?).
-7. HLS-Ladder — für Beta nötig oder verschieben?
-8. Hosting — VM-Provider/Region, Domain; Monitoring-Ambition
-   (Default: Uptime-Ping + vorhandenes `/metrics`).
+**Entschieden (2026-07-05, M1 teilweise — Owner-Antworten):**
+- **Feed-Ranking über AI: JA.** M2.7 ist in scope; ADR 0009 definiert das Schema,
+  der Ranker liest `content_signals` hinter einem Config-Flag.
+- **AI = eigenständiger Block.** Strikt separiert von der Plattform; Kommunikation
+  NUR über die bestehenden Seams: Queue rein, authentifizierte Write-backs raus,
+  Reads über die öffentliche API. Kein Direktzugriff auf DB oder Ledger. (Bestätigt
+  ADR 0006; Härtung dazu: eigener Service-Account statt geteilter
+  Operator-Credentials wird von „1b-Gate" auf **M2** vorgezogen.)
+- **Payout-Grenze (wichtig):** Die AI **liefert Signale** (Qualität,
+  Bot-Wahrscheinlichkeit, Ranking-Features) — **wer was ausgezahlt bekommt,
+  entscheidet weiterhin deterministisch `gem-engine`/`settlement`** mit den
+  Konservierungs-Invarianten. AI-Einfluss auf Payouts ist nur als
+  econ-params-gegateter Faktor im Gewichtsmodell zulässig, nie als freie Zuteilung
+  durch das Modell. Grund: Auditierbarkeit, Reproduzierbarkeit, fail-closed —
+  ein Modell-Output ist nicht deterministisch nachrechenbar, eine Gewichtsformel schon.
+- **Payout-Rail:** Drittanbieter zuerst (P-3); eigenes KYC später evaluiert.
+- **Referral-System:** gewollt → P-2.
+- **Skalierungsziel:** stabil bis **10.000 Nutzer**; Wachstum = mehr Hardware,
+  kein Umbau. Die ersten 10k laufen auf einer VM (M4 bleibt wie geplant; das
+  C2-Scale-Smoke-Ziel 10k–50k Knoten und die M4.7-Load-Schwellen richten sich
+  an dieser Zahl aus).
+- **HLS-Ladder: verschoben.** Schwaches-Netz-Optimierung ist kein Beta-Ziel;
+  bei gutem Netz muss es gut laufen (deckt die bestehende Single-Bitrate ab).
+- **GPU: mieten → später kaufen** (bestätigt die hinterlegte Strategie; Migration
+  bleibt verlustfrei by design).
+
+**Weiter offen (Owner):**
+1. P-1-Feature-Matrix abticken (welche Funktionen zum Launch sichtbar sind).
+2. Referral-Parameter: Cut-Höhe (`referral_bps`), Dauer, (Empfehlung: 1 Ebene).
+3. Payout-Drittanbieter auswählen (P-3).
+4. Modell-Spezifikation im Detail — welche Signale genau (Qualitäts-Score,
+   Bot-Likelihood, Embeddings?), Backfill-Ziel *(→ ADR 0009 / M2.3–M2.4)*.
+5. GPU-Provider, EU-Region, Monatsbudget.
+6. ADR-0008-Timing — vor 1a-β auflösen (empfohlen) oder formal 1b-Eingangstor?
+7. Domain + VM-Provider/Region (z. B. Hetzner DE); Monitoring-Default
+   (Uptime-Ping + `/metrics`) gilt als angenommen, falls kein Widerspruch.
 
 ## 9. Ops-Index
 
