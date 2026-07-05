@@ -1,0 +1,114 @@
+# Production compose for the single-VM Phase 1a-β deployment (MASTERPLAN M4.3).
+# Deliberately SEPARATE from backend/docker-compose.yml (dev): different volumes,
+# no published database ports, restart policies, digest-pinned infra images.
+#
+#   docker compose -f compose.prod.yml up -d --build
+#
+# Secrets come from an UNCOMMITTED ./.env.prod (template: .env.prod.example).
+# TLS terminates in a host-level reverse proxy (Caddy/nginx) that forwards to
+# core-api on 127.0.0.1:8080 — see docs/OPERATIONS.md. Postgres/Redis/MinIO are
+# reachable ONLY on the compose network, never published.
+#
+# The gamma images are built from the repo checkout for now; the M4.6 publish
+# job flips these `build:` blocks to digest-pinned ghcr.io references, turning
+# deploys into `compose pull && up -d`.
+
+services:
+  postgres:
+    image: postgres@sha256:287eced1f33b59ed265ed13a60d3680dd7646d70c4dc0e785f59a470ebc03eeb # postgres:16
+    env_file: .env.prod
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-gamma}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis@sha256:4b81516bf4d02b32d81da6f40b41b9a73d842ae9bdfd615ad48ad14df58b45a1 # redis:7
+    # Persist the queues (transcode/ingestion survive a VM reboot).
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Object storage. For a managed S3 instead, drop this service and point the
+  # S3_* vars in .env.prod at the provider (see OPERATIONS.md).
+  minio:
+    image: minio/minio@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e # RELEASE.2025-04-22
+    command: ["server", "/data"]
+    env_file: .env.prod
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  core-api:
+    build: ./backend
+    env_file: .env.prod
+    # Only to the loopback — the host reverse proxy is the public face.
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    # Healthcheck comes from the Dockerfile (/health via /dev/tcp).
+
+  transcode-worker:
+    build: ./backend
+    command: ["transcode_worker"]
+    env_file: .env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      # The image's /health probe targets core-api's port; workers expose none.
+      disable: true
+
+  settlement-scheduler:
+    build: ./backend
+    command: ["settlement_scheduler"]
+    env_file: .env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+
+  ingestion:
+    build: ./services/ingestion
+    env_file: .env.prod
+    depends_on:
+      redis:
+        condition: service_healthy
+      core-api:
+        condition: service_healthy
+    restart: unless-stopped
+    # Healthcheck comes from its Dockerfile (/healthz on GAMMA_HEALTH_PORT).
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:

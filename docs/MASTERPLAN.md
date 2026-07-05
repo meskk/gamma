@@ -197,7 +197,8 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | FE-Block ✅ | 2026-07-05 | d7c040d | 55 FE-Tests gesamt | Frontend-Vereinheitlichung abgeschlossen — kein handgerollter Stale-Guard mehr im Code |
 | F (Copy) | 2026-07-05 | da8cec9 | FE-Gates ✓; Browser-Check: Profil/Post/Nav deutsch ✓ | Deutsch-Vereinheitlichung aller User-Seiten (@user-Handles einheitlich; /admin bleibt englisch). CSS-Module-/Token-Konvergenz bleibt opportunistisch offen |
 | M4.1 | 2026-07-06 | 02f7ef3 | ruff+mypy+pytest ✓ (69 Tests); Ingestion-Image gebaut ✓ | Ingestion /healthz (GAMMA_HEALTH_PORT, Default 8081) + Dockerfile-HEALTHCHECK; RUNBOOK §7 bereinigt |
-| M4.2 | 2026-07-06 | 191dc14 | Lokal: Image gebaut (754 MB), 3 Binaries ✓, core-api antwortet in-Container auf /health ✓ | Backend-Dockerfile (ein Image, drei Binaries) + backend-docker-CI-Job. Hinweis: Colima-VM dafür von 2 auf 6 GiB vergrößert (Release-Build-OOM) |
+| M4.2 | 2026-07-06 | 191dc14 | Lokal: Image gebaut (754 MB), 3 Binaries ✓, core-api antwortet in-Container auf /health ✓; CI backend-docker ✓ + als 8. Pflicht-Check | Backend-Dockerfile (ein Image, drei Binaries) + backend-docker-CI-Job. Hinweis: Colima-VM dafür von 2 auf 6 GiB vergrößert (Release-Build-OOM) |
+| M4.3+M4.4 | 2026-07-06 | *(dieser Commit)* | Abnahme-Drill lokal: 7 Services healthy, /health+/ready 200, Service-Account-Provisionierung + Worker-Selbstheilung durchgespielt | compose.prod.yml (digest-gepinnt, keine öffentlichen DB-Ports, .env.prod.example) + OPERATIONS.md (Ein-VM-Story, Caddy, Firewall, Deploy/Rollback). Fund dokumentiert: Worker-Restart-Schleife triggert die eigene Login-Bremse — Ausweg in §3 |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
