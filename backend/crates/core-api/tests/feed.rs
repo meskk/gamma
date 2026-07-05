@@ -127,7 +127,7 @@ async fn http_feed_boosts_category_match(pool: PgPool) {
         .await
         .unwrap();
     let feed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    let bodies: Vec<&str> = feed
+    let bodies: Vec<&str> = feed["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -140,6 +140,98 @@ async fn http_feed_boosts_category_match(pool: PgPool) {
         tech_pos < plain_pos,
         "category-matched post should rank above the plain one: {bodies:?}"
     );
+}
+
+async fn fetch_feed(
+    router: &axum::Router,
+    viewer: i64,
+    token: &str,
+    query: &str,
+) -> (StatusCode, serde_json::Value) {
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/users/{viewer}/feed{query}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn pages_concatenate_to_the_single_shot_ranking(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let (token, viewer) = common::register(&router, &["tech"]).await;
+    let author = new_user(&pool, vec![]).await;
+    for i in 0..7 {
+        let cat = if i % 2 == 0 { Some("tech") } else { None };
+        new_post(&pool, author, cat, &format!("post {i}")).await;
+    }
+
+    // The single-shot ranking is the reference order.
+    let (status, single) = fetch_feed(&router, viewer, &token, "?limit=50").await;
+    assert_eq!(status, StatusCode::OK);
+    let reference: Vec<i64> = single["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(reference.len(), 7);
+
+    // Walking with limit=2 must reproduce it exactly: no dupes, no gaps.
+    let mut walked: Vec<i64> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let q = match &cursor {
+            None => "?limit=2".to_string(),
+            Some(c) => format!("?limit=2&cursor={c}"),
+        };
+        let (status, page) = fetch_feed(&router, viewer, &token, &q).await;
+        assert_eq!(status, StatusCode::OK);
+        walked.extend(
+            page["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p["id"].as_i64().unwrap()),
+        );
+        match page["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+        assert!(walked.len() <= 20, "cursor walk must terminate");
+    }
+    assert_eq!(walked, reference, "paged walk must equal the one-shot list");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn invalid_and_stale_cursors_are_rejected(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let (token, viewer) = common::register(&router, &[]).await;
+
+    let (status, body) = fetch_feed(&router, viewer, &token, "?cursor=garbage").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_cursor");
+
+    // A well-formed cursor whose frozen clock predates the candidate window.
+    let old = core_api::feed::cursor::encode(&core_api::feed::cursor::FeedCursor {
+        ranked_at: chrono::Utc::now().timestamp() - 49 * 3600,
+        score_bits: 0,
+        last_id: 1,
+    });
+    let (status, body) = fetch_feed(&router, viewer, &token, &format!("?cursor={old}")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "stale_cursor");
 }
 
 #[sqlx::test(migrations = "../../migrations")]

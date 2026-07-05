@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::auth::Caller;
 use crate::error::ApiError;
-use crate::posts::model::Post;
+use crate::feed::model::FeedPage;
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
@@ -19,6 +19,8 @@ pub fn routes() -> Router<AppState> {
 struct FeedParams {
     #[serde(default = "default_limit")]
     limit: usize,
+    /// Opaque continuation cursor from the previous page's `next_cursor` (B1).
+    cursor: Option<String>,
 }
 
 fn default_limit() -> usize {
@@ -31,10 +33,13 @@ async fn feed(
     State(state): State<AppState>,
     Path(user_id): Path<i64>,
     Query(params): Query<FeedParams>,
-) -> Result<Json<Vec<Post>>, ApiError> {
+) -> Result<Json<FeedPage>, ApiError> {
     if !caller.can_act_as(user_id) {
         return Err(ApiError::Forbidden);
     }
-    let posts = state.feed.personalized(user_id, params.limit).await?;
-    Ok(Json(posts))
+    let page = state
+        .feed
+        .personalized(user_id, params.limit, params.cursor.as_deref())
+        .await?;
+    Ok(Json(page))
 }
