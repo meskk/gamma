@@ -39,6 +39,10 @@ const csp = [
   .trim();
 
 const nextConfig = {
+  // Hide the Next.js dev-mode indicator (the floating "N" badge in the corner) so
+  // it doesn't sit on top of the full-bleed screens (login, feed) during dev.
+  devIndicators: false,
+
   // Phase 1a serves media via the API/object-store + CDN, not next/image, so we
   // skip the image optimizer (and its native `sharp` dependency) entirely.
   images: { unoptimized: true },
