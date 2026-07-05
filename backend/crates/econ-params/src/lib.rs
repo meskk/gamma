@@ -57,6 +57,16 @@ pub struct EconParams {
     /// alongside the epoch's `econ.version` to know which economy produced them.)
     pub interaction_weights: InteractionWeights,
 
+    // --- Referral (MASTERPLAN P-2) ---
+    /// Default referrer cut of a referred user's epoch payout (basis points;
+    /// 300 = 3%). Snapshotted onto each referral at registration; per-creator
+    /// contract overrides live in the `referral_terms` table, not here. The cut
+    /// is conserving — taken OUT of the referred user's payout, never minted.
+    pub referral_bps_default: u16,
+    /// How many epochs (days) a referral earns, counted from the referred
+    /// user's registration. Default 183 ≈ 6 months of daily epochs.
+    pub referral_duration_epochs: u64,
+
     // --- Genesis (Phase 1b only) ---
     /// Genesis LP seed target in sats — a depth/cold-start knob, not a solvency lock.
     /// $100k @ $60k/BTC ≈ 1.667 BTC.
@@ -90,7 +100,9 @@ impl Default for EconParams {
     /// Proposed defaults from Rebuild Dossier v5 §10.
     fn default() -> Self {
         Self {
-            version: 1,
+            // v2: referral knobs added (owner decision 2026-07-05: 3% / 6 months
+            // default, per-creator overrides in the referral_terms table).
+            version: 2,
             company_skim_bps: 200,
             content_fee_bps: 200,
             transfer_burn_bps: 200,
@@ -103,6 +115,8 @@ impl Default for EconParams {
             gamma_audience: 1.0,
             burn_scale_sats: 100_000,
             interaction_weights: InteractionWeights::default(),
+            referral_bps_default: 300,
+            referral_duration_epochs: 183,
             genesis_seed_target_sats: 166_666_667,
         }
     }
@@ -149,6 +163,7 @@ impl EconParams {
         bps("company_skim_bps", self.company_skim_bps)?;
         bps("content_fee_bps", self.content_fee_bps)?;
         bps("transfer_burn_bps", self.transfer_burn_bps)?;
+        bps("referral_bps_default", self.referral_bps_default)?;
         bps("emission_decay_bps", self.emission_decay_bps)?;
         // A paid unlock splits price into creator + fee + burn; fee+burn > 100%
         // would drive the creator's share negative.
