@@ -5,7 +5,9 @@ use ts_rs::TS;
 
 /// A user's authorization role. Maps 1:1 to the Postgres `user_role` enum.
 /// `User` is the default (non-privileged); `Operator` may run admin actions
-/// such as epoch settlement.
+/// such as epoch settlement; `Service` is a MACHINE identity (first consumer:
+/// the AI ingestion worker) that may write content signals but holds none of
+/// the human-operator powers. Provisioned via SQL only — no escalation endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type, Serialize, TS)]
 #[sqlx(type_name = "user_role", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
@@ -13,6 +15,7 @@ use ts_rs::TS;
 pub enum Role {
     User,
     Operator,
+    Service,
 }
 
 /// The authenticated caller behind a session token: who they are and what role

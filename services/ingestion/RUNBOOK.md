@@ -9,10 +9,10 @@ LaunchDaemon instead; everything below except the container commands still appli
 ## 0. What it does
 
 Consumes new post ids from the `gamma:ingestion` Redis queue, reads each post via the
-core API, analyses it, and writes content signals back through the operator-only
-`PUT /v1/posts/:id/signals`. It never touches Postgres directly (ADR 0006). Today the
-analyser is a deterministic heuristic placeholder; the GPU model is a config flip away
-(see §6).
+core API, analyses it, and writes content signals back through
+`PUT /v1/posts/:id/signals` (service-or-operator role). It never touches Postgres
+directly (ADR 0006). Today the analyser is a deterministic heuristic placeholder; the
+GPU model is a config flip away (see §6).
 
 ## 1. Build
 
@@ -26,13 +26,23 @@ non-root user, and starts via `python -m gamma_ingestion`.
 
 ## 2. Configure
 
-All config is environment (see [`.env.example`](./.env.example)). Required: an
-**operator account** the write-back authenticates as. Register a user via the API,
-then promote it (dev): `UPDATE users SET role = 'operator' WHERE id = <id>;` — for
-prod, prefer a dedicated service-account role (ADR 0005/0006 follow-up).
+All config is environment (see [`.env.example`](./.env.example)). Required: a
+**service account** the write-back authenticates as (M2.8) — a machine identity
+that may write signals but holds NONE of the human-operator powers, so a leaked
+worker credential cannot settle epochs or flip bot gates. Provision it once:
+
+```sql
+-- after registering the account via POST /v1/auth/register:
+UPDATE users SET role = 'service' WHERE id = <id>;
+```
+
+There is deliberately no role-escalation endpoint. (An operator account still
+works for the write-back — operators can do everything a service can — but the
+worker should run under 'service' everywhere beyond a dev laptop.)
 
 Key vars: `REDIS_URL`, `GAMMA_API_BASE_URL`, `GAMMA_OPERATOR_EMAIL`,
-`GAMMA_OPERATOR_PASSWORD`. Keep secrets out of the image — pass them at run time
+`GAMMA_OPERATOR_PASSWORD` (the service account's credentials; the var names
+predate the service role). Keep secrets out of the image — pass them at run time
 (`--env-file`, a secrets manager, or the orchestrator).
 
 **Model/data durability (so a machine move loses nothing):** the GPU box is

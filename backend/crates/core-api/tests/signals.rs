@@ -231,3 +231,83 @@ async fn signals_writeback_is_operator_only_and_round_trips(pool: PgPool) {
         StatusCode::BAD_REQUEST
     );
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn service_role_writes_signals_but_holds_no_operator_powers(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let post_id = seed_post(&pool).await;
+
+    // A machine identity: registered normally, promoted to 'service' via SQL
+    // (the documented provisioning path — there is no escalation endpoint).
+    let (svc_token, svc_id) = common::register(&router, &[]).await;
+    sqlx::query("UPDATE users SET role = 'service' WHERE id = $1")
+        .bind(svc_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The service MAY write signals…
+    let resp = put_signals(
+        &router,
+        post_id,
+        Some(&svc_token),
+        json!({ "model_version": "heuristic-v0", "signals": { "words": 2 } }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // …but NONE of the human-operator powers: settlement, bot gate, takedown.
+    let settle = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/epochs/0/settle")
+                .header("authorization", format!("Bearer {svc_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(settle.status(), StatusCode::FORBIDDEN);
+
+    let verify = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/v1/users/{svc_id}/verification"))
+                .header("authorization", format!("Bearer {svc_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"verified":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(verify.status(), StatusCode::FORBIDDEN);
+
+    let takedown = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/posts/{post_id}/takedown"))
+                .header("authorization", format!("Bearer {svc_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(takedown.status(), StatusCode::FORBIDDEN);
+
+    // And a plain user still cannot write signals.
+    let (user_token, _uid) = common::register(&router, &[]).await;
+    let resp = put_signals(
+        &router,
+        post_id,
+        Some(&user_token),
+        json!({ "model_version": "heuristic-v0", "signals": {} }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}

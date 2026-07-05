@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::routing::put;
 use axum::{Json, Router};
 
-use crate::auth::AdminUser;
+use crate::auth::{AdminUser, ServiceUser};
 use crate::error::ApiError;
 use crate::signals::model::{ContentSignal, SignalWriteback};
 use crate::state::AppState;
@@ -15,11 +15,12 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/posts/:id/signals", put(write_signals).get(read_signals))
 }
 
-/// Operator-only: the ingestion service writes back its analysis of a post. This
-/// keeps DB writes behind the API — the service never touches Postgres directly.
-/// `AdminUser` rejects the unauthenticated (401) and non-operators (403).
+/// Service-or-operator: the ingestion worker writes back its analysis under its
+/// own MACHINE identity (M2.8) — no borrowed operator account, so a leaked
+/// worker credential cannot settle epochs, flip bot gates or take content down.
+/// Still keeps DB writes behind the API — the service never touches Postgres.
 async fn write_signals(
-    _admin: AdminUser,
+    _service: ServiceUser,
     State(state): State<AppState>,
     Path(post_id): Path<i64>,
     Json(body): Json<SignalWriteback>,

@@ -17,6 +17,13 @@ pub struct AuthUser(pub i64);
 /// (e.g. epoch settlement) instead of `AuthUser`.
 pub struct AdminUser(pub i64);
 
+/// A caller proven to be a machine SERVICE identity — or an operator (operators
+/// can always do what services can, for manual repair). Use this on the seam
+/// endpoints machines write through (signals write-back), NEVER on human-ops
+/// routes: a leaked service credential must not be able to settle epochs, flip
+/// bot gates, or take content down.
+pub struct ServiceUser(pub i64);
+
 /// The authenticated caller with their role. Use this (over `AuthUser`) when a
 /// handler must decide access against the role too — e.g. a self-scoped read the
 /// owner OR an operator may perform (`caller.0.can_act_as(id)`).
@@ -76,5 +83,21 @@ impl FromRequestParts<AppState> for AdminUser {
             return Err(ApiError::Forbidden);
         }
         Ok(AdminUser(caller.user_id))
+    }
+}
+
+#[axum::async_trait]
+impl FromRequestParts<AppState> for ServiceUser {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let caller = principal(parts, state).await?;
+        if !matches!(caller.role, Role::Service | Role::Operator) {
+            return Err(ApiError::Forbidden);
+        }
+        Ok(ServiceUser(caller.user_id))
     }
 }

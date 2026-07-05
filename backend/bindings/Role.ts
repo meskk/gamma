@@ -3,6 +3,8 @@
 /**
  * A user's authorization role. Maps 1:1 to the Postgres `user_role` enum.
  * `User` is the default (non-privileged); `Operator` may run admin actions
- * such as epoch settlement.
+ * such as epoch settlement; `Service` is a MACHINE identity (first consumer:
+ * the AI ingestion worker) that may write content signals but holds none of
+ * the human-operator powers. Provisioned via SQL only — no escalation endpoint.
  */
-export type Role = "user" | "operator";
+export type Role = "user" | "operator" | "service";
