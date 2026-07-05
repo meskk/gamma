@@ -8,15 +8,30 @@
 import { API_BASE_URL } from "./config";
 
 /** A non-2xx API response. `code` is the backend's stable machine-readable error
- * code (the `{ "error": code }` body), or the HTTP status text as a fallback. */
+ * code (the `{ "error": code }` body), or the HTTP status text as a fallback.
+ * `retryAfter` carries the parsed `Retry-After` header in seconds (rate-limit
+ * 429s), or `null` when absent/unparseable — so UIs can render a countdown. */
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    readonly retryAfter: number | null = null,
   ) {
     super(`API ${status}: ${code}`);
     this.name = "ApiError";
   }
+}
+
+/** Parse a `Retry-After` header value: delta-seconds or an HTTP-date, clamped
+ * to >= 0; `null` for garbage. Capped at 15 minutes so a bogus header can't
+ * freeze a UI for hours. */
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) return null;
+  const capped = (secs: number) => Math.min(Math.max(Math.ceil(secs), 0), 15 * 60);
+  if (/^\d+$/.test(value.trim())) return capped(Number(value));
+  const asDate = Date.parse(value);
+  if (!Number.isNaN(asDate)) return capped((asDate - Date.now()) / 1000);
+  return null;
 }
 
 type RequestOptions = {
@@ -51,7 +66,7 @@ export async function apiFetch<T>(path: string, opts: RequestOptions = {}): Prom
     if (resp.status === 401 && opts.token && typeof window !== "undefined") {
       window.dispatchEvent(new Event("gamma:unauthorized"));
     }
-    throw new ApiError(resp.status, code);
+    throw new ApiError(resp.status, code, parseRetryAfter(resp.headers.get("retry-after")));
   }
 
   if (resp.status === 204) return undefined as T;
