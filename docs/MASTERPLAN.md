@@ -51,18 +51,20 @@ Operator-Credentials; ggf. ADR-0008-Auflösung falls M1 sie auf 1b verschiebt.
 Details (Design-Begründungen, Policies, Testlisten) stehen in §6-Referenzen und den ADRs;
 hier steht, WAS in welcher Reihenfolge fertig wird.
 
-### M0 — Baseline & Leitplanken ✅ = wenn alle Schritte im Ledger stehen
+### M0 — Baseline & Leitplanken — ✅ ABGESCHLOSSEN 2026-07-05
 1. ✅ `devIndicators`-Änderung committen.
-2. `review/audit-fixes` → `main` mergen (Merge-Commit), CI grün, Tag `phase1a-baseline`.
-3. Dieses Dokument committen; CLAUDE.md-Verweis.
-4. CI: alle Actions auf SHA pinnen, MinIO-Image auf Digest.
-5. CI: Security-Scans — `cargo deny` (+ `deny.toml`), `pip-audit` (requirements.lock),
-   `npm audit --omit=dev --audit-level=high`. Erst Report-Modus, dann blockierend.
-6. Wöchentlicher `schedule:`-Lauf des Security-Jobs.
-7. Branch-Protection auf `main` (CI-Pflicht); hier protokolliert.
+2. ✅ `review/audit-fixes` → `main` gemergt (Merge-Commit), CI grün, Tag `phase1a-baseline`.
+3. ✅ Dieses Dokument committet; CLAUDE.md-Verweis.
+4. ✅ CI: alle Actions auf SHA gepinnt, MinIO-Image auf Digest.
+5. ✅ CI: Security-Scans blockierend — `cargo deny` (+ `deny.toml`), `pip-audit`,
+   `npm audit --omit=dev --audit-level=high`. (Report-Modus-Runde übersprungen:
+   Triage erfolgte lokal, die Scans landeten direkt grün.)
+6. ✅ Wöchentlicher `schedule:`-Lauf (Mo 06:00 UTC) des Security-Workflows.
+7. ✅ Branch-Protection auf `main`: alle 7 Job-Checks Pflicht (`enforce_admins`
+   bewusst aus, damit der Ein-Schritt-Direct-Push-Workflow des Owners funktioniert).
 
-**Done-Kriterium:** `main` == Branch-Tip, Tag gesetzt, keine mutable Action-Refs,
-Security-Jobs blockierend.
+**Done-Kriterium erfüllt:** `main` == Branch-Tip, Tag gesetzt, keine mutable
+Action-Refs, Security-Jobs blockierend und auf Anhieb grün (Run 28745802549).
 
 ### M0.5 — Auth-Härtungs-Cluster (direkt nach M0; parallel zu M1 möglich)
 Nicht produkt-facing, keine Abhängigkeiten — wartet auf nichts. Sieben Commits:
@@ -151,7 +153,10 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | M0.3 | 2026-07-05 | d848de3 | Docs | MASTERPLAN.md angelegt |
 | M0.4 | 2026-07-05 | 7e3d086 | CI auf main ✓ (Run 28745581000) | Actions auf SHA, MinIO auf Digest gepinnt |
 | M0.5a | 2026-07-05 | ef88de1 | fmt+clippy+test --all ✓ | anyhow-Advisory gefixt, aws-sdk-s3 Bump |
-| M0.5b | 2026-07-05 | *(dieser Commit)* | lokal: cargo deny ✓, pip-audit ✓, npm audit(high) ✓ | Security-Workflow blockierend; Triage: 3 webpki-Waiver (Legacy-Pfad, ungenutzt), npm 2× moderate (postcss via Next, unter High-Schwelle) |
+| M0.5b | 2026-07-05 | f22715a | lokal: cargo deny ✓, pip-audit ✓, npm audit(high) ✓; CI Security-Run 28745802549 ✓ | Security-Workflow blockierend; Triage: 3 webpki-Waiver (Legacy-Pfad, ungenutzt), npm 2× moderate (postcss via Next, unter High-Schwelle) |
+| M0.6 | 2026-07-05 | 5644018 | CI + Security auf main ✓ | Wöchentlicher Security-Schedule (Mo 06:00 UTC) |
+| M0.7 | 2026-07-05 | *(GitHub-Setting, kein Commit)* | gh api verifiziert | Branch-Protection: 7 Pflicht-Checks auf main; enforce_admins aus |
+| M0 ✅ | 2026-07-05 | *(dieser Commit)* | CI ✓ + Security ✓ (Runs 28745802538/28745802549) | Meilenstein abgeschlossen |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner)
 
