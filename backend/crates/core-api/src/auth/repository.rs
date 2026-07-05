@@ -98,6 +98,74 @@ impl AuthRepository {
         Ok(res.rows_affected())
     }
 
+    /// Current throttle state for a (normalised) login email:
+    /// `(failed_count, locked_until)`, or `None` if the email has no row.
+    pub async fn throttle_state(
+        &self,
+        email: &str,
+    ) -> Result<Option<(i32, Option<DateTime<Utc>>)>, sqlx::Error> {
+        let row = sqlx::query!(
+            r#"SELECT failed_count, locked_until FROM login_throttle WHERE email = $1"#,
+            email
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| (r.failed_count, r.locked_until)))
+    }
+
+    /// Count one more failed login for this email and return the NEW count.
+    /// Atomic upsert, so concurrent failures both count instead of losing one.
+    pub async fn record_login_failure(&self, email: &str) -> Result<i32, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            INSERT INTO login_throttle (email, failed_count, last_failed_at)
+            VALUES ($1, 1, now())
+            ON CONFLICT (email) DO UPDATE
+            SET failed_count = login_throttle.failed_count + 1, last_failed_at = now()
+            RETURNING failed_count
+            "#,
+            email
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    /// Set the lock on an email (computed by the throttle policy from the count
+    /// `record_login_failure` returned).
+    pub async fn set_login_lock(
+        &self,
+        email: &str,
+        locked_until: DateTime<Utc>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            r#"UPDATE login_throttle SET locked_until = $2 WHERE email = $1"#,
+            email,
+            locked_until
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Forget the throttle state for an email (successful login). Idempotent.
+    pub async fn clear_login_throttle(&self, email: &str) -> Result<(), sqlx::Error> {
+        sqlx::query!("DELETE FROM login_throttle WHERE email = $1", email)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Drop throttle rows with no failure for 24h (housekeeping; the
+    /// `login_throttle_last_failed_at` index keeps this cheap). Returns how many.
+    pub async fn sweep_stale_login_throttle(&self) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query!(
+            "DELETE FROM login_throttle WHERE last_failed_at <= now() - interval '24 hours'"
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
     /// The (user id, role) behind a live (unexpired) session token hash, or
     /// `None` if the token is unknown or expired. Joins `users` so a role check
     /// needs no second query.

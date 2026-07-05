@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM login_throttle WHERE last_failed_at <= now() - interval '24 hours'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "cda1b7c9b4528acb66cadd1fbc54179e4c4594104d68e662d43cc99972fa2a8e"
+}

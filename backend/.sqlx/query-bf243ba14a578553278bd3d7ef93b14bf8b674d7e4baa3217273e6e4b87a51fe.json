@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO login_throttle (email, failed_count, last_failed_at)\n            VALUES ($1, 1, now())\n            ON CONFLICT (email) DO UPDATE\n            SET failed_count = login_throttle.failed_count + 1, last_failed_at = now()\n            RETURNING failed_count\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "failed_count",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bf243ba14a578553278bd3d7ef93b14bf8b674d7e4baa3217273e6e4b87a51fe"
+}
