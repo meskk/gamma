@@ -176,7 +176,10 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | A5 | 2026-07-05 | 0dd2342 | fmt+clippy+test --all ✓ (2 neue Tests) | Housekeeping-Task (Session-Purge + Throttle-Sweep), GAMMA_SESSION_TTL_DAYS |
 | FA1 | 2026-07-05 | 5ce9800 | FE-Gates ✓ (3 neue Tests) | ApiError.retryAfter (Delta/HTTP-Datum, Cap 15 min) |
 | FA2 | 2026-07-05 | 3cb0dbb | FE-Gates ✓ (2 neue Tests) | Login-Cooldown-UI; E2E im Browser verifiziert (5 Fehlversuche → 429 → Countdown → Ablauf → Login 200) |
-| M0.5 ✅ | 2026-07-05 | *(dieser Commit)* | Alle Gates + E2E-Browser-Beweis | Auth-Härtungs-Cluster abgeschlossen |
+| M0.5 ✅ | 2026-07-05 | 61cbd8c | Alle Gates + E2E-Browser-Beweis; CI+Security remote ✓ | Auth-Härtungs-Cluster abgeschlossen |
+| M2.1 ✓(vorhanden) | 2026-07-05 | — | Befund | GET /posts/:id/signals existiert bereits (operator-only — vor ADR 0009 korrekt); kein Commit nötig |
+| P-1 | 2026-07-05 | 2c99498 | FE-Gates ✓ (4 neue Tests) | Launch-Ausblendungen: Tip/Save/Gem-Preis hinter NEXT_PUBLIC_FEATURE_*-Flags |
+| P-2/R1 | 2026-07-05 | 0725671 | fmt+clippy+test --all ✓ | Migration 0018 (referral_code, referrals, referral_terms, Ledger-Kind) + econ-params v2 (300 bps / 183 Epochen) |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
