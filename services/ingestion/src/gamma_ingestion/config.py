@@ -43,6 +43,9 @@ class Config:
     # Reliable-queue processing LIST: ids popped-but-not-yet-acked live here so a
     # crash mid-post can't lose them (defaults to "<queue_key>:processing").
     processing_key: str = "gamma:ingestion:processing"
+    # Liveness endpoint port (/healthz, M4.1). 0 disables it (e.g. ad-hoc CLI
+    # runs); the Dockerfile HEALTHCHECK and the compose probe expect the default.
+    health_port: int = 8081
 
     @staticmethod
     def from_env(environ: Mapping[str, str] | None = None) -> Config:
@@ -60,6 +63,9 @@ class Config:
         retry_attempts = _int(env, "GAMMA_RETRY_ATTEMPTS", 3)
         if retry_attempts < 1:
             raise ConfigError(f"GAMMA_RETRY_ATTEMPTS must be >= 1, got {retry_attempts}")
+        health_port = _int(env, "GAMMA_HEALTH_PORT", 8081)
+        if not (0 <= health_port <= 65535):
+            raise ConfigError(f"GAMMA_HEALTH_PORT must be 0..65535, got {health_port}")
         return Config(
             redis_url=env.get("REDIS_URL", "redis://localhost:6379"),
             queue_key=queue_key,
@@ -73,6 +79,7 @@ class Config:
             retry_base_delay_seconds=_float(env, "GAMMA_RETRY_BASE_DELAY_SECONDS", 0.5),
             dead_letter_key=env.get("GAMMA_INGESTION_DEAD_QUEUE", f"{queue_key}:dead"),
             processing_key=env.get("GAMMA_INGESTION_PROCESSING_QUEUE", f"{queue_key}:processing"),
+            health_port=health_port,
         )
 
 

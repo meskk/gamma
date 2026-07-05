@@ -112,7 +112,9 @@ ranking is a separate future ADR.
 
 - Concrete prod `REDIS_URL` / `GAMMA_API_BASE_URL` and how the GPU box reaches prod
   (direct over TLS with Redis AUTH + an IP allowlist, or a WireGuard/Tailscale tunnel).
-- The service-account role replacing the shared operator credential.
-- A liveness `/healthz` endpoint (prep-plan P9b) — deferred to land with the probe target
-  and restart policy of the final deployment.
+- ~~The service-account role replacing the shared operator credential~~ — DONE
+  (M2.8): provision per §2; the worker runs under `role = 'service'`.
+- ~~A liveness `/healthz` endpoint~~ — DONE (M4.1): `GET /healthz` on
+  `GAMMA_HEALTH_PORT` (default 8081, 0 disables); the Dockerfile HEALTHCHECK and
+  the compose healthcheck (M4.3) probe it.
 - The canonical signal schema (ADR 0009) — gated on the dossier.

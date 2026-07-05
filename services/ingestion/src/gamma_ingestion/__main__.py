@@ -13,6 +13,7 @@ import threading
 from .analyzer import make_analyzer
 from .api_client import ApiClient, ApiError, AuthError, TransientError
 from .config import Config, ConfigError
+from .health import start_health_server
 from .queue import IngestionQueue
 from .worker import Worker
 
@@ -35,6 +36,9 @@ def main() -> int:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
+    # Liveness probe (M4.1): a daemon thread, so it never blocks shutdown.
+    health = start_health_server(config.health_port) if config.health_port else None
+
     queue = IngestionQueue(
         config.redis_url,
         config.queue_key,
@@ -55,6 +59,8 @@ def main() -> int:
     finally:
         client.close()
         queue.close()
+        if health is not None:
+            health.shutdown()
     return 0
 
 

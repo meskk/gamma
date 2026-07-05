@@ -29,6 +29,10 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/opt/venv/bin:$PATH"
 RUN useradd --create-home --uid 10001 gamma
 COPY --from=builder /opt/venv /opt/venv
 USER gamma
+# Liveness probe against the built-in /healthz (M4.1; GAMMA_HEALTH_PORT,
+# default 8081). stdlib urllib, so the slim image needs no curl/wget.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD ["python", "-c", "import os,urllib.request,sys; port=os.environ.get('GAMMA_HEALTH_PORT','8081'); sys.exit(0 if port=='0' else (0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=2).status==200 else 1))"]
 # The seam is idempotent and crash-safe (mirrors settlement_scheduler), so a
 # supervisor may restart this freely. Config comes from the environment (see
 # .env.example); GAMMA_OPERATOR_* are required and the process exits non-zero
