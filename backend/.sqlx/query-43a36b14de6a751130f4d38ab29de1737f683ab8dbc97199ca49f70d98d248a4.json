@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT bps, duration_epochs FROM referral_terms WHERE referrer_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bps",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "duration_epochs",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "43a36b14de6a751130f4d38ab29de1737f683ab8dbc97199ca49f70d98d248a4"
+}

@@ -32,12 +32,20 @@ static DUMMY_HASH: LazyLock<String> =
 #[derive(Clone)]
 pub struct AuthService {
     repo: AuthRepository,
+    econ: econ_params::EconParams,
 }
 
 impl AuthService {
+    /// Default econ knobs — fine for tests; the running app threads the
+    /// configured set through `with_econ` (ADR 0003).
     pub fn new(pool: PgPool) -> Self {
+        Self::with_econ(pool, econ_params::EconParams::default())
+    }
+
+    pub fn with_econ(pool: PgPool, econ: econ_params::EconParams) -> Self {
         Self {
             repo: AuthRepository::new(pool),
+            econ,
         }
     }
 
@@ -50,6 +58,24 @@ impl AuthService {
             return Err(ApiError::Validation("weak_password"));
         }
 
+        // Resolve the referral BEFORE creating the user: an unknown code fails
+        // the whole registration (400) instead of silently costing the referrer
+        // their cut on a typo.
+        let referrer_id = match req
+            .referral_code
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+        {
+            Some(code) => Some(
+                self.repo
+                    .user_id_by_referral_code(code)
+                    .await?
+                    .ok_or(ApiError::Validation("invalid_referral_code"))?,
+            ),
+            None => None,
+        };
+
         // argon2 is deliberately CPU/memory-heavy; run it on the blocking pool so a
         // burst of registrations can't starve the async runtime's worker threads
         // (which would stall every other request, including /health).
@@ -61,7 +87,31 @@ impl AuthService {
             .await
             .map_err(map_create_error)?;
 
+        if let Some(referrer_id) = referrer_id {
+            // Freeze the terms NOW: the referrer's operator-set contract if one
+            // exists, else the econ-params defaults. valid_until is the last
+            // epoch (inclusive) in which the referral earns. (Users can't be
+            // deleted in 1a, so the FK between resolve and insert can't break.)
+            let (bps, duration_epochs) = match self.repo.referral_terms_for(referrer_id).await? {
+                Some(terms) => terms,
+                None => (
+                    i32::from(self.econ.referral_bps_default),
+                    self.econ.referral_duration_epochs as i64,
+                ),
+            };
+            let current = domain::Epoch::from_unix_seconds(Utc::now().timestamp());
+            let valid_until = current.0 as i64 + duration_epochs;
+            self.repo
+                .create_referral(user_id, referrer_id, bps, valid_until)
+                .await?;
+        }
+
         self.issue_session(user_id).await
+    }
+
+    /// The caller's own referral code (for the share link in the UI).
+    pub async fn referral_code_of(&self, user_id: i64) -> Result<String, ApiError> {
+        Ok(self.repo.referral_code_of(user_id).await?)
     }
 
     pub async fn login(&self, req: LoginRequest) -> Result<AuthResponse, ApiError> {

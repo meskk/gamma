@@ -443,6 +443,156 @@ async fn throttle_sweep_removes_only_stale_rows(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn register_with_referral_code_freezes_default_terms(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+
+    // The referrer registers; their code comes from GET /auth/me.
+    let reg = json_body(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({ "email": "referrer@example.com", "password": "supersecret" }),
+        )
+        .await,
+    )
+    .await;
+    let referrer_id = reg["user_id"].as_i64().unwrap();
+    let token = reg["token"].as_str().unwrap().to_string();
+    let me = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/auth/me")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let code = json_body(me).await["referral_code"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(code.len(), 12, "DB-generated 12-hex referral code");
+
+    // A new user registers WITH that code…
+    let referred = json_body(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({
+                "email": "invited@example.com",
+                "password": "supersecret",
+                "referral_code": code,
+            }),
+        )
+        .await,
+    )
+    .await;
+    let referred_id = referred["user_id"].as_i64().unwrap();
+
+    // …and the referral row froze the econ defaults (300 bps) with a
+    // valid_until in the future.
+    let row: (i64, i32, i64) = sqlx::query_as(
+        "SELECT referrer_id, bps, valid_until_epoch FROM referrals WHERE referred_id = $1",
+    )
+    .bind(referred_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0, referrer_id);
+    assert_eq!(row.1, 300, "econ default referral_bps_default");
+    let current_epoch = chrono::Utc::now().timestamp() / 86_400;
+    assert_eq!(row.2, current_epoch + 183, "default duration of ~6 months");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn register_with_operator_contract_freezes_override_terms(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+
+    let reg = json_body(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({ "email": "creator@example.com", "password": "supersecret" }),
+        )
+        .await,
+    )
+    .await;
+    let creator_id = reg["user_id"].as_i64().unwrap();
+
+    // Operator grants the creator a 5% / 30-epoch contract.
+    sqlx::query(
+        "INSERT INTO referral_terms (referrer_id, bps, duration_epochs, note)
+         VALUES ($1, 500, 30, 'launch creator deal')",
+    )
+    .bind(creator_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let code: (String,) = sqlx::query_as("SELECT referral_code FROM users WHERE id = $1")
+        .bind(creator_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let referred = json_body(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({
+                "email": "fan@example.com",
+                "password": "supersecret",
+                "referral_code": code.0,
+            }),
+        )
+        .await,
+    )
+    .await;
+
+    let row: (i32, i64) =
+        sqlx::query_as("SELECT bps, valid_until_epoch FROM referrals WHERE referred_id = $1")
+            .bind(referred["user_id"].as_i64().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let current_epoch = chrono::Utc::now().timestamp() / 86_400;
+    assert_eq!(row.0, 500, "override bps frozen");
+    assert_eq!(row.1, current_epoch + 30, "override duration frozen");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn unknown_referral_code_fails_registration_cleanly(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+
+    let resp = post_json(
+        &router,
+        "/v1/auth/register",
+        serde_json::json!({
+            "email": "typo@example.com",
+            "password": "supersecret",
+            "referral_code": "doesnotexist",
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(resp).await["error"], "invalid_referral_code");
+
+    // Nothing half-created: the same email registers fine without the code.
+    assert_eq!(
+        post_json(
+            &router,
+            "/v1/auth/register",
+            serde_json::json!({ "email": "typo@example.com", "password": "supersecret" }),
+        )
+        .await
+        .status(),
+        StatusCode::CREATED
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn me_without_or_with_bad_token_is_401(pool: PgPool) {
     let router = app(AppState::new(pool));
 

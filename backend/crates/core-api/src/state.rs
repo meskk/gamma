@@ -52,8 +52,8 @@ impl AppState {
         let interactions = InteractionService::with_econ(pool.clone(), econ.clone());
         let gems = SettlementService::with_econ(pool.clone(), econ.clone());
         let queue = TranscodeQueue::new(&redis_url).expect("valid REDIS_URL");
-        let media = MediaService::with_econ(pool.clone(), storage.clone(), queue, econ);
-        let auth = AuthService::new(pool.clone());
+        let media = MediaService::with_econ(pool.clone(), storage.clone(), queue, econ.clone());
+        let auth = AuthService::with_econ(pool.clone(), econ);
         let signals = SignalService::new(pool.clone());
         let comments = CommentService::new(pool.clone());
         Self {

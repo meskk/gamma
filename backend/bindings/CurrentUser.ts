@@ -2,7 +2,8 @@
 import type { Role } from "./Role";
 
 /**
- * Response for `GET /auth/me`: the current session's user id and role, so the
- * frontend can gate operator-only navigation and routes.
+ * Response for `GET /auth/me`: the current session's user id and role (so the
+ * frontend can gate operator-only navigation) plus the user's own referral
+ * code (so the UI can render a share link, MASTERPLAN P-2).
  */
-export type CurrentUser = { user_id: bigint, role: Role, };
+export type CurrentUser = { user_id: bigint, role: Role, referral_code: string, };

@@ -98,6 +98,59 @@ impl AuthRepository {
         Ok(res.rows_affected())
     }
 
+    /// Resolve a referral code to its owner's user id, if the code exists.
+    pub async fn user_id_by_referral_code(&self, code: &str) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar!("SELECT id FROM users WHERE referral_code = $1", code)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    /// A user's own referral code (every user has one, DB-generated).
+    pub async fn referral_code_of(&self, user_id: i64) -> Result<String, sqlx::Error> {
+        sqlx::query_scalar!("SELECT referral_code FROM users WHERE id = $1", user_id)
+            .fetch_one(&self.pool)
+            .await
+    }
+
+    /// The operator-set contract override for a referrer, if any:
+    /// `(bps, duration_epochs)`. Absent ⇒ the econ-params defaults apply.
+    pub async fn referral_terms_for(
+        &self,
+        referrer_id: i64,
+    ) -> Result<Option<(i32, i64)>, sqlx::Error> {
+        let row = sqlx::query!(
+            r#"SELECT bps, duration_epochs FROM referral_terms WHERE referrer_id = $1"#,
+            referrer_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| (r.bps, r.duration_epochs)))
+    }
+
+    /// Record who referred a new user, with the terms FROZEN at registration
+    /// (bps + last earning epoch). One referrer per referred user (PK).
+    pub async fn create_referral(
+        &self,
+        referred_id: i64,
+        referrer_id: i64,
+        bps: i32,
+        valid_until_epoch: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            r#"
+            INSERT INTO referrals (referred_id, referrer_id, bps, valid_until_epoch)
+            VALUES ($1, $2, $3, $4)
+            "#,
+            referred_id,
+            referrer_id,
+            bps,
+            valid_until_epoch
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Current throttle state for a (normalised) login email:
     /// `(failed_count, locked_until)`, or `None` if the email has no row.
     pub async fn throttle_state(

@@ -66,11 +66,16 @@ async fn login(
     Ok(Json(state.auth.login(body).await?))
 }
 
-/// Requires a valid bearer token; returns the caller's id and role so the frontend
-/// can gate operator-only UI (via the `Caller` extractor).
-async fn me(Caller(caller): Caller) -> Json<CurrentUser> {
-    Json(CurrentUser {
+/// Requires a valid bearer token; returns the caller's id, role (gates
+/// operator-only UI) and own referral code (for the share link, P-2).
+async fn me(
+    State(state): State<AppState>,
+    Caller(caller): Caller,
+) -> Result<Json<CurrentUser>, ApiError> {
+    let referral_code = state.auth.referral_code_of(caller.user_id).await?;
+    Ok(Json(CurrentUser {
         user_id: caller.user_id,
         role: caller.role,
-    })
+        referral_code,
+    }))
 }

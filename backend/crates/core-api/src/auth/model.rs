@@ -23,13 +23,15 @@ pub struct Principal {
     pub role: Role,
 }
 
-/// Response for `GET /auth/me`: the current session's user id and role, so the
-/// frontend can gate operator-only navigation and routes.
+/// Response for `GET /auth/me`: the current session's user id and role (so the
+/// frontend can gate operator-only navigation) plus the user's own referral
+/// code (so the UI can render a share link, MASTERPLAN P-2).
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "../../../bindings/")]
 pub struct CurrentUser {
     pub user_id: i64,
     pub role: Role,
+    pub referral_code: String,
 }
 
 impl Principal {
@@ -48,6 +50,13 @@ pub struct RegisterRequest {
     pub password: String,
     #[serde(default)]
     pub declared_categories: Vec<String>,
+    /// Referral code of the user who invited this one (MASTERPLAN P-2). An
+    /// UNKNOWN code fails the registration (400 invalid_referral_code) rather
+    /// than being dropped silently — a typo must surface, not cost the
+    /// referrer their cut.
+    #[serde(default)]
+    #[ts(optional)]
+    pub referral_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]

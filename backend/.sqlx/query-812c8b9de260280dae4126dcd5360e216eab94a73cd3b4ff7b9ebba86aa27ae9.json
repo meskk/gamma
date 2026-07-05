@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO referrals (referred_id, referrer_id, bps, valid_until_epoch)\n            VALUES ($1, $2, $3, $4)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "812c8b9de260280dae4126dcd5360e216eab94a73cd3b4ff7b9ebba86aa27ae9"
+}
