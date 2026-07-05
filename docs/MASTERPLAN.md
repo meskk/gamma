@@ -188,7 +188,13 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | M2.8 | 2026-07-05 | c68a119 | fmt+clippy+test --all ✓, FE-Typecheck ✓ (1 neuer Test) | Service-Rolle: Signals-Write unter Maschinen-Identität; keine Operator-Rechte; RUNBOOK-Provisionierung |
 | B1 | 2026-07-05 | c3be0a9 | fmt+clippy+test --all ✓ (2 Unit- + 2 neue Integrationstests) | Feed-Cursor: eingefrorene Ranking-Uhr + Keyset, FeedPage-Binding, invalid/stale → 400 |
 | D1–D3 | 2026-07-05 | 4dbe7c2 | FE-Gates ✓ (5 neue Tests) | usePagedFeed (20er-Seiten, Legacy-Fallback, Dedupe) + ReelsFeed-Prefetch ab 3 Slides vor Ende |
-| B1+D ✅ | 2026-07-05 | *(dieser Commit)* | E2E im Browser: Seite 1 (20 Slides) → Blättern → Cursor-Request → 25 Slides ✓ | Feed-Paging komplett (Backend + Frontend) |
+| B1+D ✅ | 2026-07-05 | b42962c | E2E im Browser: Seite 1 (20 Slides) → Blättern → Cursor-Request → 25 Slides ✓ | Feed-Paging komplett (Backend + Frontend) |
+| FE-B1 | 2026-07-05 | fa0eff6 | FE-Gates ✓ (5 neue Tests) | lib/useFetch — der EINE Fetch-Hook (Stale-Guard, reload, enabled) |
+| FE-B2 | 2026-07-05 | b4ac368 | FE-Gates ✓ (6 neue Tests) | Admin-Seiten migriert (reports bekam den fehlenden Stale-Guard); Operator-Guard-Tests |
+| FE-B3 | 2026-07-05 | 1f7be85 | FE-Gates ✓ | Comments migriert |
+| FE-B4 | 2026-07-05 | 9b9725f | FE-Gates ✓ (Regressionstests unverändert grün) | posts/[id] + users/[id] migriert; Follow-Toggle = lokales Override über Server-Wahrheit |
+| C1+C2 | 2026-07-05 | 0b8bfab | FE-Gates ✓ (6 neue Tests) | useLike + useUnlock dedupliziert; Unlock-Fehler bleibt retry-bar; Vitest-Hook-Falle (returned mock = Teardown) gefixt |
+| FE-Block ✅ | 2026-07-05 | *(dieser Commit)* | 55 FE-Tests gesamt | Frontend-Vereinheitlichung abgeschlossen — kein handgerollter Stale-Guard mehr im Code |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
