@@ -196,6 +196,8 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | C1+C2 | 2026-07-05 | 0b8bfab | FE-Gates ✓ (6 neue Tests) | useLike + useUnlock dedupliziert; Unlock-Fehler bleibt retry-bar; Vitest-Hook-Falle (returned mock = Teardown) gefixt |
 | FE-Block ✅ | 2026-07-05 | d7c040d | 55 FE-Tests gesamt | Frontend-Vereinheitlichung abgeschlossen — kein handgerollter Stale-Guard mehr im Code |
 | F (Copy) | 2026-07-05 | da8cec9 | FE-Gates ✓; Browser-Check: Profil/Post/Nav deutsch ✓ | Deutsch-Vereinheitlichung aller User-Seiten (@user-Handles einheitlich; /admin bleibt englisch). CSS-Module-/Token-Konvergenz bleibt opportunistisch offen |
+| M4.1 | 2026-07-06 | 02f7ef3 | ruff+mypy+pytest ✓ (69 Tests); Ingestion-Image gebaut ✓ | Ingestion /healthz (GAMMA_HEALTH_PORT, Default 8081) + Dockerfile-HEALTHCHECK; RUNBOOK §7 bereinigt |
+| M4.2 | 2026-07-06 | 191dc14 | Lokal: Image gebaut (754 MB), 3 Binaries ✓, core-api antwortet in-Container auf /health ✓ | Backend-Dockerfile (ein Image, drei Binaries) + backend-docker-CI-Job. Hinweis: Colima-VM dafür von 2 auf 6 GiB vergrößert (Release-Build-OOM) |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
