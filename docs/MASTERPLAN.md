@@ -242,11 +242,22 @@ Bestandteile:
 - **Gems ↔ Balance:** Wie die 1a-Punkte-Gems in die geschuldete Balance übergehen
   (Umrechnung bei 1a-β, Anzeige beider Größen?), definiert ein eigener ADR mit dem
   Dossier — offen.
-**Rechts-Check (Pflicht vor Bau):** In-Platform ausgebbare geschuldete Balance +
-Auszahlungsfunktion ist E-Geld-nah — genau dafür existieren die dokumentierten
-Anwalts-Next-Steps der Monetarisierungsstrategie; Schwelle, Verjährung, Steuern klären.
-**Offen (Owner):** Schwellenhöhe; startet der Finance-Bereich mit 1a-β (empfohlen)
-oder früher als reine Anzeige?
+**Rechts-Check (Pflicht vor Bau — hier liegt ein bekannter Konflikt):** Die am
+2026-07-01 geschärfte Rechtsstruktur war ausdrücklich „KEINE gespeicherte Balance"
+(Pass-Through, direkte Auszahlung), um E-Geld/ZAG zu vermeiden. Das P-5-Modell
+(geschuldete Schwellen-Balance, in-platform ausgebbar) weicht davon ab:
+- **Angesammelte Schwellen-Balance, NUR auszahlbar** = wie YouTube/AdSense real
+  arbeitet; vertretbar als Handelsverbindlichkeit — vom Anwalt bestätigen lassen
+  (ist Frage 1 des fertigen Anwalts-Briefs).
+- **Dieselbe Balance in-platform AUSGEBEN** (Super-Post/Like) rückt sie Richtung
+  gespeicherter Wert / E-Geld — der riskante Teil.
+- **Vorgeschlagene Struktur, die beides liefert:** Die €-Verbindlichkeit bleibt
+  strikt „nur auszahlbar"; Boosts werden aus den PUNKTE-Gems bezahlt (Burn), nicht
+  aus der €-Balance. Nutzererlebnis bleibt („verdienen + boosten"), die €-Schiene
+  bleibt sauber. Owner + Anwalt entscheiden.
+**Offen (Owner):** Schwellenhöhe; Boosts aus €-Balance oder aus Punkte-Gems
+(Empfehlung: Gems); startet der Finance-Bereich mit 1a-β (empfohlen) oder früher
+als reine Anzeige?
 
 ### P-3 — Payout-Rail über Drittanbieter *(1a-β)*
 Echte Auszahlungen (gedeckelt) laufen zunächst über einen Drittanbieter — KYC liegt
