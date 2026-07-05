@@ -4,6 +4,12 @@ This file is auto-loaded by Claude Code at the start of every session. Read it
 first. It exists so that any future AI session (or human) understands what this
 project is and how it is built without re-deriving it from scratch.
 
+> **Roadmap lives in [`docs/MASTERPLAN.md`](docs/MASTERPLAN.md)** — the single
+> source of truth for what gets built next, in which order, with which quality
+> gates, plus the append-only step ledger. Measure every session's work against
+> it. This file is only updated at milestone boundaries; the MASTERPLAN carries
+> the day-to-day state.
+
 ## What this project is
 
 A rebuild of **Peer Network**, an ad-and-creativity-funded social platform that
