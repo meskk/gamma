@@ -67,7 +67,11 @@ hier steht, WAS in welcher Reihenfolge fertig wird.
 **Done-Kriterium erfüllt:** `main` == Branch-Tip, Tag gesetzt, keine mutable
 Action-Refs, Security-Jobs blockierend und auf Anhieb grün (Run 28745802549).
 
-### M0.5 — Auth-Härtungs-Cluster (direkt nach M0; parallel zu M1 möglich)
+### M0.5 — Auth-Härtungs-Cluster — ✅ ABGESCHLOSSEN 2026-07-05
+(E2E im Browser verifiziert: 5 Fehlversuche sperren, richtiges Passwort bekommt
+429 + tickenden Countdown, nach Ablauf Login 200. Bonus-Fund in A4: der alte
+Edge-Limiter hatte einen Einheiten-Bug — `per_second(10)` war eine PERIODE,
+also 1 Request pro 10 s statt 10 r/s; gefixt.)
 Nicht produkt-facing, keine Abhängigkeiten — wartet auf nichts. Sieben Commits:
 
 Backend (Soll-Design: zwei unabhängige Schutzschichten — Per-Route-IP-Limit +
@@ -163,7 +167,16 @@ Danach: Produkt-Items aus §5; HLS-Ladder nur falls M1 sie in 1a behält.
 | M0 ✅ | 2026-07-05 | e8e7dfd | CI ✓ + Security ✓ (Runs 28745802538/28745802549) | Meilenstein abgeschlossen |
 | M1.1+M1.4 (teilw.) | 2026-07-05 | 8ec3636 | Docs | Owner-Antworten eingearbeitet: Backlog P-1..P-3, AI-Block-Prinzip + Payout-Grenze, 10k-Ziel, HLS verschoben |
 | M1.1+M1.4 (Forts.) | 2026-07-05 | b941601 | Docs | P-1-Matrix entschieden; P-2-Parameter (3 %/6 Mon., Creator-Overrides); P-4 Private Area (non-custodial) neu; AI-Vorschlagswesen präzisiert |
-| M1.1+M1.4 (Forts. 2) | 2026-07-05 | *(dieser Commit)* | Docs | P-5 Finance-Area + YouTube-Earnings-Modell (keine Coin-Distribution; geschuldete Balance, Schwelle, Phantom-Connect; Super-Post/Like = Burn-Multiplier-UI) |
+| M1.1+M1.4 (Forts. 2) | 2026-07-05 | e5f0111 | Docs | P-5 Finance-Area + YouTube-Earnings-Modell |
+| M1.1+M1.4 (Forts. 3) | 2026-07-05 | 0d2ebf7 | Docs | P-5-Rechtskonflikt explizit (gespeicherte Balance vs. 2026-07-01-Struktur) + Versöhnungsvorschlag |
+| A1 | 2026-07-05 | cadd5b2 | fmt+clippy+test --all ✓ | ApiError::TooManyRequests, 429 + Retry-After |
+| A2 | 2026-07-05 | a055210 | fmt+clippy+test --all ✓, sqlx-Cache regeneriert | Migration 0017, pure Throttle-Policy, Repo-Methoden |
+| A3 | 2026-07-05 | b27fa18 | fmt+clippy+test --all ✓ (4 neue Integrationstests) | Backoff im Login verdrahtet — Kernproblem behoben |
+| A4 | 2026-07-05 | f6a4c3e | fmt+clippy+test --all ✓ (3 neue Tests) | Per-Route-Governor auf /v1/auth/*; Edge-Backstop-Einheiten-Bug gefixt (per_second war Periode) |
+| A5 | 2026-07-05 | 0dd2342 | fmt+clippy+test --all ✓ (2 neue Tests) | Housekeeping-Task (Session-Purge + Throttle-Sweep), GAMMA_SESSION_TTL_DAYS |
+| FA1 | 2026-07-05 | 5ce9800 | FE-Gates ✓ (3 neue Tests) | ApiError.retryAfter (Delta/HTTP-Datum, Cap 15 min) |
+| FA2 | 2026-07-05 | 3cb0dbb | FE-Gates ✓ (2 neue Tests) | Login-Cooldown-UI; E2E im Browser verifiziert (5 Fehlversuche → 429 → Countdown → Ablauf → Login 200) |
+| M0.5 ✅ | 2026-07-05 | *(dieser Commit)* | Alle Gates + E2E-Browser-Beweis | Auth-Härtungs-Cluster abgeschlossen |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
