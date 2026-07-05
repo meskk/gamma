@@ -6,7 +6,7 @@
 //! actually appears. Queries use `query_as!` so they are checked against the live
 //! schema at compile time (the `.sqlx` cache lets CI do this without a database).
 
-use crate::users::model::{NewUser, User};
+use crate::users::model::{NewUser, ReferralTerms, User};
 use db::PgPool;
 
 #[derive(Clone)]
@@ -62,6 +62,34 @@ impl UserRepository {
             verified
         )
         .fetch_optional(&self.pool)
+        .await
+    }
+
+    /// Upsert a creator's referral contract (operator-only at the HTTP layer).
+    /// The FK to `users` rejects contracts for nonexistent users — the caller
+    /// maps that violation to 404.
+    pub async fn upsert_referral_terms(
+        &self,
+        referrer_id: i64,
+        bps: i32,
+        duration_epochs: i64,
+        note: Option<&str>,
+    ) -> Result<ReferralTerms, sqlx::Error> {
+        sqlx::query_as!(
+            ReferralTerms,
+            r#"
+            INSERT INTO referral_terms (referrer_id, bps, duration_epochs, note)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (referrer_id) DO UPDATE
+            SET bps = $2, duration_epochs = $3, note = $4, updated_at = now()
+            RETURNING referrer_id, bps, duration_epochs, note
+            "#,
+            referrer_id,
+            bps,
+            duration_epochs,
+            note
+        )
+        .fetch_one(&self.pool)
         .await
     }
 

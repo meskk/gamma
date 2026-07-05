@@ -37,3 +37,27 @@ pub struct NewUser {
 pub struct VerificationRequest {
     pub verified: bool,
 }
+
+/// Operator-only request to set a creator's referral contract (P-2): the cut in
+/// basis points and how long referrals recruited FROM NOW ON earn. Terms are
+/// frozen onto each referral at registration, so changing a contract never
+/// silently rewrites existing referrals.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct ReferralTermsRequest {
+    pub bps: i32,
+    pub duration_epochs: i64,
+    #[serde(default)]
+    #[ts(optional)]
+    pub note: Option<String>,
+}
+
+/// The stored referral contract, echoed back on write.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct ReferralTerms {
+    pub referrer_id: i64,
+    pub bps: i32,
+    pub duration_epochs: i64,
+    pub note: Option<String>,
+}

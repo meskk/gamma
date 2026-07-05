@@ -157,3 +157,101 @@ async fn bot_gate_is_operator_only(pool: PgPool) {
         StatusCode::NOT_FOUND
     );
 }
+
+async fn put_referral_terms(
+    router: &axum::Router,
+    id: i64,
+    body: serde_json::Value,
+    token: Option<&str>,
+) -> axum::http::Response<Body> {
+    let mut builder = Request::builder()
+        .method("PUT")
+        .uri(format!("/v1/users/{id}/referral-terms"))
+        .header("content-type", "application/json");
+    if let Some(t) = token {
+        builder = builder.header("authorization", format!("Bearer {t}"));
+    }
+    router
+        .clone()
+        .oneshot(builder.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn referral_terms_are_operator_only_and_upsert(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+
+    let (op_id, op_token) = register(&router, "op2@example.com").await;
+    sqlx::query!("UPDATE users SET role = 'operator' WHERE id = $1", op_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (creator_id, creator_token) = register(&router, "creator2@example.com").await;
+
+    let deal = serde_json::json!({ "bps": 500, "duration_epochs": 30, "note": "launch deal" });
+
+    // Operator-only: 401 unauthenticated, 403 for a normal user (even for
+    // their own terms — contracts are granted, not self-served).
+    assert_eq!(
+        put_referral_terms(&router, creator_id, deal.clone(), None)
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        put_referral_terms(&router, creator_id, deal.clone(), Some(&creator_token))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // Operator sets the contract; the row round-trips.
+    let resp = put_referral_terms(&router, creator_id, deal, Some(&op_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let t: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(t["bps"], serde_json::json!(500));
+    assert_eq!(t["duration_epochs"], serde_json::json!(30));
+
+    // Upsert: a second PUT replaces, not duplicates.
+    let resp = put_referral_terms(
+        &router,
+        creator_id,
+        serde_json::json!({ "bps": 400, "duration_epochs": 60 }),
+        Some(&op_token),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let count: (i64,) = sqlx::query_as("SELECT count(*) FROM referral_terms")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count.0, 1);
+
+    // Validation and 404: bps beyond 100% rejected; unknown user rejected.
+    assert_eq!(
+        put_referral_terms(
+            &router,
+            creator_id,
+            serde_json::json!({ "bps": 10_001, "duration_epochs": 30 }),
+            Some(&op_token)
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        put_referral_terms(
+            &router,
+            999_999,
+            serde_json::json!({ "bps": 500, "duration_epochs": 30 }),
+            Some(&op_token)
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+}

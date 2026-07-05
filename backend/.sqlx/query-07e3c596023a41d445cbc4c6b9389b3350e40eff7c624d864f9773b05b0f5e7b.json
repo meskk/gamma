@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO referral_terms (referrer_id, bps, duration_epochs, note)\n            VALUES ($1, $2, $3, $4)\n            ON CONFLICT (referrer_id) DO UPDATE\n            SET bps = $2, duration_epochs = $3, note = $4, updated_at = now()\n            RETURNING referrer_id, bps, duration_epochs, note\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "referrer_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "bps",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "duration_epochs",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "note",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "07e3c596023a41d445cbc4c6b9389b3350e40eff7c624d864f9773b05b0f5e7b"
+}

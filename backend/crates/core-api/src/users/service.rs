@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 
 use crate::error::ApiError;
-use crate::users::model::{NewUser, User};
+use crate::users::model::{NewUser, ReferralTerms, User};
 use crate::users::repository::UserRepository;
 use db::PgPool;
 
@@ -37,6 +37,39 @@ impl UserService {
             .set_bot_gate(id, verified)
             .await?
             .ok_or(ApiError::NotFound)
+    }
+
+    /// Upsert a creator's referral contract (P-2). Operator-only at the HTTP
+    /// layer; the operator id is logged as the audit trail alongside the row's
+    /// own updated_at. Applies to referrals recruited FROM NOW ON — existing
+    /// referrals keep their frozen terms.
+    pub async fn set_referral_terms(
+        &self,
+        operator_id: i64,
+        referrer_id: i64,
+        bps: i32,
+        duration_epochs: i64,
+        note: Option<&str>,
+    ) -> Result<ReferralTerms, ApiError> {
+        if !(0..=10_000).contains(&bps) {
+            return Err(ApiError::Validation("invalid_bps"));
+        }
+        if duration_epochs < 0 {
+            return Err(ApiError::Validation("invalid_duration"));
+        }
+        let terms = self
+            .repo
+            .upsert_referral_terms(referrer_id, bps, duration_epochs, note)
+            .await
+            .map_err(|e| ApiError::on_fk_violation(e, ApiError::NotFound))?;
+        tracing::info!(
+            operator_id,
+            referrer_id,
+            bps,
+            duration_epochs,
+            "referral terms set"
+        );
+        Ok(terms)
     }
 }
 
