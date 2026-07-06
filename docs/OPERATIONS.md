@@ -110,7 +110,67 @@ idempotent angewendet, Settlement und Queues sind crash-sicher/idempotent by
 design. Mit M4.6 wird daraus `docker compose pull && up -d` mit
 digest-gepinnten GHCR-Images; Rollback = voriger Digest.
 
-## 7. Beobachten
+## 7. Backup & Restore
+
+**Was gesichert wird:** Postgres — die einzige Quelle der Wahrheit (Nutzer,
+Posts, Graph, das `ledger_entries`-Geldjournal). Redis hält nur Queues und
+braucht kein Backup: die Ingestion-Queue füllt der Admin-Backfill wieder
+(RUNBOOK §5); verlorene Transcode-Jobs stößt der jeweilige Owner pro Asset neu
+an (`POST /v1/media/:id/transcode`); ein Verlust der DLQ ist verschmerzbar.
+MinIO-Medien sind NICHT im Dump — für die Beta deckt sie der
+Provider-VM-Snapshot ab (unten); verlorene Medien kosten Content, kein Geld.
+
+**Nächtlicher Dump** — `ops/pg-backup.sh` zieht einen `pg_dump`
+(Custom-Format, komprimiert) aus dem Postgres-Container, validiert das Archiv
+per `pg_restore --list` und rotiert (Default 14 Tage, nie unter den letzten
+Dump). Als Cron-Job (`/etc/cron.d/gamma-backup`, Pfad ans Checkout anpassen):
+
+```
+30 3 * * * root cd /opt/gamma && ./ops/pg-backup.sh >> /var/log/gamma-backup.log 2>&1
+```
+
+**Off-VM-Kopie (Pflicht, sonst ist es kein Backup):** Ein Dump auf derselben
+Platte überlebt den VM-Verlust nicht. Zwei einfache Wege, mindestens einer:
+
+- Täglicher Provider-Snapshot der VM (z. B. Hetzner Snapshots) — deckt
+  zugleich `miniodata` (Medien) ab.
+- Pull von außerhalb (zweiter Rechner/Storage-Box):
+  `rsync -az vm:/var/backups/gamma/ ./gamma-backups/`
+
+**Restore** — `ops/pg-restore.sh` stoppt die App-Services, setzt das Schema
+zurück (`DROP SCHEMA public CASCADE` — bewusst statt `pg_restore --clean`,
+das nur Objekte abräumt, die im Dump existieren: nach einem schlechten Deploy
+kann das Live-Schema NEUER sein als der Dump, und Überbleibsel würden
+core-apis Migrations-Re-Run mit „relation already exists" crashen), spielt
+den Dump ein und startet genau die Services wieder, die vorher liefen. Danach
+entspricht die DB exakt dem Dump; ist der Code inzwischen neuer, wendet
+core-api die fehlenden forward-only Migrationen beim Start selbst an. Ohne
+`GAMMA_CONFIRM_RESTORE=yes` bricht das Skript ab; es funktioniert identisch
+gegen ein frisches leeres Volume (neue VM, erst §3 „Stack starten").
+
+```sh
+GAMMA_CONFIRM_RESTORE=yes ./ops/pg-restore.sh /var/backups/gamma/gamma-<stamp>.dump
+curl -s localhost:8080/health && curl -s localhost:8080/ready
+```
+
+Zwei bewusste Nebenwirkungen: Alle **Sessions werden invalidiert** — ein Dump
+würde sonst seither ausgeloggte oder widerrufene Tokens reanimieren; alle
+melden sich neu an, der Ingestion-Worker heilt sich selbst (§3). Und
+**Operator-Aktionen nach dem Dump-Zeitpunkt** (Takedowns, Verifizierungen,
+Referral-Overrides) sind verloren und müssen nachgezogen werden.
+
+**Geprobter Drill (M4.5, 2026-07-06, lokal gegen `compose.prod.yml`), beide
+Pfade:** *(a) Bad Deploy* — nach dem Dump Schema-Drift erzeugt (zusätzliche
+Tabelle wie von einer neueren Migration, zusätzlicher Post), Restore per
+Skript: DB exakt == Dump, Drift weg, alter Token 401, core-api startet ohne
+Crash-Loop, ein bewusst gestoppter Scheduler blieb gestoppt. *(b)
+Totalverlust* — `pgdata`-Volume gelöscht, Stack neu hochgefahren, Restore per
+Skript: Zeilenzahlen und Marker-Post identisch, `/health` + `/ready` 200,
+alle vorher laufenden Services wieder da (auch ein Worker mitten im
+Restart-Backoff). Reproduzierbar mit denselben zwei Skripten, die auch die
+VM benutzt.
+
+## 8. Beobachten
 
 - `docker compose -f compose.prod.yml logs -f core-api` (strukturierte Logs
   mit `x-request-id`).
@@ -118,12 +178,9 @@ digest-gepinnten GHCR-Images; Rollback = voriger Digest.
   Ingestion-`/healthz` prüft Docker selbst (Container-Status `healthy`).
 - Metriken: `GET /metrics` (Prometheus-Format) — für die Beta reicht ein
   Uptime-Ping auf `https://api.example.com/health`; mehr Monitoring ist eine
-  §8-Entscheidung.
+  §8-Entscheidung im MASTERPLAN.
 - Ingestion-Betrieb (DLQ, Backfill, Modell-Swap): `services/ingestion/RUNBOOK.md`.
 
-## 8. Offen in M4
+## 9. Offen in M4
 
-- Backups + Restore-Drill (M4.5) — bis dahin gilt: die VM ist NICHT die
-  einzige Kopie von irgendwas Wichtigem sein zu lassen ist noch nicht erfüllt;
-  vor echten Nutzern zwingend.
 - GHCR-Publish-Job (M4.6), Load-Smoke (M4.7), Go/No-Go-Checkliste (M4.8).
