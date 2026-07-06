@@ -57,8 +57,10 @@ docker compose -f "$COMPOSE_FILE" exec -T postgres sh -c \
      -c "TRUNCATE sessions;"'
 
 echo "starting the services that were running before ..."
+# --no-build: their images necessarily exist locally (they WERE running) —
+# never let compose silently build the checkout in the middle of an incident.
 # shellcheck disable=SC2086  # word splitting is the point
-docker compose -f "$COMPOSE_FILE" up -d $RUNNING
+docker compose -f "$COMPOSE_FILE" up -d --no-build $RUNNING
 
 echo "restore ok. Verify: curl -s localhost:8080/health && curl -s localhost:8080/ready"
 echo "note: operator actions taken after the dump (takedowns, verifications) are lost — re-check."

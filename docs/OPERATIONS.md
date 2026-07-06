@@ -9,8 +9,8 @@ sind spätere Entscheidungen, wenn 10.000 Nutzer real werden.
 
 - Eine Linux-VM (Debian/Ubuntu) bei einem EU-Anbieter (z. B. Hetzner; §8 im
   MASTERPLAN hält die endgültige Wahl fest). Richtwert für die Beta:
-  4 vCPU / 8 GB RAM / 80 GB Disk — der Rust-Release-Build im `--build`-Deploy
-  braucht allein ~4 GB.
+  4 vCPU / 8 GB RAM / 80 GB Disk — der Rust-Release-Build im
+  Selfbuild-Fallback (§3) braucht allein ~4 GB; der normale Pull-Deploy nicht.
 - Eine Domain mit zwei A/AAAA-Records auf die VM, z. B. `api.example.com`
   (core-api) und `app.example.com` (Frontend).
 - SSH-Zugang; alles Weitere passiert auf der VM.
@@ -32,6 +32,8 @@ Compose-Netz; es gibt nichts weiter zu firewallen.
 git clone https://github.com/meskk/gamma.git && cd gamma
 cp .env.prod.example .env.prod
 $EDITOR .env.prod        # CHANGE-ME-Werte setzen; Datei ist gitignored
+ln -s .env.prod .env     # compose interpoliert daraus GAMMA_IMAGE_TAG (beide gitignored)
+docker login ghcr.io -u <github-user>   # PAT mit read:packages — die Images sind privat wie das Repo
 ```
 
 Passwörter generieren: `openssl rand -base64 24`. `.env.prod` verlässt die VM
@@ -39,13 +41,28 @@ nie (ein echter Secrets-Manager ist ein 1b-Punkt, im MASTERPLAN §2 vermerkt).
 
 ## 3. Stack starten
 
+`GAMMA_IMAGE_TAG` in `.env.prod` auf den git-SHA eines **grünen** Publish-Laufs
+setzen (GitHub → Actions → Publish → Run-Summary; beide Image-Zeilen müssen da
+sein — der Workflow ist `workflow_dispatch`, also bewusst von Hand gestartet),
+dann:
+
 ```sh
-docker compose -f compose.prod.yml up -d --build
+docker compose -f compose.prod.yml pull && docker compose -f compose.prod.yml up -d --no-build
 docker compose -f compose.prod.yml ps    # alle Services healthy?
 curl -s localhost:8080/health && curl -s localhost:8080/ready
 ```
 
-Der erste `--build` kompiliert das Backend (~10 min). Migrationen laufen beim
+`&&` und `--no-build` sind Absicht: Nach einem fehlgeschlagenen Pull (Tag
+vertippt, Login fehlt, halber Publish-Lauf) würde ein nacktes `up -d` sonst
+STILL das lokale Checkout bauen und als den SHA taggen — nie gebaute Software
+unter veröffentlicht aussehendem Namen. So bricht es stattdessen laut ab.
+
+**Fallback ohne Registry-Zugang:** `GAMMA_IMAGE_TAG` leer lassen und
+`docker compose -f compose.prod.yml up -d --build` — die VM kompiliert selbst
+(~10 min, braucht die ~4 GB RAM aus §0; das lokale Image heißt dann
+`:selfbuilt`).
+
+**Nach dem ersten Start (beide Pfade):** Migrationen laufen beim
 core-api-Start automatisch (embedded, forward-only). Danach einmalig den
 Ingestion-Service-Account anlegen (RUNBOOK §2: registrieren, dann
 `UPDATE users SET role = 'service' …`) — die Credentials stehen ja schon in
@@ -81,8 +98,9 @@ Caddy setzt `X-Forwarded-For`; deshalb steht `GAMMA_TRUST_PROXY=true` in
 
 ## 5. Frontend
 
-Das Frontend-Container-Image kommt mit M4.6 (GHCR-Publish). Für die Beta bis
-dahin klassisch auf der VM:
+Ein Frontend-Container-Image ist noch offen (§9 — es braucht eine Entscheidung,
+wie die zur Build-Zeit eingebackenen `NEXT_PUBLIC_*`-Werte pro Deployment
+gesetzt werden). Für die Beta bis dahin klassisch auf der VM:
 
 ```sh
 cd frontend
@@ -92,23 +110,33 @@ npm start   # Port 3000; unter systemd legen (Restart=always)
 
 ## 6. Deploy & Rollback
 
-Deploy (bis M4.6 baut die VM selbst):
+Deploy: einen **Publish**-Lauf starten (GitHub → Actions → Publish → „Run
+workflow"; baut Backend- + Ingestion-Image und pusht sie SHA-getaggt nach
+GHCR), dann auf der VM:
 
 ```sh
-git pull && docker compose -f compose.prod.yml up -d --build
+git pull                                  # compose-Definitionen + ops/ aktuell halten
+$EDITOR .env.prod                         # GAMMA_IMAGE_TAG = der neue git-SHA (grüner Lauf)
+docker compose -f compose.prod.yml pull && docker compose -f compose.prod.yml up -d --no-build
 ```
 
-Rollback = auf den letzten guten Stand zurück und identisch deployen:
+(`&&` + `--no-build`: siehe §3 — ein fehlgeschlagener Pull darf nie in einem
+stillen Lokal-Build unter dem SHA-Namen enden.)
 
-```sh
-git checkout <letzter-guter-tag-oder-commit>
-docker compose -f compose.prod.yml up -d --build
-```
+Rollback = `GAMMA_IMAGE_TAG` auf den vorigen SHA zurücksetzen und dieselben
+zwei Compose-Kommandos. Ein einmal gepushter SHA-Tag wird vom
+Publish-Workflow nie überschrieben (Re-Runs überspringen existierende Tags;
+die Run-Summary notiert die Registry-Digests) — „voriger Digest" ist also
+einfach „voriger SHA".
 
-Beides ist gefahrlos wiederholbar: Migrationen sind forward-only und
-idempotent angewendet, Settlement und Queues sind crash-sicher/idempotent by
-design. Mit M4.6 wird daraus `docker compose pull && up -d` mit
-digest-gepinnten GHCR-Images; Rollback = voriger Digest.
+Wiederholbar ist das gefahrlos: Migrationen sind forward-only und idempotent
+angewendet, Settlement und Queues sind crash-sicher/idempotent by design.
+**Eine Grenze hat der Rollback:** Über eine Migrations-Grenze zurück blockt
+core-api beim Start fail-closed (die DB kennt eine Migration, die das alte
+Binary nicht hat) — dann vorwärts fixen statt zurückrollen.
+
+Fallback ohne Registry: wie in §3 — `git checkout <guter Stand>` und
+`up -d --build` mit leerem `GAMMA_IMAGE_TAG`.
 
 ## 7. Backup & Restore
 
@@ -183,4 +211,7 @@ VM benutzt.
 
 ## 9. Offen in M4
 
-- GHCR-Publish-Job (M4.6), Load-Smoke (M4.7), Go/No-Go-Checkliste (M4.8).
+- Load-Smoke (M4.7), Go/No-Go-Checkliste (M4.8).
+- Frontend-Container-Image (§5): folgt separat — erst die
+  `NEXT_PUBLIC_*`-Bake-Entscheidung (Build-Arg pro Deployment vs. Build auf
+  der VM); bis dahin läuft das Frontend klassisch unter systemd.
