@@ -126,93 +126,60 @@ All Rust paths below are under `backend/`.
 - `bindings/*.ts` — generated ts-rs frontend contract (consumed by `frontend/`).
 - `../docs/adr/` + `../ARCHITECTURE.md` — decisions + the fuller map (at repo root).
 
-## Current status & next steps (snapshot 2026-06-16)
+## Current status & next steps (snapshot 2026-07-07, M4 boundary)
 
-Phase 1a is well underway. Everything below is built and green (tests + fmt +
-clippy), each a committed checkpoint — see `git log` for the full progression.
+The MASTERPLAN ledger (§4) is the authoritative step-by-step record; this is
+the milestone-level summary. Everything listed is committed, tested, and CI-green.
 
 Done:
-- Core domains (handler→service→repository, Postgres via sqlx): users, posts,
-  follows, cold-start feed (Appendix A.2 bounded candidate query), and
-  append-only interaction-graph capture.
-- Gem economy: `gem-engine` (graph → PageRank → log-space weights), `settlement`
-  worker with fail-closed conservation invariants, Postgres-backed ledger
-  (`PgLedger`), off-chain epoch settlement (`POST /epochs/:k/settle`,
-  `GET /users/:id/gems`).
-- Media: object storage (MinIO/S3, presigned direct upload/download), async
-  HLS transcoding (Redis queue + `transcode_worker` binary), paid content
-  unlock in PT (creator/company-fee/burn split via `econ-params`) with an
-  access-controlled HLS manifest (402 until unlocked).
-- Auth: register/login (argon2 + opaque bearer sessions), `AuthUser` extractor;
-  all write/spend/paid-access endpoints derive identity from the session.
-- Roles: `Role` enum + `AdminUser` extractor; `POST /epochs/:k/settle` is
-  operator-only (401/403/200). See ADR 0004/0005.
+- **Core product + economy (pre-plan work, audited 2026-06-16):** users, posts,
+  comments, follows, cold-start feed, interaction capture; gem-engine →
+  settlement → PgLedger with fail-closed conservation invariants and an
+  append-only money journal; media (presigned upload, HLS transcode, paid
+  unlock with creator/fee/burn split); auth (argon2 + opaque sessions), roles,
+  moderation (report/takedown), `/v1` versioning, `/metrics`, structured logs.
+- **M0 + M0.5:** SHA-pinned CI, blocking security scans (cargo deny, pip-audit,
+  npm audit) + weekly schedule, branch protection; login hardening (per-route
+  IP limits + per-account backoff in Postgres, cooldown UI, no enumeration or
+  timing oracle).
+- **M1 (partial):** owner decisions recorded in MASTERPLAN §5/§8 — launch
+  feature matrix (P-1, hidden features behind config flags), referral system
+  (P-2, BUILT: 3%/6 months, conserving cut, operator overrides), P-4 Private
+  Area + P-5 Finance/YouTube-earnings model scoped (build pending decisions).
+- **M2 (partial):** ingestion worker robustness cluster (P1–P3, P5–P11:
+  analyzer seam, retries, DLQ, drain, metrics, CI gates; P4 — version-targeted
+  re-enqueue after a model swap — is still open, the backfill only reaches
+  posts with NO signals row), service-role identity (M2.8).
+- **M3 (partial):** feed cursor paging (backend B1 + frontend), frontend
+  unification (`useFetch`/`useLike`/`useUnlock`, admin stale-guard fix),
+  German copy on all user pages.
+- **M4 COMPLETE (the 1a-β ops story):** ingestion `/healthz` + backend
+  Dockerfile (one image, three binaries) + `compose.prod.yml` (digest-pinned,
+  no public DB ports) + `docs/OPERATIONS.md` (single-VM + Caddy TLS story);
+  backup/restore (`ops/pg-backup.sh` / `ops/pg-restore.sh`, restore drilled
+  twice incl. the bad-deploy schema-drift path); GHCR publish workflow
+  (SHA-tagged, tag immutability enforced; deploy = `pull && up -d
+  --no-build`); load smoke (`ops/load-smoke.py`, thresholds anchored to the
+  10k-user model, PASS with big headroom); Go/No-Go checklist
+  (`docs/GO-NO-GO-1a-beta.md`).
 
-Audit remediation (2026-06-16, all committed + green) — a multi-agent review
-found the foundation strong but several launch-blocking gaps; fixed:
-- **Bot gate wired + secured**: removed the unauthenticated `POST /users`
-  self-verify hole; the gate is now operator-only (`PUT /users/:id/verification`).
-  ADR 0005.
-- **Media access control**: `GET /media/:id` now gates the raw URL by entitlement
-  (owner/free/unlocked); finalize/transcode are owner-only — closed a paywall
-  bypass + IDOR.
-- **Anti-abuse**: per-(actor,type,epoch,target,post) interaction dedup; 256 KiB
-  body limit; per-IP rate limit (tower_governor, in `main.rs` only).
-- **Atomic, crash-safe settlement + money journal**: `ledger_entries` append-only
-  journal; `mint_epoch` (atomic, idempotent per (epoch,user)); mint-then-mark so
-  a crash can't under-pay; unlock routed through the ledger seam with the burn
-  recorded. ADR 0004.
-
-Audit follow-up also done (2026-06-16): self-scoped reads (`GET /users/:id/gems`,
-`/users/:id/feed`) now require the session and are owner-or-operator (`Caller`
-extractor); the emission schedule is integer-exact (per-year step, no f64 on the
-conserved amount) with a checked u128→i64 cast and a 21M-cap test.
-
-Also built (2026-06-16): the **AI ingestion seam** (queue + operator write-back,
-ADR 0006); a **settlement scheduler** binary (`settlement_scheduler`,
-auto-settles closed epochs idempotently); and the **frontend type contract**
-(`ts-rs` → `bindings/*.ts`).
-
-Next steps (rough priority):
-1. **AI ingestion service** (`services/ingestion`, Python) — the Rust SEAM (ADR
-   0006) and now a **first Python consumer** exist: it BRPOPs `gamma:ingestion`,
-   reads each post via `GET /v1/posts/:id`, and writes signals back through the
-   operator-only `PUT /posts/:id/signals` into `content_signals` (JSONB). The
-   analyser is a deterministic heuristic PLACEHOLDER (`model_version=heuristic-v0`,
-   word/char/link counts + reading-time) — NOT a model — so the pipeline is real
-   and CI-tested before the AI exists. **Swap-readiness** (hardware-independent prep
-   plan, items P1–P19) is underway: the worker now depends on an `Analyzer` seam +
-   a config-driven factory (`GAMMA_ANALYZER=heuristic|model`), so bringing the real
-   model online is a config flip + filling ONE marked stub (P1/P2 done, each
-   analyser owns its `model_version` so it can't drift); operator-only backfill +
-   status endpoints (`POST /v1/admin/ingestion/backfill`, `GET …/status`) make the
-   EXISTING corpus reachable and observable (P3/P5 done, enqueue-/read-only behind
-   the API). The **robustness cluster is also done** (P6–P11): pinned+hashed lockfile,
-   transient-failure retry with backoff, a dead-letter queue for poison posts, graceful
-   shutdown drain, structured per-outcome metrics, and ruff+mypy gates in CI. Still to
-   do: the real model itself (cloud-rented GPU first, owned box later), the read path
-   `GET /posts/:id/signals` + a written feed-boundary note (P12/P13), deployment
-   artifacts + the deferred health endpoint (P9b/P15–17), an ADR 0009 versioned signal
-   schema (dossier-gated), and wiring the feed ranker to read `content_signals`
-   (deferred until the shape is settled — no speculative ranking yet). (Tests run in CI
-   via the `ingestion-python` (ruff+mypy+pytest) + Rust `build-and-test` jobs.)
-2. **Frontend itself** (Next.js). The typed API CONTRACT now exists: `ts-rs`
-   exports the public request/response types to `bindings/*.ts` (regenerated by
-   `cargo test`, so CI can diff for drift). Remaining: stand up the frontend repo
-   and consume `bindings/`.
-3. **Multi-bitrate HLS ladder** + prod HLS delivery decision (already past 1a MVP).
-4. **Smaller, tracked**: a Prometheus `/metrics` endpoint; FKs on
-   `interaction_events`.
-
-Done since the audit follow-up: MinIO+Redis+ffmpeg in CI (full media/payment path
-now runs in CI); the API is versioned under `/v1` (health/ready stay unversioned);
-minimal moderation (report + operator takedown/restore, soft-hide drops posts from
-feed/reads); HTTP observability (tower-http TraceLayer access logs + `x-request-id`
-set/propagated, correlated in the span); `time_decay_lambda` wired — interaction
-edge weights are recency-decayed `e^(−λτ)` at settlement (τ = event age at epoch
-close; engine stays pure; λ=0 recovers no-decay). The repo is a private GitHub
-remote `meskk/gamma` (monorepo backend/ + frontend/).
+Next steps (per MASTERPLAN):
+1. **M2.3–M2.7 — the real AI model**: ADR 0009 (versioned signal schema) →
+   model analyzer behind the seam → rented EU GPU bring-up → corpus backfill →
+   feed ranker reads `content_signals` behind a config flag.
+2. **M3 rest:** system-account migration + deferred FKs (B2), guard tests
+   (Sybil/bot-gate proptests, golden-vector snapshot BEFORE any formula
+   decision, 10k–50k scale smoke).
+3. **P-4/P-5** once the owner scoping + legal checks land (§5/§8).
+4. **1a-β only through `docs/GO-NO-GO-1a-beta.md`** — it carries the open
+   owner decisions (domain/VM provider, payout provider + cap, ADR 0010,
+   verification process) and the known technical blocker: with the bundled
+   MinIO, presigned URLs point at the compose-internal host, so the public
+   media endpoint (managed S3 or a Caddy media subdomain) must be solved on
+   the real VM first.
 
 Working style: deliberate, ONE reviewable step at a time; verify (tests + fmt +
-clippy green) before moving on; commit each checkpoint. Tokenomics knobs are in
-flux by design — keep them in `econ-params`, never hardcoded.
+clippy green) before moving on; commit each checkpoint; substantive diffs get a
+multi-agent adversarial review before commit, and ops artifacts are drilled for
+real, not just written. Tokenomics knobs are in flux by design — keep them in
+`econ-params`, never hardcoded.
