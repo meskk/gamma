@@ -1,0 +1,21 @@
+# Load-smoke override (MASTERPLAN M4.7). The bundled MinIO is deliberately
+# unpublished in compose.prod.yml; presigned upload URLs therefore carry the
+# compose-internal host (minio:9000). For the smoke drill this override
+# publishes MinIO on the loopback (9100, so a dev stack's 9000 never
+# collides) so ops/load-smoke.py can upload the seed media from the host:
+# it connects to 127.0.0.1:9100 while preserving the URL's Host header
+# (SigV4 signs the Host, so the signature stays valid).
+#
+#   docker compose -f compose.prod.yml -f ops/compose.smoke.yml up -d --build
+services:
+  minio:
+    ports:
+      - "127.0.0.1:9100:9000"
+
+  # The settlement-scheduler must NOT run in the smoke stack: every 300s it
+  # auto-settles all closed epochs — EMPTY ones included (idempotency marker,
+  # emission=0) — which would settle yesterday's epoch away before the smoke's
+  # time machine fills and settles it. The unmatched profile keeps the service
+  # from starting; the smoke calls settle itself, once, deliberately.
+  settlement-scheduler:
+    profiles: ["smoke-disabled"]

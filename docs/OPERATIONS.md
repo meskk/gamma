@@ -98,7 +98,7 @@ Caddy setzt `X-Forwarded-For`; deshalb steht `GAMMA_TRUST_PROXY=true` in
 
 ## 5. Frontend
 
-Ein Frontend-Container-Image ist noch offen (§9 — es braucht eine Entscheidung,
+Ein Frontend-Container-Image ist noch offen (§10 — es braucht eine Entscheidung,
 wie die zur Build-Zeit eingebackenen `NEXT_PUBLIC_*`-Werte pro Deployment
 gesetzt werden). Für die Beta bis dahin klassisch auf der VM:
 
@@ -209,9 +209,71 @@ VM benutzt.
   §8-Entscheidung im MASTERPLAN.
 - Ingestion-Betrieb (DLQ, Backfill, Modell-Swap): `services/ingestion/RUNBOOK.md`.
 
-## 9. Offen in M4
+## 9. Load-Smoke
 
-- Load-Smoke (M4.7), Go/No-Go-Checkliste (M4.8).
+**Zweck (M4.7):** Vor der Beta einmal — und nach größeren Änderungen wieder —
+nachweisen, dass die zwei heißen Pfade (Feed-Read, Paid-Unlock) das
+10k-Nutzer-Ziel aushalten und die Geld-Mathematik unter Parallellast exakt
+bleibt.
+
+**Lastmodell** (Skalierungsziel im MASTERPLAN §8: 10.000 Nutzer): ~10 %
+gleichzeitig aktiv = 1.000 Sessions; eine Feed-Seite pro aktivem Nutzer alle
+~10 s ≈ **100 Feed-Reads/s** Peak. Unlocks sind um Größenordnungen seltener;
+der Smoke-Burst (150 Unlocks, 20 parallel) überzeichnet bewusst, um
+Contention auf dem Geld-Schreibpfad zu sehen.
+
+**Ausführen** — gegen einen FRISCHEN Stack, Rate-Limits für den Lauf aus (wir
+messen die App, nicht den Limiter; der ist seit M0.5 getestet). Das Override
+nimmt außerdem den settlement-scheduler aus dem Stack: Er würde die
+Vortags-Epoche LEER settlen (Idempotenz-Marker), bevor die Zeitmaschine sie
+füllt — der Smoke settlet selbst, einmal, bewusst.
+
+```sh
+echo "GAMMA_RATE_LIMIT_DISABLED=true" >> .env.prod    # nach dem Lauf entfernen!
+# Laptop-Drill (GAMMA_IMAGE_TAG leer, Selfbuild):
+docker compose -f compose.prod.yml -f ops/compose.smoke.yml up -d --build
+# Ziel-VM (GAMMA_IMAGE_TAG gesetzt — §3-Regel: nie unter dem SHA-Namen bauen):
+docker compose -f compose.prod.yml -f ops/compose.smoke.yml pull && \
+  docker compose -f compose.prod.yml -f ops/compose.smoke.yml up -d --no-build
+
+python3 ops/load-smoke.py --base-url http://localhost:8080
+docker compose -f compose.prod.yml -f ops/compose.smoke.yml down -v   # Smoke-Daten wegwerfen
+```
+
+Das Skript (stdlib-Python, keine Installation) fährt den ECHTEN API-Pfad:
+50 Nutzer registrieren → verifizieren (Bot-Gate) → je ein bezahltes Medium
+(echter presigned Upload + finalize; `ops/compose.smoke.yml` published MinIO
+dafür auf 127.0.0.1:9100, der `Host`-Header der signierten URL bleibt intakt)
+→ Posts → 250 Likes → **Zeitmaschine**: die aktuelle Epoche ist by design
+nicht settlebar (`epoch_not_closed`), also datiert das Skript seine Likes per
+SQL einen Tag zurück und settlet die Vortags-Epoche — echte Balances aus
+echter Settlement → 100 req/s Feed-Reads über 60 s → 150 parallele Unlocks →
+Idempotenz-Runde (nichts wird doppelt belastet) → Konservierungsprüfung
+(Σ Nutzer-Balances + Company-Konto == vorher − Burn, auf die Einheit exakt).
+
+**Schwellen** (Skript-Exit ≠ 0 bei Verletzung):
+
+| Messgröße | Schwelle | Lokal gemessen (M-Serie-Mac, 2026-07-07) |
+|---|---|---|
+| Feed-Fehlerrate @ 100 req/s, 60 s | 0 | 0 (n=6032) |
+| Erreichte Feed-Rate | ≥ 95 % des Ziels | 100,5 req/s |
+| Feed p95 | ≤ 300 ms | 3 ms |
+| Unlock p95 @ 20 parallel | ≤ 500 ms | 32 ms |
+| Geld-Invarianten (Splits, Idempotenz, Σ) | exakt | exakt |
+
+Die Rate-Schwelle ist der Ehrlichkeits-Anker: Ein eingebrochener Server kann
+sich sonst hinter einem gesunden p95 verstecken (Closed-Loop-Generator misst
+nur, was er abschicken konnte). Das Skript holt verpasste Ticks bewusst NICHT
+nach — ein Stall wird als Raten-Defizit sichtbar, nicht weggemittelt.
+
+Die Schwellen sind bewusst großzügig gegenüber den lokalen Referenzwerten:
+Sie sollen auf der Ziel-VM (Go/No-Go, M4.8) ohne Tuning halten — reißt eine,
+ist etwas strukturell falsch, nicht „die VM etwas langsamer". Danach
+`GAMMA_RATE_LIMIT_DISABLED` wieder entfernen.
+
+## 10. Offen in M4
+
+- Go/No-Go-Checkliste (M4.8) — enthält den Load-Smoke-Lauf auf der Ziel-VM.
 - Frontend-Container-Image (§5): folgt separat — erst die
   `NEXT_PUBLIC_*`-Bake-Entscheidung (Build-Arg pro Deployment vs. Build auf
   der VM); bis dahin läuft das Frontend klassisch unter systemd.
