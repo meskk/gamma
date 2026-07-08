@@ -210,8 +210,9 @@ Domain/Provider voraussetzt.)*
 | M4.8 | 2026-07-07 | 9ca7791 | Docs; Multi-Agent-Review des Diffs (9 bestätigte Findings, 12 widerlegt — alle 9 eingearbeitet; größter: die Checkliste gate-te nicht, WIE aus Punkte-Gems ein €-Betrag wird → neue A-Box Gems→€-Basis + payout-Journal-Kind + C12 Test-Payout-Probe; dazu DSGVO-Lösch-Prozess-Gate, C7-Volume-Falle, Konto-Sperre/Passwort-Reset ehrlich in D) | docs/GO-NO-GO-1a-beta.md (Owner-Entscheidungen A, Rechts-Gates B, VM-Abnahme C1–C12, akzeptierte Beta-Risiken D; neu festgehaltener Blocker C3: presigned URLs des gebündelten MinIO zeigen auf compose-internes minio:9000 — öffentlicher Media-Endpoint nötig, Fund aus M4.7) + CLAUDE.md-Snapshot auf die M4-Grenze verdichtet (P4 korrekt als offen geführt) + M4-Header ✅ (Real-VM-Bein → Go/No-Go C1) + Ops-Index verlinkt. **M4 damit artefakt-seitig abgeschlossen.** |
 | M2.3 | 2026-07-08 | *(dieser Commit)* | Docs; Owner-Antworten §8 Frage 5 eingeholt; Multi-Agent-Review (4 bestätigte Findings, 10 widerlegt — 2 Blocker gefixt: Ein-Worker-Invariante wurde als existent ZITIERT, obwohl RUNBOOK §6 keinen Stop-old-first-Schritt hatte und zwei Worker sich via geteilter Processing-Liste + recover_stranded() aktiv überschreiben → Invariante jetzt erhoben und in RUNBOOK §6 verankert; „nsfw als Feed-Filter" war eine nie entschiedene Auto-Aktion → gestrichen, bleibt Moderations-Hinweis) | ADR 0009 (versioniertes Signal-Schema): schema_version neben model_version, typisierter v1-Kern (quality/bot_likelihood/topics/language/nsfw + extras-Annex, additiv-only), Embeddings in post_embeddings-Nebentabelle über denselben Write-back, EINE aktuelle Zeile pro Post + P4-Versions-Targeting statt DB-Guard (Ein-Worker-Invariante + P4-Konvergenz als Reparatur), Konsum-Verträge (Feed hinter GAMMA_FEED_SIGNALS ab schema_version ≥ 1, strikt additiv — Signale ordnen um, unterdrücken nicht; Payouts lesen Signale NIE; ai_proposals-Envelope mit reason NOT NULL). RUNBOOK §6 um Stop-old-first ergänzt, Zeiger aktualisiert; §8-Entscheidungen protokolliert |
 | M2.4a | 2026-07-08 | 205e313 | fmt+clippy+test --all ✓ (37 Suites, 2 neue Integrationstests mit 25+ Fällen), sqlx-Cache regeneriert, Bindings + FE-Typecheck ✓; Multi-Agent-Review (4 bestätigt, 8 widerlegt — ADR-§2-Präzisierung: Namensraum-Form statt unimplementierbarer „Taxonomie-Mitgliedschaft"; 3 Coverage-Lücken geschlossen: embeddings-Zähler + Hidden-Filter, f32-Overflow/Dim-Cap, Topics-Caps) | ADR-0009-Schema im Backend: Migration 0020 (content_signals.schema_version, Default 0 = Legacy; post_embeddings-Tabelle REAL[]), v1-Kern-Validierung im Signals-Service (Typ/Range/Namensraum, unbekannte Top-Level-Keys abgelehnt, null = absent, fail-closed bei unbekannter Schema-Version), Embedding über denselben Write-back in EINER Transaktion (nie im Read-Path), IngestionStatus.embeddings-Zähler. Python-Worker blieb kompatibel (sendete kein schema_version → 0) |
-| M2.4b | 2026-07-08 | *(dieser Commit)* | ruff+mypy+pytest ✓ (70 Tests); Live-Vertragstest: echter Python-Worker (process_post/ApiClient/HeuristicAnalyzer) → echte Rust-v1-Validierung → 204, gespeichert als heuristic-v1/schema 1/extras-Annex; Multi-Agent-Review (7 bestätigt, 3 widerlegt — u. a. Mutation-Test-Lücke beim schema_version-Forwarding geschlossen, README-Diagramm/GAMMA_MODEL_VERSION-Widerspruch/.env.example bereinigt, Ledger-Zeilen-Splice repariert) | Python-Seite des ADR-0009-Schemas: Analyzer-Protokoll + schema_version-Property (analyze(post)→dict bleibt, ADR §6), Heuristik → heuristic-v1 (Kern leer, alle Surface-Features im extras-Annex — ehrlich: nichts hier versteht Inhalte), api_client.put_signals trägt schema_version, Worker stempelt beide Versionen vom Analyzer. Embedding-Transport bewusst NICHT vorgezogen (M2.4c-Design) |
-| M2.4c | 2026-07-08 | *(dieser Commit)* | ruff+mypy+pytest ✓ (88 Tests, 18 neue — komplett über MockTransport, CI hardwarefrei); Multi-Agent-Review (14 bestätigt, 4 widerlegt — 3 Betriebsbugs gefixt: Startup-Probe-Fehler crashte mit Traceback statt Exit 2 [live reproduziert]; keine Input-Längen-Begrenzung → lange Posts wären permanent im DLQ gelandet [Backfill-Killer]; Topics-Paritätslücke zur Rust-API inkl. Prompt-Injection-Vektor → Emit-Cap 3 + Label-Byte-Validierung im Config-Fail-fast; dazu 6 mutation-bewiesene Test-Lücken geschlossen: Request-Bodies gepinnt, Full-Chain-Test, 4xx-Klassifikation, Shared-Endpoint-Shortcut, Unterkanten-Clamp) | Der Modell-Analyzer ist real: ModelAnalyzer spricht OpenAI-kompatible Endpoints (vLLM-Judgment-LLM + Embedding-Encoder) — Worker trägt NULL ML-Dependencies, Inference ist HTTP; no-knob-Provenance via /v1/models der Server (llm:X+emb:Y, genau ein Modell je Endpoint, fail-fast bei Ambiguität); Judgment → v1-Kern (Clamping statt Raten, Topics gegen GAMMA_TOPIC_LABELS gefiltert, Roh-Antwort in extras.raw für Audits; unparsebares JSON = permanent/DLQ, 5xx = transient/Retry); Embedding-Transport via reserviertem Pop-Key (ADR §3 präzisiert — Leck würde fail-closed abgelehnt); leerer Body überspringt Inference ehrlich. Config-Knöpfe + RUNBOOK §6 konkret (GPU-Anforderung fixiert: 1× 24-GB-Klasse für ~8B-LLM quantisiert + Encoder) |
+| M2.4b | 2026-07-08 | d3e3705 | ruff+mypy+pytest ✓ (70 Tests); Live-Vertragstest: echter Python-Worker (process_post/ApiClient/HeuristicAnalyzer) → echte Rust-v1-Validierung → 204, gespeichert als heuristic-v1/schema 1/extras-Annex; Multi-Agent-Review (7 bestätigt, 3 widerlegt — u. a. Mutation-Test-Lücke beim schema_version-Forwarding geschlossen, README-Diagramm/GAMMA_MODEL_VERSION-Widerspruch/.env.example bereinigt, Ledger-Zeilen-Splice repariert) | Python-Seite des ADR-0009-Schemas: Analyzer-Protokoll + schema_version-Property (analyze(post)→dict bleibt, ADR §6), Heuristik → heuristic-v1 (Kern leer, alle Surface-Features im extras-Annex — ehrlich: nichts hier versteht Inhalte), api_client.put_signals trägt schema_version, Worker stempelt beide Versionen vom Analyzer. Embedding-Transport bewusst NICHT vorgezogen (M2.4c-Design) |
+| M2.4c | 2026-07-08 | 2f939d1 | ruff+mypy+pytest ✓ (88 Tests, 18 neue — komplett über MockTransport, CI hardwarefrei); Multi-Agent-Review (14 bestätigt, 4 widerlegt — 3 Betriebsbugs gefixt: Startup-Probe-Fehler crashte mit Traceback statt Exit 2 [live reproduziert]; keine Input-Längen-Begrenzung → lange Posts wären permanent im DLQ gelandet [Backfill-Killer]; Topics-Paritätslücke zur Rust-API inkl. Prompt-Injection-Vektor → Emit-Cap 3 + Label-Byte-Validierung im Config-Fail-fast; dazu 6 mutation-bewiesene Test-Lücken geschlossen: Request-Bodies gepinnt, Full-Chain-Test, 4xx-Klassifikation, Shared-Endpoint-Shortcut, Unterkanten-Clamp) | Der Modell-Analyzer ist real: ModelAnalyzer spricht OpenAI-kompatible Endpoints (vLLM-Judgment-LLM + Embedding-Encoder) — Worker trägt NULL ML-Dependencies, Inference ist HTTP; no-knob-Provenance via /v1/models der Server (llm:X+emb:Y, genau ein Modell je Endpoint, fail-fast bei Ambiguität); Judgment → v1-Kern (Clamping statt Raten, Topics gegen GAMMA_TOPIC_LABELS gefiltert, Roh-Antwort in extras.raw für Audits; unparsebares JSON = permanent/DLQ, 5xx = transient/Retry); Embedding-Transport via reserviertem Pop-Key (ADR §3 präzisiert — Leck würde fail-closed abgelehnt); leerer Body überspringt Inference ehrlich. Config-Knöpfe + RUNBOOK §6 konkret (GPU-Anforderung fixiert: 1× 24-GB-Klasse für ~8B-LLM quantisiert + Encoder) |
+| P-4/A1 | 2026-07-08 | *(dieser Commit)* | Docs; Owner-Scoping eingeholt (4 Antworten); Multi-Agent-Review (6 bestätigt, 17 widerlegt — Blocker Media-Pfad: Asset-Entitlement kennt keine Posts, Preis-0-Medien privater Posts wären für jeden abrufbar gewesen → Media-Rail explizit area-gated im ADR; Ökonomie-Frage entschieden: private Interaktionen speisen den Settlement-Graphen NICHT — Rail-Trennung statt Bot-Harvest hinter der Paywall; Ledger-Splice repariert) | P-4 entschieden + Stufenplan A1–A10 in §5; ADR 0011 (non-custodialer Payment-Seam): Kundengeld nie auf Plattform-Konten (Direct Charge + Application Fee = Firmenumsatz), Fiat berührt ledger_entries NIE (purchases-Audit-Spiegel, nicht konserviert), PaymentProvider-Trait als dritter Seam (Stripe Stufe 1, Wallet Stufe 2 hinter demselben Trait), Creator-gewähltes Zugangsmodell (free/one_time/subscription/per_post) + Entitlements mit expires_at statt Cron, Sichtbarkeits-Invariante fail-closed in Repository-Queries inkl. Media-Rail, Cut als econ-params-Knopf, Webhook als einzige Wahrheitsquelle, Flags + Rechts-Gate vor Aktivierung |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
@@ -251,7 +252,35 @@ eigene `ledger_entries`-Art (`referral`); Override-Endpoint operator-only mit
 Audit-Spur; Summen bleiben exakt (Hamilton); Tests decken Konservierung + Gate +
 Override-Ablauf ab.
 
-### P-4 — Private Area: non-custodial Creator-Marktplatz *(Scoping offen)*
+### P-4 — Private Area: non-custodial Creator-Marktplatz *(ENTSCHIEDEN 2026-07-08; im Bau)*
+
+**ENTSCHIEDEN (2026-07-08, Owner):**
+- **Zugangsmodell wählt der CREATOR selbst** pro Bereich: kostenlos / Einmalpreis
+  (dauerhafter Zugang) / Abo (wiederkehrend) / Einzelzahlung pro Inhalt. Das
+  Datenmodell trägt alle vier ab Tag 1; die ZAHLUNGS-Stufen landen nacheinander
+  (Einmalpreis → Abo → Einzelkauf), damit jeder Schritt reviewbar bleibt und
+  nie ein funktionsloser Kauf-Button sichtbar ist (P-1-Prinzip).
+- **Cut = 10 %**, als econ-params-Knopf (`private_area_fee_bps`), technisch als
+  Stripe Application Fee — Kundengeld berührt nie ein Plattform-Konto.
+- **Zahlwege: BEIDE.** Stripe Connect als Stufe 1 (Direct Charge aufs
+  Creator-Konto), Wallet/Smart-Contract als Stufe 2 mit eigenem Gate
+  (Chain-Wahl = künftige Owner-Frage, Contract-Audit). Konsequenz: ein
+  `PaymentProvider`-Seam von Tag 1 (dritter Seam neben LedgerBackend/Analyzer).
+- **Rechts-Gate verschoben von „vor Bau" auf „vor Aktivierung":** gebaut wird
+  hinter Config-Flags (Backend + Frontend, default AUS); live erst nach
+  Anwalt-Freigabe (Plattformhaftung, Steuern, Adult-Content-Policy) — als
+  Go/No-Go-Box geführt.
+
+**Stufenplan (ein Schritt = ein Commit):** A1 ADR 0011 (Seam, non-custodiale
+Grenze, Sichtbarkeits-Invariante) → A2 Migration/Datenmodell (Areas,
+Entitlements, Purchases-Audit; `posts.area`) → A3 Bereichs-Konfiguration-API →
+A4 private Posts + Sichtbarkeits-Invariante in ALLEN Read-Pfaden (fail closed)
+→ A5 PaymentProvider-Seam + Stripe-Impl + Fake → A6 Kauf-Flow Einmalpreis
+(Checkout + Webhook + Entitlement) → A7 Frontend (vierter Reiter,
+Creator-Einstellungen, Kauf) → A8 Abo-Stufe → A9 Einzelkauf-Stufe → A10
+E2E-Drill (Stripe-Test-Mode). Wallet-Stufe: eigener Block nach Chain-Frage.
+
+*(Ursprüngliche Beschreibung:)*
 Owner-Vision (2026-07-05): Die Plattform ist im Vordergrund wie Instagram (öffentliche
 Posts, Feed). Auf jedem Profil gibt es einen **vierten Reiter „Private Area"**: Der
 Nutzer entscheidet, ob dieser Bereich öffentlich ist oder **nur gegen Bezahlung**
@@ -440,10 +469,12 @@ Triage) + wöchentlicher Schedule-Lauf.
 1. ~~P-1-Feature-Matrix~~ ✅ entschieden (siehe P-1).
 2. ~~Referral-Parameter~~ ✅ entschieden: 3 % / 6 Monate Default, Creator-Overrides
    operator-gesetzt (siehe P-2).
-3. **P-4-Scoping:** Private Area launch-blockierend (1a) oder 1a-β? Cut-Höhe?
-   Bereichs-Zugang vs. Einzelkauf? Rechts-Check terminieren.
-4. Payout-/Zahlungs-Drittanbieter auswählen (P-3 + P-4-Fiat-Pfad; naheliegend:
-   derselbe Anbieter, z. B. Stripe Connect).
+3. ~~P-4-Scoping~~ ✅ entschieden 2026-07-08 (siehe P-4: Creator wählt Modell,
+   10 % Cut, beide Zahlwege gestuft, Rechts-Gate vor Aktivierung statt vor
+   Bau). Offen bleibt nur, ob der BETA-Start P-4 voraussetzt → Go/No-Go A.
+4. Payout-/Zahlungs-Drittanbieter auswählen — für den P-4-Fiat-Pfad
+   ✅ entschieden 2026-07-08: Stripe Connect (Stufe 1, ADR 0011). Offen bleibt
+   der P-3-Payout-Rail-Anbieter (naheliegend: ebenfalls Stripe).
 5. ~~Modell-Spezifikation im Detail~~ ✅ entschieden 2026-07-08 (siehe oben +
    ADR 0009).
 6. GPU-Provider, EU-Region, Monatsbudget.
@@ -458,4 +489,5 @@ Triage) + wöchentlicher Schedule-Lauf.
   Backup/Restore §7, Load-Smoke §9).
 - `docs/GO-NO-GO-1a-beta.md` — Go/No-Go-Checkliste 1a-β (M4.8): Owner-
   Entscheidungen, Rechts-Gates, VM-Abnahme C1–C11, akzeptierte Beta-Risiken.
-- `docs/adr/` — Architektur-Entscheidungen (0001–0008; 0009/0010 geplant).
+- `docs/adr/` — Architektur-Entscheidungen (0001–0009, 0011; 0010 reserviert
+  für die Gewichtsformel-Entscheidung).
