@@ -207,7 +207,8 @@ Domain/Provider voraussetzt.)*
 | M4.6 | 2026-07-06 | *(dieser Commit)* | actionlint + shellcheck ✓; compose-Interpolation beide Modi verifiziert (leer → :selfbuilt, gesetzt → :SHA); Selfbuild-Fallback-Smoke lokal (up -d --build → healthy); Multi-Agent-Review (6 bestätigte Findings, alle gefixt — u. a.: nacktes `up -d` nach fehlgeschlagenem Pull baut STILL das Checkout unter dem SHA-Namen, live nachgewiesen → überall `pull && up -d --no-build`; Tag-Immutabilität war Behauptung → jetzt per manifest-inspect-Skip erzwungen); Abnahme nach Push: Publish-Dispatch → beide Images in GHCR, SHA-getaggt | .github/workflows/publish.yml (workflow_dispatch, GHCR, git-SHA-Tags, Smoke vor Push, Skip-statt-Überschreiben, concurrency pro SHA, Registry-Digests in der Run-Summary) + compose.prod.yml image+build-Hybrid (GAMMA_IMAGE_TAG via .env-Symlink) + ops/pg-restore.sh `--no-build` + OPERATIONS §2/§3/§6 Pull-Deploy-Story (Rollback = voriger SHA; Migrations-Grenze fail-closed dokumentiert). Frontend-Container-Image bewusst separat (NEXT_PUBLIC-Bake-Entscheidung, OPERATIONS §10 *(Verweis korrigiert in M4.7 — §9 wurde durch die Renummerierung zum Load-Smoke)*) |
 | M4.7 | 2026-07-07 | 2bd064f | ruff + py_compile ✓; Multi-Agent-Review (6 bestätigte Findings, alle gefixt — Blocker: settlement-scheduler settlet die Zeitmaschinen-Epoche leer, bevor der Smoke sie füllt → per Profil aus dem Smoke-Stack; dazu Rate-Schwelle ≥ 95 % gegen Closed-Loop-Maskierung, per Simulation belegt); Re-Drill gegen frischen Stack ohne Scheduler: PASS — 100,5 req/s über 60 s, 0 Fehler, Feed p95 3 ms, 150 parallele Unlocks p95 32 ms, Idempotenz sauber, Konservierung exakt | ops/load-smoke.py (stdlib-Python, echter API-Pfad inkl. presigned Upload + finalize; Zeitmaschine, weil aktuelle Epoche by design nicht settlebar; Schwellen: Fehler 0, Rate ≥ 95 %, Feed p95 ≤ 300 ms, Unlock p95 ≤ 500 ms, Geld exakt; keine Tick-Nachholung) + ops/compose.smoke.yml (MinIO auf 127.0.0.1:9100; Scheduler ausgeschlossen) + OPERATIONS §9 (Lastmodell 10k → 100 req/s, Laptop/VM-Varianten nach §3-Regel, Referenzwerte; Offen-Liste → §10; M4.6-Zeilen-Verweis §9→§10 korrigiert) |
 | Sec-Triage | 2026-07-07 | 7a7a1c1 | fmt+clippy+test --all ✓ (37 Suites); cargo deny advisories lokal ✓; CI+Security remote ✓ | RUSTSEC-2026-0204 (crossbeam-epoch 0.9.18, fmt::Pointer-Deref; via metrics-exporter-prometheus): Lock-Bump auf 0.9.20 — Advisory landete upstream nach dem gestrigen grünen Scan, der M4.7-Push hat sie nur zuerst gesehen |
-| M4.8 | 2026-07-07 | *(dieser Commit)* | Docs; Multi-Agent-Review des Diffs (9 bestätigte Findings, 12 widerlegt — alle 9 eingearbeitet; größter: die Checkliste gate-te nicht, WIE aus Punkte-Gems ein €-Betrag wird → neue A-Box Gems→€-Basis + payout-Journal-Kind + C12 Test-Payout-Probe; dazu DSGVO-Lösch-Prozess-Gate, C7-Volume-Falle, Konto-Sperre/Passwort-Reset ehrlich in D) | docs/GO-NO-GO-1a-beta.md (Owner-Entscheidungen A, Rechts-Gates B, VM-Abnahme C1–C12, akzeptierte Beta-Risiken D; neu festgehaltener Blocker C3: presigned URLs des gebündelten MinIO zeigen auf compose-internes minio:9000 — öffentlicher Media-Endpoint nötig, Fund aus M4.7) + CLAUDE.md-Snapshot auf die M4-Grenze verdichtet (P4 korrekt als offen geführt) + M4-Header ✅ (Real-VM-Bein → Go/No-Go C1) + Ops-Index verlinkt. **M4 damit artefakt-seitig abgeschlossen.** |
+| M4.8 | 2026-07-07 | 9ca7791 | Docs; Multi-Agent-Review des Diffs (9 bestätigte Findings, 12 widerlegt — alle 9 eingearbeitet; größter: die Checkliste gate-te nicht, WIE aus Punkte-Gems ein €-Betrag wird → neue A-Box Gems→€-Basis + payout-Journal-Kind + C12 Test-Payout-Probe; dazu DSGVO-Lösch-Prozess-Gate, C7-Volume-Falle, Konto-Sperre/Passwort-Reset ehrlich in D) | docs/GO-NO-GO-1a-beta.md (Owner-Entscheidungen A, Rechts-Gates B, VM-Abnahme C1–C12, akzeptierte Beta-Risiken D; neu festgehaltener Blocker C3: presigned URLs des gebündelten MinIO zeigen auf compose-internes minio:9000 — öffentlicher Media-Endpoint nötig, Fund aus M4.7) + CLAUDE.md-Snapshot auf die M4-Grenze verdichtet (P4 korrekt als offen geführt) + M4-Header ✅ (Real-VM-Bein → Go/No-Go C1) + Ops-Index verlinkt. **M4 damit artefakt-seitig abgeschlossen.** |
+| M2.3 | 2026-07-08 | *(dieser Commit)* | Docs; Owner-Antworten §8 Frage 5 eingeholt; Multi-Agent-Review (4 bestätigte Findings, 10 widerlegt — 2 Blocker gefixt: Ein-Worker-Invariante wurde als existent ZITIERT, obwohl RUNBOOK §6 keinen Stop-old-first-Schritt hatte und zwei Worker sich via geteilter Processing-Liste + recover_stranded() aktiv überschreiben → Invariante jetzt erhoben und in RUNBOOK §6 verankert; „nsfw als Feed-Filter" war eine nie entschiedene Auto-Aktion → gestrichen, bleibt Moderations-Hinweis) | ADR 0009 (versioniertes Signal-Schema): schema_version neben model_version, typisierter v1-Kern (quality/bot_likelihood/topics/language/nsfw + extras-Annex, additiv-only), Embeddings in post_embeddings-Nebentabelle über denselben Write-back, EINE aktuelle Zeile pro Post + P4-Versions-Targeting statt DB-Guard (Ein-Worker-Invariante + P4-Konvergenz als Reparatur), Konsum-Verträge (Feed hinter GAMMA_FEED_SIGNALS ab schema_version ≥ 1, strikt additiv — Signale ordnen um, unterdrücken nicht; Payouts lesen Signale NIE; ai_proposals-Envelope mit reason NOT NULL). RUNBOOK §6 um Stop-old-first ergänzt, Zeiger aktualisiert; §8-Entscheidungen protokolliert |
 
 ## 5. Produkt-Backlog (gefüllt in M1.1 durch den Owner; Stand 2026-07-05)
 
@@ -420,6 +421,18 @@ Triage) + wöchentlicher Schedule-Lauf.
   hängt zusammen: Social-Kern + Private Area (P-4) + Finance-Area (P-5) sind EIN
   kohärentes Ganzes und werden zusammen designt, aber gestuft gebaut.
 
+**Entschieden (2026-07-08, Owner — §8 Frage 5 → ADR 0009):**
+- **v1-Signalset = Basis + Embeddings:** quality, bot_likelihood, topics,
+  language, nsfw_likelihood als typisierter Kern; Embeddings in eigener
+  Tabelle (`post_embeddings`), gleicher Write-back, kein Konsument vor Phase 2.
+- **Taxonomie = das Kategorien-Set der App** (declared_categories) — keine
+  eigene Topic-Liste.
+- **Backfill-Ziel = ganzer Korpus**; dafür wird P4 (versionsgezielter
+  Re-Enqueue, `target_model`) in M2.6 gebaut; Konvergenz via
+  `by_model_version`.
+- **Vorschlags-Schema jetzt, Bau mit dem Modell:** `ai_proposals`-Envelope
+  (reason NOT NULL) in ADR 0009 fixiert; Tabelle + Review-Fläche mit M2.4/M2.5.
+
 **Weiter offen (Owner):**
 1. ~~P-1-Feature-Matrix~~ ✅ entschieden (siehe P-1).
 2. ~~Referral-Parameter~~ ✅ entschieden: 3 % / 6 Monate Default, Creator-Overrides
@@ -428,8 +441,8 @@ Triage) + wöchentlicher Schedule-Lauf.
    Bereichs-Zugang vs. Einzelkauf? Rechts-Check terminieren.
 4. Payout-/Zahlungs-Drittanbieter auswählen (P-3 + P-4-Fiat-Pfad; naheliegend:
    derselbe Anbieter, z. B. Stripe Connect).
-5. Modell-Spezifikation im Detail — welche Signale genau (Qualitäts-Score,
-   Bot-Likelihood, Embeddings?), Backfill-Ziel *(→ ADR 0009 / M2.3–M2.4)*.
+5. ~~Modell-Spezifikation im Detail~~ ✅ entschieden 2026-07-08 (siehe oben +
+   ADR 0009).
 6. GPU-Provider, EU-Region, Monatsbudget.
 7. ADR-0008-Timing — vor 1a-β auflösen (empfohlen) oder formal 1b-Eingangstor?
 8. Domain + VM-Provider/Region (z. B. Hetzner DE); Monitoring-Default

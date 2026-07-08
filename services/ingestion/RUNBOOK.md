@@ -97,16 +97,26 @@ supervisor / `--restart=unless-stopped` / the orchestrator's restart policy.
    impl that declares its own `model_version` (prep-plan P18).
 2. Add the model deps to `pyproject.toml` and regenerate `requirements.lock`; base the
    Dockerfile runtime on a CUDA image (or run natively under launchd on a Mac).
-3. Run with `GAMMA_ANALYZER=model`. The analyser declares its own `model_version`
+3. **Stop the old worker FIRST, then start the new one — never run two analyzer
+   versions against the same queue** (invariant from ADR 0009 §4). This is not
+   just a race: both workers share the processing list
+   (`gamma:ingestion:processing`), and worker startup runs `recover_stranded()`,
+   which re-queues the OTHER worker's in-flight ids — an old worker finishing a
+   retry can then overwrite a newer analysis via the blind upsert. On the VM:
+   `docker compose -f compose.prod.yml stop ingestion` before the GPU-box worker
+   starts. Exactly ONE worker consumes `gamma:ingestion` at any time.
+4. Run with `GAMMA_ANALYZER=model`. The analyser declares its own `model_version`
    intrinsically (in code, next to the weights it loads) — there is no
    `GAMMA_MODEL_VERSION` env knob to set, so the provenance tag can't drift from the
    code. Confirm `ruff check . && mypy && pytest` still green.
-4. Re-analyse the corpus once a second version exists: `POST /v1/admin/ingestion/backfill`
-   targeting the stale rows (version-targeted re-enqueue, prep-plan P4).
+5. Re-analyse the corpus once a second version exists: `POST /v1/admin/ingestion/backfill`
+   targeting the stale rows (version-targeted re-enqueue, prep-plan P4 — built in
+   M2.6 per ADR 0009 §4; convergence is visible in `GET …/status` `by_model_version`).
 
 The `Analyzer.analyze(post) -> dict` interface is the seam to preserve — the worker does
-not change. The feed still does **not** consume signals (ADR 0006 / `feed/mod.rs`): wiring
-ranking is a separate future ADR.
+not change. The feed still does **not** consume signals (ADR 0006 / `feed/mod.rs`):
+ADR 0009 §5 defines the consumption boundary; the wiring lands in M2.7 behind
+`GAMMA_FEED_SIGNALS`.
 
 ## 7. Open (Phase 1b / pending input)
 
@@ -117,4 +127,7 @@ ranking is a separate future ADR.
 - ~~A liveness `/healthz` endpoint~~ — DONE (M4.1): `GET /healthz` on
   `GAMMA_HEALTH_PORT` (default 8081, 0 disables); the Dockerfile HEALTHCHECK and
   the compose healthcheck (M4.3) probe it.
-- The canonical signal schema (ADR 0009) — gated on the dossier.
+- ~~The canonical signal schema (ADR 0009) — gated on the dossier.~~ DECIDED
+  2026-07-08: `docs/adr/0009-versioned-signal-schema.md` (schema_version +
+  typed v1 core, embeddings side table, version-targeted backfill P4,
+  proposal envelope). §6 step 4 becomes real with M2.6.
