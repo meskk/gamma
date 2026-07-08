@@ -13,9 +13,13 @@ signals until M2.7.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Protocol
 
+import httpx
+
+from .api_client import ApiError, TransientError
 from .config import Config, ConfigError
 
 
@@ -139,6 +143,208 @@ class HeuristicAnalyzer:
         return count
 
 
+# The reserved top-level key the worker lifts out of ``analyze()``'s dict into
+# the write-back envelope (ADR 0009 §3). It is NOT part of the signals document;
+# if a worker ever forgot to strip it, the API would reject the write with
+# ``unknown_signal_field`` — loud, fail-closed, never silently stored.
+EMBEDDING_KEY = "embedding"
+
+# A loose lowercase BCP-47 primary tag, mirroring the API's validation.
+_LANGUAGE = re.compile(r"^[a-z][a-z0-9-]{0,33}[a-z0-9]$")
+
+# What the prompt asks for — and the hard ceiling _sanitize enforces even if a
+# prompt-injected post talks the model into listing more (the API caps at 16
+# and would otherwise reject the whole write).
+_MAX_TOPICS_EMITTED = 3
+
+# The judgment prompt. The label space is injected per deployment (the app's
+# category set, GAMMA_TOPIC_LABELS) — per ADR 0009 the label SPACE is this
+# analyser's contract, the API only enforces the namespace form.
+_SYSTEM_PROMPT = (
+    "You are a content analyst for a social platform. Analyse the post and "
+    "answer with STRICT JSON only — no prose, no code fences — exactly these "
+    "keys:\n"
+    '{"quality": <0..1>, "bot_likelihood": <0..1>, "nsfw_likelihood": <0..1>, '
+    '"language": "<BCP-47 primary tag like de, en>", "topics": [<0..3 labels>]}\n'
+    "quality: how substantive/original/effortful the text is (0 = spam-grade, "
+    "1 = excellent). bot_likelihood: how likely this SINGLE text is machine-"
+    "generated spam (repetition, scam patterns, link farming). nsfw_likelihood: "
+    "sexual/graphic content. topics: only labels from this exact list that "
+    "clearly apply: {labels}."
+)
+
+
+class ModelAnalyzer:
+    """The real analyser (M2.4c): judgments from an instruct LLM, embeddings from
+    an encoder — both reached over OpenAI-compatible HTTP endpoints served on the
+    GPU box (e.g. vLLM for the LLM, text-embeddings-inference for the encoder).
+
+    Inference is HTTP on purpose: the worker carries ZERO ML dependencies (httpx
+    is already here), CI stays hardware-free (mock transports), and the ingestion
+    image stays slim — the GPU box is a serving concern, not a worker concern
+    (RUNBOOK §6). Provenance stays no-knob: ``model_version`` is derived from the
+    model ids the endpoints THEMSELVES report via ``/v1/models`` at startup, so
+    the label cannot drift from what actually produced the signals. Construction
+    fails fast if an endpoint is unreachable or serves an ambiguous model list —
+    mirroring ``Worker.prime()``'s fail-at-startup philosophy.
+    """
+
+    def __init__(self, config: Config, transport: httpx.BaseTransport | None = None) -> None:
+        self._topics = config.model_topic_labels
+        self._max_input_chars = config.model_max_input_chars
+        self._llm_base = config.model_base_url
+        self._embed_base = config.embed_base_url
+        self._client = httpx.Client(timeout=config.model_timeout_seconds, transport=transport)
+        llm_id = self._served_model_id(self._llm_base)
+        if self._embed_base == self._llm_base:
+            embed_id = llm_id
+        else:
+            embed_id = self._served_model_id(self._embed_base)
+        self._llm_id = llm_id
+        self._embed_id = embed_id
+        self._version = f"llm:{llm_id}+emb:{embed_id}"
+        self._system_prompt = _SYSTEM_PROMPT.replace("{labels}", ", ".join(self._topics))
+
+    @property
+    def model_version(self) -> str:
+        return self._version
+
+    @property
+    def schema_version(self) -> int:
+        return 1
+
+    def analyze(self, post: dict) -> dict:
+        body = (post.get("body") or "").strip()
+        if not body:
+            # Media-only/empty posts: a judgment or embedding of nothing would be
+            # noise pretending to be signal. Store the honest minimum.
+            return {"extras": {"kind": "llm", "note": "empty_body"}}
+        # Bound the input for BOTH calls: an over-context body would 400/413 at
+        # the inference server — a PERMANENT error that dead-letters a healthy
+        # post. A judgment over the prefix beats no signals at all.
+        text = body[: self._max_input_chars]
+        judgment = self._judge(text)
+        if len(text) < len(body):
+            judgment["extras"]["input_truncated_from_chars"] = len(body)
+        judgment[EMBEDDING_KEY] = self._embed(text)
+        return judgment
+
+    # ── inference calls ──────────────────────────────────────────────────────
+
+    def _served_model_id(self, base: str) -> str:
+        data = self._request("GET", f"{base}/v1/models").get("data") or []
+        ids = [m.get("id") for m in data if isinstance(m, dict) and m.get("id")]
+        if len(ids) != 1:
+            raise ConfigError(
+                f"{base}/v1/models must serve exactly ONE model so provenance is "
+                f"unambiguous, got {ids!r} — run one endpoint per model (RUNBOOK §6)."
+            )
+        return str(ids[0])
+
+    def _judge(self, body: str) -> dict:
+        resp = self._request(
+            "POST",
+            f"{self._llm_base}/v1/chat/completions",
+            json={
+                "model": self._llm_id,
+                "temperature": 0,
+                "max_tokens": 300,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "system", "content": self._system_prompt},
+                    {"role": "user", "content": body},
+                ],
+            },
+        )
+        try:
+            content = resp["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ApiError(f"LLM response missing choices/message: {resp!r:.200}") from exc
+        return self._sanitize(content)
+
+    def _embed(self, body: str) -> list[float]:
+        resp = self._request(
+            "POST",
+            f"{self._embed_base}/v1/embeddings",
+            json={"model": self._embed_id, "input": body},
+        )
+        try:
+            vector = resp["data"][0]["embedding"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ApiError(f"embedding response missing data[0].embedding: {resp!r:.200}") from exc
+        if not isinstance(vector, list) or not vector:
+            raise ApiError("embedding endpoint returned an empty/invalid vector")
+        return [float(x) for x in vector]
+
+    def _request(self, method: str, url: str, **kwargs: object) -> dict:
+        """One inference-server round trip, mapped onto the worker's retry model:
+        network problems and 5xx are transient (retried with backoff, then DLQ);
+        anything else is permanent for this post."""
+        try:
+            resp = self._client.request(method, url, **kwargs)  # type: ignore[arg-type]
+        except httpx.HTTPError as exc:
+            raise TransientError(f"{method} {url}: transport error: {exc}") from exc
+        if resp.status_code >= 500:
+            raise TransientError(f"{method} {url} failed: {resp.status_code}")
+        if resp.status_code != 200:
+            raise ApiError(f"{method} {url} failed: {resp.status_code} {resp.text:.200}")
+        payload: dict = resp.json()
+        return payload
+
+    # ── output sanitation ─────────────────────────────────────────────────────
+
+    def _sanitize(self, content: str) -> dict:
+        """Parse the LLM's JSON and coerce it into the ADR 0009 v1 core. Strict on
+        SHAPE (unparseable JSON is a permanent, DLQ-able failure — temperature 0
+        makes a retry pointless), lenient on VALUES: float noise is clamped into
+        [0, 1], anything non-conforming is dropped rather than guessed, and topics
+        are filtered to the configured label space. What the model literally said
+        survives under ``extras.raw`` for operator audits."""
+        text = content.strip()
+        if text.startswith("```"):
+            text = text.strip("`\n")
+            text = text.removeprefix("json").strip()
+        try:
+            raw = json.loads(text)
+        except ValueError as exc:
+            raise ApiError(f"LLM returned unparseable JSON: {content!r:.200}") from exc
+        if not isinstance(raw, dict):
+            raise ApiError(f"LLM returned non-object JSON: {content!r:.200}")
+
+        out: dict = {"extras": {"kind": "llm", "raw": raw}}
+        for key in ("quality", "bot_likelihood", "nsfw_likelihood"):
+            score = _unit_score(raw.get(key))
+            if score is not None:
+                out[key] = score
+        language = raw.get("language")
+        if isinstance(language, str) and _LANGUAGE.fullmatch(language.strip().lower()):
+            out["language"] = language.strip().lower()
+        topics = raw.get("topics")
+        if isinstance(topics, list):
+            allowed = set(self._topics)
+            seen: dict[str, None] = {}
+            for item in topics:
+                if isinstance(item, str):
+                    label = item.strip().lower()
+                    if label in allowed and label not in seen:
+                        seen[label] = None
+            if seen:
+                # The prompt asks for at most 3; enforce it here too — the post
+                # body is user content inside the prompt, and a prompt-injected
+                # "list every label" answer must not blow the API's topics cap
+                # (400 invalid_topics would dead-letter the post).
+                out["topics"] = list(seen)[:_MAX_TOPICS_EMITTED]
+        return out
+
+
+def _unit_score(value: object) -> float | None:
+    """A [0,1] score, or None if the model produced something non-numeric.
+    Clamps float noise (1.02 → 1.0) instead of failing the whole post."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return min(1.0, max(0.0, float(value)))
+
+
 def make_analyzer(config: Config) -> Analyzer:
     """Select the analyser implementation from config (``GAMMA_ANALYZER``).
 
@@ -153,10 +359,7 @@ def make_analyzer(config: Config) -> Analyzer:
     if choice == "heuristic":
         return HeuristicAnalyzer()
     if choice == "model":
-        raise NotImplementedError(
-            "GAMMA_ANALYZER=model: the real model analyser is not built yet. This is "
-            "the single seam the Mac Studio / rented GPU fills (P18) — construct the "
-            "model here (weights path, device, batch size) as an Analyzer impl that "
-            "declares its own model_version. Until then run with GAMMA_ANALYZER=heuristic."
-        )
+        # Constructing eagerly probes both endpoints (/v1/models): unreachable or
+        # ambiguous serving fails the process AT STARTUP, not on the first post.
+        return ModelAnalyzer(config)
     raise ConfigError(f"GAMMA_ANALYZER must be 'heuristic' or 'model', got {choice!r}")

@@ -41,6 +41,7 @@ class FakeClient:
         self.signals_written: dict[int, dict] = {}
         self.model_versions: dict[int, str] = {}
         self.schema_versions: dict[int, int] = {}
+        self.embeddings: dict[int, list[float] | None] = {}
         self.login_count = 0
         self.put_attempts = 0
         self._fail_auth_times = fail_auth_times
@@ -67,7 +68,9 @@ class FakeClient:
     def get_post(self, post_id):
         return self.posts.get(post_id)
 
-    def put_signals(self, post_id, model_version, schema_version, signals, token) -> None:
+    def put_signals(
+        self, post_id, model_version, schema_version, signals, token, embedding=None
+    ) -> None:
         self.put_attempts += 1
         if self._fail_transient_times > 0:
             self._fail_transient_times -= 1
@@ -82,6 +85,7 @@ class FakeClient:
         self.signals_written[post_id] = signals
         self.model_versions[post_id] = model_version
         self.schema_versions[post_id] = schema_version
+        self.embeddings[post_id] = embedding
 
 
 class FakeQueue:
@@ -132,6 +136,27 @@ def test_process_post_skips_missing_post():
     client = FakeClient({})
     assert process_post(client, 99, HeuristicAnalyzer(), "tok") == "skipped_missing"
     assert client.signals_written == {}
+
+
+def test_embedding_is_lifted_out_of_the_signals_into_the_envelope():
+    # ADR 0009 §3: the analyser may hand back an embedding under the reserved
+    # key; the worker strips it BEFORE the wire — the signals document that
+    # reaches the API must never contain it (the API would reject the write).
+    class EmbeddingAnalyzer:
+        model_version = "llm:x+emb:y"
+        schema_version = 1
+
+        def analyze(self, post: dict) -> dict:
+            return {"quality": 0.5, "extras": {"kind": "llm"}, "embedding": [0.1, 0.2]}
+
+    client = FakeClient({5: {"id": 5, "body": "hi", "category": None}})
+    process_post(client, 5, EmbeddingAnalyzer(), "tok")
+    assert client.embeddings[5] == [0.1, 0.2]
+    assert "embedding" not in client.signals_written[5]
+    # An analyser WITHOUT an embedding (the heuristic) sends none.
+    client2 = FakeClient({5: {"id": 5, "body": "hi", "category": None}})
+    process_post(client2, 5, HeuristicAnalyzer(), "tok")
+    assert client2.embeddings[5] is None
 
 
 def test_written_model_version_comes_from_the_analyzer():

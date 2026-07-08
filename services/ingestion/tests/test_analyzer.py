@@ -109,9 +109,8 @@ def test_factory_builds_heuristic_with_its_own_label():
     assert a.model_version == "heuristic-v1"
 
 
-def test_factory_model_branch_fails_fast_until_built():
-    with pytest.raises(NotImplementedError):
-        make_analyzer(_config(analyzer="model"))
+# The factory's model branch is real since M2.4c — its construction probe and
+# fail-fast behavior are pinned in test_model_analyzer.py.
 
 
 def test_factory_rejects_unknown_analyzer():

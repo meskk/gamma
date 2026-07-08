@@ -28,6 +28,9 @@ def test_overrides_are_read():
     env = dict(
         REQUIRED,
         GAMMA_ANALYZER="model",
+        # GAMMA_ANALYZER=model requires its endpoints + label space (fail fast).
+        GAMMA_MODEL_BASE_URL="http://gpu:8000",
+        GAMMA_TOPIC_LABELS="tech,sport",
         REDIS_URL="redis://r:6379",
         GAMMA_POLL_TIMEOUT_SECONDS="2",
     )

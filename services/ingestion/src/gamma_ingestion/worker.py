@@ -20,7 +20,7 @@ from collections.abc import Callable
 
 import redis
 
-from .analyzer import Analyzer
+from .analyzer import EMBEDDING_KEY, Analyzer
 from .api_client import ApiClient, AuthError, ForbiddenError
 from .config import Config
 from .metrics import Metrics
@@ -47,7 +47,19 @@ def process_post(client: ApiClient, post_id: int, analyzer: Analyzer, token: str
     if post is None:
         return "skipped_missing"
     signals = analyzer.analyze(post)
-    client.put_signals(post_id, analyzer.model_version, analyzer.schema_version, signals, token)
+    # ADR 0009 §3: the embedding rides the write-back ENVELOPE, never the signals
+    # document — lift the reserved key out before the wire. (If this strip were
+    # ever forgotten, the API would reject the write with unknown_signal_field —
+    # fail closed, not silently stored.)
+    embedding = signals.pop(EMBEDDING_KEY, None)
+    client.put_signals(
+        post_id,
+        analyzer.model_version,
+        analyzer.schema_version,
+        signals,
+        token,
+        embedding=embedding,
+    )
     return "written"
 
 

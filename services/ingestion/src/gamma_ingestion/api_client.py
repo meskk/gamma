@@ -105,20 +105,25 @@ class ApiClient:
         schema_version: int,
         signals: dict,
         token: str,
+        embedding: list[float] | None = None,
     ) -> None:
         """Write back analysis for a post (service role). Raises on failure.
 
         ``schema_version`` declares which ADR-0009 contract ``signals`` follows;
         the API validates the typed core and fails closed on versions it does
-        not know yet."""
+        not know yet. ``embedding`` (ADR 0009 §3) travels in the envelope next
+        to the signals and is stored server-side in ``post_embeddings``."""
+        body: dict = {
+            "model_version": model_version,
+            "schema_version": schema_version,
+            "signals": signals,
+        }
+        if embedding is not None:
+            body["embedding"] = embedding
         resp = self._send(
             "PUT",
             f"{self._base}/posts/{post_id}/signals",
-            json={
-                "model_version": model_version,
-                "schema_version": schema_version,
-                "signals": signals,
-            },
+            json=body,
             headers={"Authorization": f"Bearer {token}"},
         )
         if resp.status_code == 401:

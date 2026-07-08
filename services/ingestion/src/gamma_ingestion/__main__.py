@@ -26,9 +26,11 @@ def main() -> int:
 
     try:
         config = Config.from_env()
-        # NotImplementedError: GAMMA_ANALYZER=model set before the model exists.
+        # The model analyser probes its inference endpoints at construction
+        # (fail fast, RUNBOOK §6): an unreachable GPU box surfaces here as a
+        # TransientError/ApiError, not as a traceback crash-loop.
         analyzer = make_analyzer(config)
-    except (ConfigError, NotImplementedError) as exc:
+    except (ConfigError, ApiError) as exc:
         print(f"startup error: {exc}", file=sys.stderr)
         return 2
 

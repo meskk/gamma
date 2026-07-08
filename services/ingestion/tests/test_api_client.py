@@ -48,25 +48,35 @@ def test_get_post_404_returns_none():
 
 
 def test_put_signals_sends_bearer_and_body():
-    seen = {}
+    seen = {"bodies": []}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/v1/posts/7/signals"
+        assert request.url.path in ("/v1/posts/7/signals", "/v1/posts/8/signals")
         assert request.method == "PUT"
         seen["auth"] = request.headers.get("Authorization")
         import json
 
-        seen["body"] = json.loads(request.content)
+        seen["bodies"].append(json.loads(request.content))
         return httpx.Response(204)
 
     with client_with(handler) as client:
         client.put_signals(7, "heuristic-v1", 1, {"extras": {"word_count": 3}}, "tok-1")
+        client.put_signals(
+            8, "llm:x+emb:y", 1, {"quality": 0.5}, "tok-1", embedding=[0.1, 0.2]
+        )
 
     assert seen["auth"] == "Bearer tok-1"
-    assert seen["body"] == {
+    assert seen["bodies"][0] == {
         "model_version": "heuristic-v1",
         "schema_version": 1,
         "signals": {"extras": {"word_count": 3}},
+    }
+    # With an embedding the envelope carries it NEXT TO the signals (ADR 0009 §3).
+    assert seen["bodies"][1] == {
+        "model_version": "llm:x+emb:y",
+        "schema_version": 1,
+        "signals": {"quality": 0.5},
+        "embedding": [0.1, 0.2],
     }
 
 

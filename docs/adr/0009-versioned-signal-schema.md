@@ -77,6 +77,11 @@ Owner wants embeddings in v1. They are infrastructure (Phase-2 personalization
   model_version TEXT, dim SMALLINT, embedding REAL[], updated_at)`.
 - Transport über DENSELBEN Write-back: optionales Top-Level-Feld `embedding:
   [f32]` in `PUT /v1/posts/:id/signals`; die API legt es getrennt ab.
+  *Seam-seitig (präzisiert in M2.4c):* Der Analyzer legt das Embedding unter dem
+  reservierten Schlüssel `embedding` in sein `analyze()`-Dict (die Signatur
+  `dict` aus §6 bleibt); der Worker hebt den Schlüssel VOR dem Write-back in
+  den Envelope. Vergäße er das je, lehnte die API den Write mit
+  `unknown_signal_field` ab — fail closed, nie still gespeichert.
 - `GET /v1/posts/:id/signals` liefert Embeddings NICHT aus (Status-Endpoint
   zählt sie). Kein Index/pgvector, bis ein Konsument existiert (Phase 2) —
   plain `REAL[]` genügt und ist verlustfrei migrierbar.
