@@ -5,7 +5,12 @@ from gamma_ingestion.config import Config, ConfigError
 
 
 def analyze(post: dict) -> dict:
-    return HeuristicAnalyzer().analyze(post)
+    """The heuristic's surface features — everything lives under ``extras``
+    (ADR 0009 v1: the typed core stays empty because the heuristic cannot
+    honestly claim quality/bot/topics/language)."""
+    signals = HeuristicAnalyzer().analyze(post)
+    assert set(signals) == {"extras"}
+    return signals["extras"]
 
 
 def _config(analyzer: str = "heuristic") -> Config:
@@ -83,15 +88,25 @@ def test_missing_keys_default_safely():
 def test_model_version_is_owned_by_the_analyzer():
     # The heuristic owns its label INTRINSICALLY — there is no constructor override,
     # so config can never mislabel heuristic output.
-    assert HeuristicAnalyzer().model_version == "heuristic-v0"
+    assert HeuristicAnalyzer().model_version == "heuristic-v1"
+
+
+def test_schema_version_is_the_adr_0009_v1_contract():
+    # The analyser also owns which CONTRACT its dict speaks; the API validates
+    # the v1 core on write and would reject the heuristic's surface features at
+    # the top level — hence the extras envelope.
+    a = HeuristicAnalyzer()
+    assert a.schema_version == 1
+    signals = a.analyze({"id": 1, "body": "hello", "category": "tech"})
+    assert set(signals) == {"extras"}  # empty typed core, everything in the annex
 
 
 def test_factory_builds_heuristic_with_its_own_label():
     # The factory has no model-version knob to pass through — the heuristic reports
-    # its own intrinsic "heuristic-v0", so the label can't drift from the code.
+    # its own intrinsic "heuristic-v1", so the label can't drift from the code.
     a = make_analyzer(_config(analyzer="heuristic"))
     assert isinstance(a, HeuristicAnalyzer)
-    assert a.model_version == "heuristic-v0"
+    assert a.model_version == "heuristic-v1"
 
 
 def test_factory_model_branch_fails_fast_until_built():

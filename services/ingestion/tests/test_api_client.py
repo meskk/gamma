@@ -60,10 +60,14 @@ def test_put_signals_sends_bearer_and_body():
         return httpx.Response(204)
 
     with client_with(handler) as client:
-        client.put_signals(7, "heuristic-v0", {"word_count": 3}, "tok-1")
+        client.put_signals(7, "heuristic-v1", 1, {"extras": {"word_count": 3}}, "tok-1")
 
     assert seen["auth"] == "Bearer tok-1"
-    assert seen["body"] == {"model_version": "heuristic-v0", "signals": {"word_count": 3}}
+    assert seen["body"] == {
+        "model_version": "heuristic-v1",
+        "schema_version": 1,
+        "signals": {"extras": {"word_count": 3}},
+    }
 
 
 def test_put_signals_401_raises_auth_error():
@@ -72,7 +76,7 @@ def test_put_signals_401_raises_auth_error():
 
     with client_with(handler) as client:
         with pytest.raises(AuthError):
-            client.put_signals(7, "heuristic-v0", {}, "expired")
+            client.put_signals(7, "heuristic-v1", 1, {}, "expired")
 
 
 def test_put_signals_permanent_4xx_raises_api_error():
@@ -82,7 +86,7 @@ def test_put_signals_permanent_4xx_raises_api_error():
 
     with client_with(handler) as client:
         with pytest.raises(ApiError) as exc:
-            client.put_signals(7, "heuristic-v0", {}, "tok-1")
+            client.put_signals(7, "heuristic-v1", 1, {}, "tok-1")
         assert not isinstance(exc.value, TransientError)
 
 
@@ -94,7 +98,7 @@ def test_5xx_is_transient():
         with pytest.raises(TransientError):
             client.get_post(1)
         with pytest.raises(TransientError):
-            client.put_signals(1, "m", {}, "tok")
+            client.put_signals(1, "m", 0, {}, "tok")
 
 
 def test_transport_error_is_transient():

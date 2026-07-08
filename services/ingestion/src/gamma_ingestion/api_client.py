@@ -98,12 +98,27 @@ class ApiClient:
         post: dict = resp.json()
         return post
 
-    def put_signals(self, post_id: int, model_version: str, signals: dict, token: str) -> None:
-        """Write back analysis for a post (operator-only). Raises on failure."""
+    def put_signals(
+        self,
+        post_id: int,
+        model_version: str,
+        schema_version: int,
+        signals: dict,
+        token: str,
+    ) -> None:
+        """Write back analysis for a post (service role). Raises on failure.
+
+        ``schema_version`` declares which ADR-0009 contract ``signals`` follows;
+        the API validates the typed core and fails closed on versions it does
+        not know yet."""
         resp = self._send(
             "PUT",
             f"{self._base}/posts/{post_id}/signals",
-            json={"model_version": model_version, "signals": signals},
+            json={
+                "model_version": model_version,
+                "schema_version": schema_version,
+                "signals": signals,
+            },
             headers={"Authorization": f"Bearer {token}"},
         )
         if resp.status_code == 401:

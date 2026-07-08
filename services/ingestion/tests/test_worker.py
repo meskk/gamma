@@ -40,6 +40,7 @@ class FakeClient:
         self.posts = posts
         self.signals_written: dict[int, dict] = {}
         self.model_versions: dict[int, str] = {}
+        self.schema_versions: dict[int, int] = {}
         self.login_count = 0
         self.put_attempts = 0
         self._fail_auth_times = fail_auth_times
@@ -66,7 +67,7 @@ class FakeClient:
     def get_post(self, post_id):
         return self.posts.get(post_id)
 
-    def put_signals(self, post_id, model_version, signals, token) -> None:
+    def put_signals(self, post_id, model_version, schema_version, signals, token) -> None:
         self.put_attempts += 1
         if self._fail_transient_times > 0:
             self._fail_transient_times -= 1
@@ -80,6 +81,7 @@ class FakeClient:
             raise ApiError("permanent 400")
         self.signals_written[post_id] = signals
         self.model_versions[post_id] = model_version
+        self.schema_versions[post_id] = schema_version
 
 
 class FakeQueue:
@@ -119,7 +121,11 @@ class FakeQueue:
 def test_process_post_writes_signals():
     client = FakeClient({5: {"id": 5, "body": "a b c", "category": None}})
     assert process_post(client, 5, HeuristicAnalyzer(), "tok") == "written"
-    assert client.signals_written[5]["word_count"] == 3
+    assert client.signals_written[5]["extras"]["word_count"] == 3
+    # ONE call pins BOTH stamps together — an argument swap in process_post
+    # could not slip past this pair.
+    assert client.model_versions[5] == "heuristic-v1"
+    assert client.schema_versions[5] == 1
 
 
 def test_process_post_skips_missing_post():
@@ -132,9 +138,10 @@ def test_written_model_version_comes_from_the_analyzer():
     # The analyser OWNS its model_version, so what's written matches the analyser —
     # not any separate config value — which is what makes the model swap drift-proof.
     # A stand-in analyser with a distinct intrinsic label proves the worker stamps
-    # whatever the analyser reports (the heuristic's own label is "heuristic-v0").
+    # whatever the analyser reports (the heuristic's own label is "heuristic-v1").
     class StubAnalyzer:
         model_version = "real-model-v1"
+        schema_version = 0  # a stub with free-form output declares the legacy contract
 
         def analyze(self, post: dict) -> dict:
             return {"ok": True}
@@ -142,6 +149,10 @@ def test_written_model_version_comes_from_the_analyzer():
     client = FakeClient({5: {"id": 5, "body": "hi", "category": None}})
     process_post(client, 5, StubAnalyzer(), "tok")
     assert client.model_versions[5] == "real-model-v1"
+    # A NON-1 value proves the worker forwards the analyser's schema_version
+    # instead of hardcoding the heuristic's (mutation-tested: a literal 1 in
+    # process_post survives every other assertion in the suite).
+    assert client.schema_versions[5] == 0
 
 
 def test_worker_relogins_once_on_auth_error():
@@ -157,7 +168,7 @@ def test_run_drains_queue_then_stops():
     queue = FakeQueue([5])
     worker = Worker(make_config(), queue, client, HeuristicAnalyzer())
     worker.run(queue.drained)
-    assert client.signals_written[5]["word_count"] == 2
+    assert client.signals_written[5]["extras"]["word_count"] == 2
     assert client.login_count == 1  # one login for the whole run
 
 
@@ -202,6 +213,7 @@ def test_run_finishes_in_flight_post_then_stops():
 
     class StopDuringAnalyze:
         model_version = "slow-v0"
+        schema_version = 0
 
         def analyze(self, post: dict) -> dict:
             stop["flag"] = True  # the signal arrives while we're analysing post 5

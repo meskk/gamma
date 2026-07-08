@@ -11,7 +11,7 @@ core-api  ──LPUSH post id──►  gamma:ingestion (Redis)
                                       │  GET /v1/posts/:id        (read content, public)
                                       │  analyse  (heuristic, deterministic)
                                       ▼
-core-api  ◄──PUT /v1/posts/:id/signals── { model_version, signals }   (operator-only, 204)
+core-api  ◄──PUT /v1/posts/:id/signals── { model_version, schema_version, signals }   (service role, 204)
                                       ▼
                               content_signals (Postgres, JSONB)
 ```
@@ -24,13 +24,15 @@ preserving the "API owns the database" boundary (ADR 0006 / ADR 0004).
 `analyzer.py` is **not a model**. It computes cheap, deterministic surface features
 (word/char/link counts, a reading-time estimate, the author-declared category) so
 the end-to-end pipeline is real and testable before the actual AI service exists on
-the Mac Studio. The signal *shape* is deliberately minimal and the feed does **not**
-consume these signals yet — wiring that in waits until the real pipeline settles the
-shape, so no speculative ranking is introduced. The placeholder owns its provenance
-tag intrinsically (`model_version = "heuristic-v0"`), so it can't be mislabelled. The
+the Mac Studio. Since ADR 0009 the signal shape is a VERSIONED contract: the
+heuristic speaks schema v1 with an empty typed core — all its surface features live
+under the free `extras` annex — and the feed does **not** consume signals until
+M2.7. The placeholder owns its provenance tag intrinsically
+(`model_version = "heuristic-v1"`), so it can't be mislabelled. The
 upgrade path is to add the real model as a second `Analyzer` (`GAMMA_ANALYZER=model`);
-`GAMMA_MODEL_VERSION` is reserved for **that** analyser's label and has no effect on
-the heuristic.
+the model analyser will own its `model_version` intrinsically too (in code, next to
+the weights it loads) — there is deliberately NO `GAMMA_MODEL_VERSION` env knob, so
+the provenance tag can never drift from the implementation (RUNBOOK §6).
 
 ## Layout
 

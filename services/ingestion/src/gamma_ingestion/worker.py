@@ -37,15 +37,17 @@ def process_post(client: ApiClient, post_id: int, analyzer: Analyzer, token: str
     """Process one post id. Returns an outcome label for logging.
 
     ``"skipped_missing"`` if the post is gone (404), ``"written"`` on success.
-    The signals are stamped with ``analyzer.model_version`` — the analyser owns its
-    own label, so it cannot drift from the implementation that produced it.
+    The signals are stamped with ``analyzer.model_version`` and the analyser's
+    ``schema_version`` (ADR 0009) — the analyser owns both, so neither the
+    provenance label nor the contract version can drift from the implementation
+    that produced them.
     Raises ``AuthError`` (expired token) and ``ApiError`` for the caller to handle.
     """
     post = client.get_post(post_id)
     if post is None:
         return "skipped_missing"
     signals = analyzer.analyze(post)
-    client.put_signals(post_id, analyzer.model_version, signals, token)
+    client.put_signals(post_id, analyzer.model_version, analyzer.schema_version, signals, token)
     return "written"
 
 

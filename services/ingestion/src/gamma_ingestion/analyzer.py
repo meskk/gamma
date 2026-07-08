@@ -4,8 +4,11 @@
 function — mirroring the ledger/transcode seams elsewhere in the project. The real
 model (on the Mac Studio / rented GPU) drops in later as a second implementation
 with zero worker changes; only a factory (P2) and the model-runtime layer (P18)
-change. The analysis output is an opaque ``dict`` by design: no signal SHAPE is
-prescribed here, and the feed does not consume it yet (ADR 0006).
+change. Since ADR 0009 the analysis output follows a VERSIONED contract: each
+analyser declares the ``schema_version`` its dict speaks (the API validates the
+typed v1 core on write and rejects unknown top-level keys), alongside the
+``model_version`` provenance tag it owns. The feed still does not consume the
+signals until M2.7.
 """
 
 from __future__ import annotations
@@ -29,14 +32,22 @@ class Analyzer(Protocol):
         """Provenance tag for the signals this analyser produces."""
         ...
 
+    @property
+    def schema_version(self) -> int:
+        """Which ADR-0009 signal contract ``analyze``'s dict follows (v1 core = 1)."""
+        ...
+
     def analyze(self, post: dict) -> dict:
         """Derive signals from a post dict (as returned by ``GET /posts/:id``)."""
         ...
 
 
 # The heuristic OWNS this label intrinsically — it is the only place its version is
-# named, so its output can never be mislabelled as something else.
-_HEURISTIC_VERSION = "heuristic-v0"
+# named, so its output can never be mislabelled as something else. v1 = the ADR 0009
+# move: the surface features live under the ``extras`` annex, the typed core stays
+# empty (the heuristic cannot honestly claim quality/bot/topics/language).
+_HEURISTIC_VERSION = "heuristic-v1"
+_HEURISTIC_SCHEMA = 1
 
 # A run of non-whitespace counts as a word — good enough for a length heuristic on
 # whitespace-delimited scripts, and deterministic across inputs.
@@ -62,13 +73,17 @@ class HeuristicAnalyzer:
     AI service exists. Keeping it deterministic also keeps it honest: nothing here
     pretends to understand the content, and the feed does not consume these signals
     yet (ADR 0006). The real model replaces this with another ``Analyzer`` impl and
-    declares its own ``model_version``; the signal *shape* is deliberately minimal
-    until then.
+    declares its own ``model_version``; its output must speak an ADR 0009 schema
+    version, like this one does.
     """
 
     @property
     def model_version(self) -> str:
         return _HEURISTIC_VERSION
+
+    @property
+    def schema_version(self) -> int:
+        return _HEURISTIC_SCHEMA
 
     def analyze(self, post: dict) -> dict:
         """Pure and deterministic: same post in, same signals out. The returned dict
@@ -84,16 +99,24 @@ class HeuristicAnalyzer:
         word_count = self._count_words(body)
         link_count = len(_URL.findall(body))
 
+        # ADR 0009 schema v1: everything the heuristic produces is a surface
+        # feature, so it ALL belongs in the free ``extras`` annex — the typed core
+        # (quality, bot_likelihood, topics, language, nsfw_likelihood) stays empty
+        # because nothing here actually understands the content. The API would
+        # reject these keys at the top level (unknown_signal_field), and rightly so.
         return {
-            "kind": "heuristic",
-            "has_body": bool(body.strip()),
-            "char_count": len(body),
-            "word_count": word_count,
-            "link_count": link_count,
-            "reading_seconds": round(word_count / _WORDS_PER_MINUTE * 60),
-            # Pass the author-declared category through untouched (None if absent); the
-            # heuristic does not infer topics — that's the real model's job, later.
-            "declared_category": post.get("category"),
+            "extras": {
+                "kind": "heuristic",
+                "has_body": bool(body.strip()),
+                "char_count": len(body),
+                "word_count": word_count,
+                "link_count": link_count,
+                "reading_seconds": round(word_count / _WORDS_PER_MINUTE * 60),
+                # Pass the author-declared category through untouched (None if
+                # absent); the heuristic does not infer topics — that's the real
+                # model's job, later.
+                "declared_category": post.get("category"),
+            }
         }
 
     @staticmethod
@@ -122,7 +145,7 @@ def make_analyzer(config: Config) -> Analyzer:
     THE SWAP POINT. Flipping ``GAMMA_ANALYZER=model`` — once the model-runtime layer
     exists (P18) — replaces the heuristic with the real model and the worker never
     changes. Every analyser OWNS its ``model_version`` intrinsically (the heuristic
-    reports ``"heuristic-v0"``; the model analyser will report its own weights tag),
+    reports ``"heuristic-v1"``; the model analyser will report its own weights tag),
     so the provenance stamp can never drift from the code that produced it — there is
     no separate config knob to mislabel it.
     """
