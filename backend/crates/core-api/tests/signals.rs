@@ -311,3 +311,238 @@ async fn service_role_writes_signals_but_holds_no_operator_powers(pool: PgPool) 
     .await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+/// The machine-readable validation code from a 400 body, for pinning the
+/// ADR 0009 error contract (writers retry on codes, not prose).
+async fn error_code(resp: axum::http::Response<Body>) -> String {
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    v["error"].as_str().unwrap_or_default().to_string()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn schema_v1_validates_the_typed_core(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let post_id = seed_post(&pool).await;
+    let (op_token, op_id) = common::register(&router, &[]).await;
+    sqlx::query!("UPDATE users SET role = 'operator' WHERE id = $1", op_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // A full, valid v1 core (plus extras annex) → 204, schema_version stored.
+    let resp = put_signals(
+        &router,
+        post_id,
+        Some(&op_token),
+        json!({
+            "model_version": "model-v1",
+            "schema_version": 1,
+            "signals": {
+                "quality": 0.8,
+                "bot_likelihood": 0.05,
+                "nsfw_likelihood": 0.0,
+                "topics": ["tech", "rust"],
+                "language": "de",
+                "extras": { "anything": ["goes", 42] }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let stored = ContentSignalRepository::new(pool.clone())
+        .get(post_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.schema_version, 1);
+
+    // Null counts as absent — Python writers may send None for empty fields.
+    let resp = put_signals(
+        &router,
+        post_id,
+        Some(&op_token),
+        json!({
+            "model_version": "model-v1",
+            "schema_version": 1,
+            "signals": { "quality": null, "language": null, "extras": { "k": 1 } }
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // Legacy writers omit schema_version → accepted verbatim as 0 (pre-ADR).
+    let resp = put_signals(
+        &router,
+        post_id,
+        Some(&op_token),
+        json!({ "model_version": "heuristic-v0", "signals": { "word_count": 7 } }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let stored = ContentSignalRepository::new(pool.clone())
+        .get(post_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.schema_version, 0);
+
+    // Rejections, each with its stable machine-readable code:
+    let cases: Vec<(Value, &str)> = vec![
+        // unknown top-level key (additions go through extras or a schema bump)
+        (json!({ "word_count": 7 }), "unknown_signal_field"),
+        // scores outside [0,1]
+        (json!({ "quality": 1.5 }), "invalid_quality"),
+        (json!({ "bot_likelihood": -0.1 }), "invalid_bot_likelihood"),
+        (
+            json!({ "nsfw_likelihood": "high" }),
+            "invalid_nsfw_likelihood",
+        ),
+        // topics must be normalized (trim+lowercase), unique, string-typed,
+        // and capped (≤16 entries, ≤64 bytes each)
+        (json!({ "topics": ["Tech"] }), "invalid_topics"),
+        (json!({ "topics": ["tech", "tech"] }), "invalid_topics"),
+        (json!({ "topics": [7] }), "invalid_topics"),
+        (
+            json!({ "topics": (0..17).map(|i| format!("t{i}")).collect::<Vec<_>>() }),
+            "invalid_topics",
+        ),
+        (json!({ "topics": ["a".repeat(65)] }), "invalid_topics"),
+        // language: loose lowercase BCP-47
+        (json!({ "language": "DE" }), "invalid_language"),
+        (json!({ "language": "x" }), "invalid_language"),
+        // extras must be an object
+        (json!({ "extras": [1, 2] }), "invalid_extras"),
+    ];
+    for (signals, want_code) in cases {
+        let resp = put_signals(
+            &router,
+            post_id,
+            Some(&op_token),
+            json!({ "model_version": "model-v1", "schema_version": 1, "signals": signals }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "case {signals}");
+        assert_eq!(error_code(resp).await, want_code, "case {signals}");
+    }
+
+    // v1 signals must be an object at all.
+    let resp = put_signals(
+        &router,
+        post_id,
+        Some(&op_token),
+        json!({ "model_version": "model-v1", "schema_version": 1, "signals": [1, 2] }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(error_code(resp).await, "signals_not_an_object");
+
+    // A schema version newer than this API → fail closed (deploy API first).
+    let resp = put_signals(
+        &router,
+        post_id,
+        Some(&op_token),
+        json!({ "model_version": "model-v9", "schema_version": 2, "signals": {} }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(error_code(resp).await, "unknown_schema_version");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn embeddings_are_stored_next_door_and_never_read_back(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let post_id = seed_post(&pool).await;
+    let (op_token, op_id) = common::register(&router, &[]).await;
+    sqlx::query!("UPDATE users SET role = 'operator' WHERE id = $1", op_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Write signals + embedding in one write-back → both stored atomically.
+    let resp = put_signals(
+        &router,
+        post_id,
+        Some(&op_token),
+        json!({
+            "model_version": "model-v1",
+            "schema_version": 1,
+            "signals": { "quality": 0.5 },
+            "embedding": [0.25, -0.5, 0.125]
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let row = sqlx::query!(
+        r#"SELECT model_version, dim, embedding AS "embedding!: Vec<f32>"
+           FROM post_embeddings WHERE post_id = $1"#,
+        post_id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(row.model_version, "model-v1");
+    assert_eq!(row.dim, 3);
+    assert_eq!(row.embedding, vec![0.25, -0.5, 0.125]);
+
+    // A later write-back supersedes it (one current row, like the signals).
+    let resp = put_signals(
+        &router,
+        post_id,
+        Some(&op_token),
+        json!({
+            "model_version": "model-v2",
+            "schema_version": 1,
+            "signals": {},
+            "embedding": [1.0, 0.0]
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let row = sqlx::query!(
+        r#"SELECT model_version, dim FROM post_embeddings WHERE post_id = $1"#,
+        post_id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((row.model_version.as_str(), row.dim), ("model-v2", 2));
+
+    // The read path never returns embeddings (ADR 0009 §3).
+    let resp = get_signals(&router, post_id, Some(&op_token)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(v.get("embedding").is_none());
+    assert_eq!(v["schema_version"].as_i64().unwrap(), 1);
+
+    // Rejected embeddings — each rejects the WHOLE write-back: empty, a value
+    // that overflows f32 to +inf (serde casts JSON numbers through f64 without
+    // erroring), and one over the dimension cap.
+    for bad in [json!([]), json!([1e39]), json!(vec![0.0f32; 4097])] {
+        let resp = put_signals(
+            &router,
+            post_id,
+            Some(&op_token),
+            json!({
+                "model_version": "model-v3",
+                "schema_version": 1,
+                "signals": {},
+                "embedding": bad
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(error_code(resp).await, "invalid_embedding");
+    }
+    let stored = ContentSignalRepository::new(pool.clone())
+        .get(post_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.model_version, "model-v2");
+}

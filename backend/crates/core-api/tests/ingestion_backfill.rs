@@ -59,7 +59,7 @@ async fn unanalyzed_query_excludes_analysed_and_hidden_and_paginates(pool: PgPoo
 
     // p2 already analysed (has a signals row); p3 taken down.
     signals
-        .upsert(p2, "heuristic-v0", &json!({"x": 1}))
+        .upsert(p2, "heuristic-v0", 0, &json!({"x": 1}), None)
         .await
         .unwrap();
     posts.set_hidden(p3, Some(Utc::now())).await.unwrap();
@@ -115,7 +115,7 @@ async fn backfill_endpoint_is_operator_only_and_reports_counts(pool: PgPool) {
     let p2 = new_post(&pool, author, "b").await;
     // p2 analysed → excluded from the sweep.
     ContentSignalRepository::new(pool.clone())
-        .upsert(p2, "heuristic-v0", &json!({"x": 1}))
+        .upsert(p2, "heuristic-v0", 0, &json!({"x": 1}), None)
         .await
         .unwrap();
 
@@ -172,14 +172,26 @@ async fn status_reports_counts_and_model_version_breakdown(pool: PgPool) {
     let p1 = new_post(&pool, author, "a").await;
     let p2 = new_post(&pool, author, "b").await;
     let _p3 = new_post(&pool, author, "c").await; // left unanalysed
+    let p4 = new_post(&pool, author, "d").await; // analysed + embedded, then hidden
 
     let signals = ContentSignalRepository::new(pool.clone());
     signals
-        .upsert(p1, "heuristic-v0", &json!({}))
+        .upsert(p1, "heuristic-v0", 0, &json!({}), None)
         .await
         .unwrap();
+    // p2 carries an embedding → the ONE the embeddings count should report.
     signals
-        .upsert(p2, "real-model-v1", &json!({}))
+        .upsert(p2, "real-model-v1", 1, &json!({}), Some(&[0.1, 0.2]))
+        .await
+        .unwrap();
+    // p4 also has an embedding but gets taken down — hidden posts leave every
+    // status count, embeddings included.
+    signals
+        .upsert(p4, "real-model-v1", 1, &json!({}), Some(&[0.3]))
+        .await
+        .unwrap();
+    PostRepository::new(pool.clone())
+        .set_hidden(p4, Some(chrono::Utc::now()))
         .await
         .unwrap();
 
@@ -207,4 +219,6 @@ async fn status_reports_counts_and_model_version_breakdown(pool: PgPool) {
         body["by_model_version"]["real-model-v1"].as_i64().unwrap(),
         1
     );
+    // Exactly p2's embedding: p4's is hidden with its post, p1 has none.
+    assert_eq!(body["embeddings"].as_i64().unwrap(), 1);
 }

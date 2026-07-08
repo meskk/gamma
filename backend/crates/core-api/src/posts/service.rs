@@ -40,6 +40,9 @@ pub struct IngestionStatus {
     pub unanalyzed: i64,
     /// Analysed-post counts keyed by the model version that produced them.
     pub by_model_version: BTreeMap<String, i64>,
+    /// Posts with a stored embedding (ADR 0009 §3 — the read path never returns
+    /// embeddings, so this count is their only observability).
+    pub embeddings: i64,
 }
 
 #[derive(Clone)]
@@ -193,10 +196,11 @@ impl PostService {
     /// vs not, and the analysed counts broken down by model version. Touches no
     /// signal payload and enqueues nothing (ADR 0006).
     pub async fn ingestion_status(&self) -> Result<IngestionStatus, ApiError> {
-        // The two reads are independent — run them concurrently.
-        let (unanalyzed, rows) = tokio::try_join!(
+        // The three reads are independent — run them concurrently.
+        let (unanalyzed, rows, embeddings) = tokio::try_join!(
             self.repo.count_unanalyzed_posts(),
             self.repo.signals_count_by_model_version(),
+            self.repo.count_embeddings(),
         )?;
         let analyzed = rows.iter().map(|(_, count)| count).sum();
         let by_model_version = rows.into_iter().collect();
@@ -204,6 +208,7 @@ impl PostService {
             analyzed,
             unanalyzed,
             by_model_version,
+            embeddings,
         })
     }
 }

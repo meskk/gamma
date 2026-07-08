@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT model_version, dim, embedding AS \"embedding!: Vec<f32>\"\n           FROM post_embeddings WHERE post_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "model_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "dim",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 2,
+        "name": "embedding!: Vec<f32>",
+        "type_info": "Float4Array"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "1d795d3de32204304a8dd5382562af981a1d6adf91f150bdffae448a07d19df3"
+}

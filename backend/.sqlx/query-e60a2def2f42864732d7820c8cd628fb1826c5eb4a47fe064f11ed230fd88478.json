@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO post_embeddings (post_id, model_version, dim, embedding, updated_at)\n                VALUES ($1, $2, $3, $4, now())\n                ON CONFLICT (post_id) DO UPDATE\n                SET model_version = EXCLUDED.model_version,\n                    dim = EXCLUDED.dim,\n                    embedding = EXCLUDED.embedding,\n                    updated_at = now()\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int2",
+        "Float4Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e60a2def2f42864732d7820c8cd628fb1826c5eb4a47fe064f11ed230fd88478"
+}

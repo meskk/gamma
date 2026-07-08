@@ -25,10 +25,7 @@ async fn write_signals(
     Path(post_id): Path<i64>,
     Json(body): Json<SignalWriteback>,
 ) -> Result<StatusCode, ApiError> {
-    state
-        .signals
-        .record(post_id, body.model_version, body.signals)
-        .await?;
+    state.signals.record(post_id, body).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -228,6 +228,21 @@ impl PostRepository {
             .collect())
     }
 
+    /// How many posts have a stored embedding (visible posts, same universe as
+    /// the other status counts). Counts rows only — never reads the vectors.
+    pub async fn count_embeddings(&self) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) AS "count!"
+            FROM post_embeddings pe
+            JOIN posts p ON p.id = pe.post_id
+            WHERE p.hidden_at IS NULL
+            "#
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
     /// Reported posts with their report counts, most-reported first (operator
     /// review queue).
     pub async fn list_reported(&self, limit: i64) -> Result<Vec<ReportedPost>, sqlx::Error> {

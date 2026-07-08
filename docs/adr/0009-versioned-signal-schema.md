@@ -55,12 +55,13 @@ bumps `schema_version`, and consumers ignore rows below their minimum.
 |---|---|---|
 | `quality` | f64 ∈ [0,1], optional | Inhaltsqualität (Ranking-Feature) |
 | `bot_likelihood` | f64 ∈ [0,1], optional | Bot-Evidenz DIESES Posts (Aggregation → Vorschläge) |
-| `topics` | [string], optional | NUR Werte aus dem kanonischen Kategorien-Set der App (Owner: eigene Taxonomie abgelehnt — Feed-Matching funktioniert sofort) |
+| `topics` | [string], optional | Werte teilen den Kategorien-NAMENSRAUM der App (Owner: eigene Taxonomie abgelehnt — Feed-Matching funktioniert sofort). Es gibt keine geschlossene Liste (Kategorien sind nutzerdeklariert), also erzwingt die API die Namensraum-FORM (normalisiert wie `normalize_categories`, dedupliziert, gedeckelt); der Label-RAUM ist Vertrag des Analyzers, und das Feed-Matching toleriert Topics ohne Kategorie-Treffer *(präzisiert in M2.4a)* |
 | `language` | string, optional | primäres BCP-47-Tag (`de`, `en`, …) |
 | `nsfw_likelihood` | f64 ∈ [0,1], optional | Moderations-Hinweis, nie Auto-Takedown |
 | `extras` | object, optional | analyzer-eigener Anhang, frei — wird von KEINEM Konsumenten gelesen |
 
-The API VALIDATES the core on write (types + ranges + taxonomy membership;
+The API VALIDATES the core on write (types + ranges + namespace form — NOT
+taxonomy membership, which no closed list exists to check, see the topics row;
 unknown top-level keys are rejected — additions go through this ADR's annex or
 a schema bump). All core fields are optional so the heuristic stays honest: it
 cannot produce `quality`, so it writes `schema_version 1` with only

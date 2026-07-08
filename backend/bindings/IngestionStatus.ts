@@ -16,4 +16,9 @@ unanalyzed: bigint,
 /**
  * Analysed-post counts keyed by the model version that produced them.
  */
-by_model_version: { [key in string]: bigint }, };
+by_model_version: { [key in string]: bigint }, 
+/**
+ * Posts with a stored embedding (ADR 0009 §3 — the read path never returns
+ * embeddings, so this count is their only observability).
+ */
+embeddings: bigint, };
