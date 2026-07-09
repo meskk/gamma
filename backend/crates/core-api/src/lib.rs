@@ -130,7 +130,7 @@ pub fn app_with_limits(state: AppState, auth_limit: Option<rate_limit::AuthRateL
         Some(cfg) => rate_limit::auth_layer(auth::handler::routes(), cfg),
         None => auth::handler::routes(),
     };
-    let v1 = Router::new()
+    let mut v1 = Router::new()
         .merge(auth_routes)
         .merge(users::handler::routes())
         .merge(posts::handler::routes())
@@ -141,6 +141,16 @@ pub fn app_with_limits(state: AppState, auth_limit: Option<rate_limit::AuthRateL
         .merge(gems::handler::routes())
         .merge(media::handler::routes())
         .merge(signals::handler::routes());
+
+    // ADR 0011 §6: the private-area surface ships DARK. The flag is read once at
+    // startup (`state.private_area_enabled`), so we simply do not MOUNT its routes
+    // while it is off — an unmounted path is byte-for-byte a nonexistent route
+    // (bare empty 404, no Allow header, no JSON tell), which no in-handler gate
+    // could achieve. Tests flip the flag via `AppState::with_private_area` before
+    // calling `app`, so this stays testable without process-global env flips.
+    if state.private_area_enabled {
+        v1 = v1.merge(private_area::handler::routes());
+    }
 
     // Layers wrap outermost-last. Order on a request: CORS (answers preflight) →
     // assign x-request-id → open the trace span (reads that id) → propagate the id

@@ -6,9 +6,12 @@
 //! money never touches a platform account, and fiat NEVER touches the
 //! conserved PT journal (`purchases` is an audit mirror, not a ledger).
 //! Access materializes as an ENTITLEMENT (row with optional expiry), never a
-//! payment lookup at read time. Data layer landed in A2; the visibility
-//! invariant (posts AND their media) lands in A4; provider seam in A5/A6.
-//! Everything stays behind config flags until legal sign-off (ADR 0011 §6).
+//! payment lookup at read time. Data layer landed in A2; the configuration
+//! API in A3 (flag-gated); the visibility invariant (posts AND their media)
+//! lands in A4; provider seam in A5/A6. Everything stays behind
+//! `GAMMA_PRIVATE_AREA` (default OFF) until legal sign-off (ADR 0011 §6).
 
+pub mod handler;
 pub mod model;
 pub mod repository;
+pub mod service;

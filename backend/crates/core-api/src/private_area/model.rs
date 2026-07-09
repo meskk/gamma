@@ -3,6 +3,8 @@
 //! parse fails closed on anything the schema would reject anyway.
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// How a creator's private area is accessed — the CREATOR's choice
 /// (owner decision 2026-07-08). Mirrors the `private_areas.access_model`
@@ -45,6 +47,47 @@ pub struct PrivateArea {
     pub currency: String,
     pub description: String,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Request to configure the caller's OWN private area (A3). The creator id
+/// comes from the authenticated session, never from the body or path.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct PrivateAreaConfigRequest {
+    /// One of `free`, `one_time`, `subscription`, `per_post` (the CREATOR's
+    /// choice — owner decision 2026-07-08).
+    pub access_model: String,
+    /// Integer EUR cents for AREA access: required (> 0) for
+    /// one_time/subscription, must be 0 for free/per_post (per-post prices
+    /// attach to posts when their stage lands).
+    #[serde(default)]
+    pub price_cents: i64,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// A creator's private-area terms. This is the public OFFER a potential
+/// buyer decides against — nothing in it is secret.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct PrivateAreaView {
+    pub creator_id: i64,
+    pub access_model: String,
+    pub price_cents: i64,
+    pub currency: String,
+    pub description: String,
+}
+
+impl From<PrivateArea> for PrivateAreaView {
+    fn from(area: PrivateArea) -> Self {
+        Self {
+            creator_id: area.creator_id,
+            access_model: area.access_model,
+            price_cents: area.price_cents,
+            currency: area.currency,
+            description: area.description,
+        }
+    }
 }
 
 /// Why a viewer holds access — mirrors the `area_entitlements.source` CHECK.

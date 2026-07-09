@@ -12,6 +12,7 @@ use crate::gems::SettlementService;
 use crate::interactions::InteractionService;
 use crate::media::MediaService;
 use crate::posts::PostService;
+use crate::private_area::service::PrivateAreaService;
 use crate::queue::{IngestionQueue, TranscodeQueue};
 use crate::signals::SignalService;
 use crate::users::UserService;
@@ -31,6 +32,13 @@ pub struct AppState {
     pub auth: AuthService,
     pub signals: SignalService,
     pub comments: CommentService,
+    pub private_area: PrivateAreaService,
+    /// ADR 0011 §6: the private-area surface ships DARK. `GAMMA_PRIVATE_AREA=true`
+    /// makes `app` MOUNT its routes; until then (and until legal sign-off) they
+    /// are never mounted, so the paths are genuinely nonexistent. Read once at
+    /// startup; tests flip it via [`AppState::with_private_area`] instead of
+    /// racing process-global env vars.
+    pub private_area_enabled: bool,
     /// Exposed so the binary can ensure the bucket exists on startup.
     pub storage: Storage,
 }
@@ -56,6 +64,7 @@ impl AppState {
         let auth = AuthService::with_econ(pool.clone(), econ);
         let signals = SignalService::new(pool.clone());
         let comments = CommentService::new(pool.clone());
+        let private_area = PrivateAreaService::new(pool.clone());
         Self {
             pool,
             users,
@@ -68,7 +77,16 @@ impl AppState {
             auth,
             signals,
             comments,
+            private_area,
+            private_area_enabled: std::env::var("GAMMA_PRIVATE_AREA").as_deref() == Ok("true"),
             storage,
         }
+    }
+
+    /// Explicitly flip the private-area flag (tests; parallel `#[sqlx::test]`
+    /// cases must never mutate the process-global environment).
+    pub fn with_private_area(mut self, enabled: bool) -> Self {
+        self.private_area_enabled = enabled;
+        self
     }
 }
