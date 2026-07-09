@@ -42,7 +42,7 @@ impl MediaRepository {
             INSERT INTO media_assets (owner_id, kind, object_key, content_type, status, unlock_price)
             VALUES ($1, $2, $3, $4, 'pending', $5)
             RETURNING id, owner_id, kind, object_key, content_type, status,
-                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at
+                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at, hidden_at
             "#,
             owner_id,
             kind,
@@ -59,7 +59,7 @@ impl MediaRepository {
             MediaAsset,
             r#"
             SELECT id, owner_id, kind, object_key, content_type, status,
-                   size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at
+                   size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at, hidden_at
             FROM media_assets
             WHERE id = $1
             "#,
@@ -77,7 +77,7 @@ impl MediaRepository {
             SET status = 'ready', size_bytes = $2
             WHERE id = $1
             RETURNING id, owner_id, kind, object_key, content_type, status,
-                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at
+                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at, hidden_at
             "#,
             id,
             size_bytes
@@ -105,12 +105,36 @@ impl MediaRepository {
             SET hls_manifest_key = $2, transcode_status = 'done'
             WHERE id = $1
             RETURNING id, owner_id, kind, object_key, content_type, status,
-                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at
+                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at, hidden_at
             "#,
             id,
             manifest_key
         )
         .fetch_one(&self.pool)
+        .await
+    }
+
+    /// Operator takedown / restore of an ASSET: set or clear `hidden_at`. Returns
+    /// the row, or `None` if no such asset. Blocks the asset directly (for
+    /// everyone, incl. the owner) — the robust handle on illegal media that post
+    /// takedown can't fully give when one asset backs several posts.
+    pub async fn set_asset_hidden(
+        &self,
+        id: i64,
+        hidden_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Option<MediaAsset>, sqlx::Error> {
+        sqlx::query_as!(
+            MediaAsset,
+            r#"
+            UPDATE media_assets SET hidden_at = $2
+            WHERE id = $1
+            RETURNING id, owner_id, kind, object_key, content_type, status,
+                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at, hidden_at
+            "#,
+            id,
+            hidden_at
+        )
+        .fetch_optional(&self.pool)
         .await
     }
 
@@ -149,9 +173,10 @@ impl MediaRepository {
     /// to enumerating non-owners (consistent with every text read path). It does
     /// NOT go on the unattached `NOT EXISTS` arm: an attached-but-hidden post must
     /// still count as "attached" (else the asset would fall through to the
-    /// unattached=allowed branch). RESIDUAL (tracked follow-up): the service-layer
-    /// owner short-circuit still lets the OWNER reach their own taken-down media,
-    /// and there is no asset-level takedown for the one-asset-many-posts case.
+    /// unattached=allowed branch). This gates AREA + post-moderation; asset-level
+    /// takedown (`media_assets.hidden_at`, migration 0022) is a separate, stronger
+    /// gate enforced in the service, blocking a taken-down asset for EVERYONE
+    /// (incl. the owner) regardless of how many posts reference it.
     pub async fn media_area_allows(
         &self,
         asset_id: i64,

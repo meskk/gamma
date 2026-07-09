@@ -11,7 +11,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 
-use crate::auth::AuthUser;
+use crate::auth::{AdminUser, AuthUser};
 use crate::error::ApiError;
 use crate::media::model::{MediaAssetView, NewUpload, UnlockSummary, UploadTicket};
 use crate::state::AppState;
@@ -23,6 +23,10 @@ pub fn routes() -> Router<AppState> {
         .route("/media/:id/transcode", post(transcode))
         .route("/media/:id/unlock", post(unlock))
         .route("/media/:id/manifest", get(manifest))
+        // Operator moderation: asset-level takedown / restore (blocks the asset for
+        // everyone, incl. the owner — the direct handle on illegal media).
+        .route("/media/:id/takedown", post(takedown))
+        .route("/media/:id/restore", post(restore))
         .route("/media/:id", get(get_media))
 }
 
@@ -81,4 +85,22 @@ async fn get_media(
     Path(id): Path<i64>,
 ) -> Result<Json<MediaAssetView>, ApiError> {
     Ok(Json(state.media.get(id, viewer_id).await?))
+}
+
+/// Operator-only: take an asset down (unreachable on every content path).
+async fn takedown(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<MediaAssetView>, ApiError> {
+    Ok(Json(state.media.set_asset_visibility(id, true).await?))
+}
+
+/// Operator-only: restore a previously taken-down asset.
+async fn restore(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<MediaAssetView>, ApiError> {
+    Ok(Json(state.media.set_asset_visibility(id, false).await?))
 }

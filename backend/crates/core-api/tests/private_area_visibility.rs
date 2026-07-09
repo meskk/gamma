@@ -598,3 +598,131 @@ async fn comments_on_a_private_post_are_gated(pool: PgPool) {
         StatusCode::CREATED
     );
 }
+
+async fn make_operator(pool: &PgPool, user_id: i64) {
+    sqlx::query!("UPDATE users SET role = 'operator' WHERE id = $1", user_id)
+        .execute(pool)
+        .await
+        .expect("make operator");
+}
+
+async fn media_moderate(router: &Router, id: i64, action: &str, token: &str) -> StatusCode {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/media/{id}/{action}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn asset_takedown_blocks_everyone_including_the_owner(pool: PgPool) {
+    // Asset-level operator takedown (migration 0022): unlike a private-area gate, it
+    // has NO owner exception. Uses a PUBLIC post so the area gate is a no-op and the
+    // 404 is unambiguously the asset takedown.
+    let router = app(AppState::new(pool.clone()));
+    let (creator_token, creator) = common::register(&router, &[]).await;
+    let (stranger_token, _stranger) = common::register(&router, &[]).await;
+    let (op_token, op) = common::register(&router, &[]).await;
+    make_operator(&pool, op).await;
+
+    let pub_post = public_post(&pool, creator, "pub").await;
+    let asset = make_asset(&pool, creator, 0).await;
+    attach(&pool, asset, &[pub_post]).await;
+
+    // Before takedown: owner and stranger both reach the public asset's metadata.
+    assert_eq!(
+        media_get_status(&router, asset, &creator_token).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        media_get_status(&router, asset, &stranger_token).await,
+        StatusCode::OK
+    );
+
+    // Non-operator cannot take an asset down; the operator can.
+    assert_eq!(
+        media_moderate(&router, asset, "takedown", &creator_token).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        media_moderate(&router, asset, "takedown", &op_token).await,
+        StatusCode::OK
+    );
+
+    // Taken down: every content path 404s — for the OWNER too.
+    assert_eq!(
+        media_get_status(&router, asset, &creator_token).await,
+        StatusCode::NOT_FOUND
+    );
+    for token in [&creator_token, &stranger_token] {
+        assert_eq!(
+            media_get_status(&router, asset, token).await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            media_unlock_status(&router, asset, token).await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            media_manifest_status(&router, asset, token).await,
+            StatusCode::NOT_FOUND
+        );
+    }
+    // The owner-only WRITE paths must not re-mint a raw URL either: a taken-down
+    // asset is frozen, so re-finalize / re-transcode 404 for the owner too.
+    assert_eq!(
+        media_moderate(&router, asset, "finalize", &creator_token).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        media_moderate(&router, asset, "transcode", &creator_token).await,
+        StatusCode::NOT_FOUND
+    );
+
+    // Restore brings it back.
+    assert_eq!(
+        media_moderate(&router, asset, "restore", &op_token).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        media_get_status(&router, asset, &creator_token).await,
+        StatusCode::OK
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn owner_cannot_reach_media_of_their_own_taken_down_post(pool: PgPool) {
+    // Residual #1 closed: a POST takedown now hides its media from the OWNER too
+    // (no owner short-circuit) — consistent with the text rail, where the author
+    // cannot read their own taken-down post.
+    let router = app(AppState::new(pool.clone()));
+    let (creator_token, creator) = common::register(&router, &[]).await;
+
+    let post = public_post(&pool, creator, "pub-with-media").await;
+    let asset = make_asset(&pool, creator, 0).await;
+    attach(&pool, asset, &[post]).await;
+
+    // Visible post: the owner reaches their own media.
+    assert_eq!(
+        media_get_status(&router, asset, &creator_token).await,
+        StatusCode::OK
+    );
+
+    // Take the post down (moderation): the owner can no longer reach its media.
+    sqlx::query!("UPDATE posts SET hidden_at = now() WHERE id = $1", post)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        media_get_status(&router, asset, &creator_token).await,
+        StatusCode::NOT_FOUND
+    );
+}

@@ -54,6 +54,9 @@ pub struct MediaAsset {
     pub transcode_status: String,
     pub unlock_price: i64,
     pub created_at: DateTime<Utc>,
+    /// Operator takedown timestamp (migration 0022). `None` = live; `Some` =
+    /// taken down, unreachable on every content path for EVERYONE incl. the owner.
+    pub hidden_at: Option<DateTime<Utc>>,
 }
 
 /// What the client needs to upload directly to the object store.

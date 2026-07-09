@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, owner_id, kind, object_key, content_type, status,\n                   size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at\n            FROM media_assets\n            WHERE id = $1\n            ",
+  "query": "\n            UPDATE media_assets SET hidden_at = $2\n            WHERE id = $1\n            RETURNING id, owner_id, kind, object_key, content_type, status,\n                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at, hidden_at\n            ",
   "describe": {
     "columns": [
       {
@@ -57,11 +57,17 @@
         "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "hidden_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Timestamptz"
       ]
     },
     "nullable": [
@@ -75,8 +81,9 @@
       true,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "4e8c085737aff4617f981e396cb2b09682cb5127faa3ac0daba2252483d022e6"
+  "hash": "f5bd743d2a2266fed562cca6445da0705f5edf30ba817ead037d633b7cc3215c"
 }

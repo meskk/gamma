@@ -1,0 +1,89 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE media_assets\n            SET hls_manifest_key = $2, transcode_status = 'done'\n            WHERE id = $1\n            RETURNING id, owner_id, kind, object_key, content_type, status,\n                      size_bytes, hls_manifest_key, transcode_status, unlock_price, created_at, hidden_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "owner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "object_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "content_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "size_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "hls_manifest_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "transcode_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "unlock_price",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "hidden_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "587c8fa64795149a020352ad1c8eb8b446bd749cb2c609f51bfe75f9fd5fe53e"
+}
