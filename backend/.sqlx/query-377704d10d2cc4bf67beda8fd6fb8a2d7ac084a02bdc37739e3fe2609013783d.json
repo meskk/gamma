@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT COUNT(*) AS \"count!\"\n            FROM post_embeddings pe\n            JOIN posts p ON p.id = pe.post_id\n            WHERE p.hidden_at IS NULL AND p.area = 'public'\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "377704d10d2cc4bf67beda8fd6fb8a2d7ac084a02bdc37739e3fe2609013783d"
+}

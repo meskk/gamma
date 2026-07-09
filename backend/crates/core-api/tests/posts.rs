@@ -44,12 +44,17 @@ async fn repository_create_get_list(pool: PgPool) {
         .await
         .expect("create");
 
+    // Every post is 'public' until the private write path lands (A4g); the area
+    // column round-trips through both projections (create RETURNING and get).
+    assert_eq!(created.area, "public");
     let fetched = repo.get(created.id).await.expect("get").expect("exists");
     assert_eq!(fetched.body.as_deref(), Some("hello world"));
     assert_eq!(fetched.author_id, author);
+    assert_eq!(fetched.area, "public");
 
     let recent = repo.list(None, 10, 0).await.expect("list");
     assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].area, "public");
 
     // Author filter: matching author returns it, a different author returns nothing.
     assert_eq!(

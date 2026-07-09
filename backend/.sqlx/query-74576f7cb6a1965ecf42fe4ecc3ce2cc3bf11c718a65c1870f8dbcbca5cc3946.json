@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT p.id AS \"id!\"\n            FROM posts p\n            LEFT JOIN content_signals cs ON cs.post_id = p.id\n            WHERE cs.post_id IS NULL\n              AND p.hidden_at IS NULL\n              AND p.area = 'public'\n              AND p.id > $1\n            ORDER BY p.id\n            LIMIT $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "74576f7cb6a1965ecf42fe4ecc3ce2cc3bf11c718a65c1870f8dbcbca5cc3946"
+}

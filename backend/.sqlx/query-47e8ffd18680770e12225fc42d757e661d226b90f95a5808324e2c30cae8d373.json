@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, author_id, category, body, created_at, popularity_score, media_id\n            FROM posts\n            WHERE id = $1 AND hidden_at IS NULL\n            ",
+  "query": "\n            SELECT id, author_id, category, body, created_at, popularity_score, media_id, area\n            FROM posts\n            WHERE id = $1 AND hidden_at IS NULL\n            ",
   "describe": {
     "columns": [
       {
@@ -37,6 +37,11 @@
         "ordinal": 6,
         "name": "media_id",
         "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "area",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -51,8 +56,9 @@
       true,
       false,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "62879ad8ea5a6a6d74893003b332f2d85c0ba90792fd83a8d2c51ec0f63aed4d"
+  "hash": "47e8ffd18680770e12225fc42d757e661d226b90f95a5808324e2c30cae8d373"
 }

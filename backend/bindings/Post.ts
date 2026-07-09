@@ -9,4 +9,13 @@ popularity_score: number,
  * Optional attached media asset (image/video/audio). Access is gated by the
  * asset's own unlock_price — see `GET /media/:id`.
  */
-media_id: bigint | null, };
+media_id: bigint | null, 
+/**
+ * `public` or `private` (P-4, migration 0021). A private post is the
+ * creator's paywalled area; it must never surface in a read path unless the
+ * viewer is entitled — enforced in the repository queries (see the
+ * post-visibility invariant doc). A post projected here is one the viewer
+ * may already see, so this field is a display hint (e.g. a lock badge), not
+ * itself the gate.
+ */
+area: string, };

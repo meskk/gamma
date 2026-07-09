@@ -77,6 +77,49 @@ async fn unanalyzed_query_excludes_analysed_and_hidden_and_paginates(pool: PgPoo
     assert!(posts.unanalyzed_post_ids(p4, 100).await.unwrap().is_empty());
 }
 
+/// P-4/A4: private posts leave the ingestion rail entirely (ADR 0011 §5 — never
+/// analysed). The producer and the status counts must both exclude them, so the
+/// public partition (analysed + unanalysed) stays consistent.
+#[sqlx::test(migrations = "../../migrations")]
+async fn backfill_and_status_exclude_private_posts(pool: PgPool) {
+    let posts = PostRepository::new(pool.clone());
+    let signals = ContentSignalRepository::new(pool.clone());
+    let author = new_author(&pool).await;
+
+    let public = new_post(&pool, author, "public").await;
+    let private_unanalyzed = new_post(&pool, author, "private-1").await;
+    let private_analyzed = new_post(&pool, author, "private-2").await;
+    sqlx::query!(
+        "UPDATE posts SET area = 'private' WHERE id = ANY($1)",
+        &[private_unanalyzed, private_analyzed][..]
+    )
+    .execute(&pool)
+    .await
+    .expect("set private");
+    // Give the analysed private post a signals row — it must still be excluded
+    // from the model-version count (partition consistency).
+    signals
+        .upsert(private_analyzed, "heuristic-v0", 0, &json!({"x": 1}), None)
+        .await
+        .unwrap();
+
+    // The producer offers ONLY the public unanalysed post.
+    assert_eq!(
+        posts.unanalyzed_post_ids(0, 100).await.unwrap(),
+        vec![public]
+    );
+    assert_eq!(posts.count_unanalyzed_posts().await.unwrap(), 1);
+    // The analysed private post does not show up in the by-model-version count.
+    assert!(
+        posts
+            .signals_count_by_model_version()
+            .await
+            .unwrap()
+            .is_empty(),
+        "a signals row on a private post is not counted"
+    );
+}
+
 async fn backfill(router: &Router, token: Option<&str>, query: &str) -> Response<Body> {
     let mut b = Request::builder()
         .method("POST")

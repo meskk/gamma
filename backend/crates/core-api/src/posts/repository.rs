@@ -2,29 +2,79 @@
 //! Same shape as the users repository (concrete struct, `query_as!` checked
 //! queries). Adds `list` to show the multi-row (`fetch_all`) template.
 //!
-//! ## Post-visibility invariant (moderation) — READ THIS BEFORE ADDING A QUERY
+//! ## Post-visibility invariants — READ THIS BEFORE ADDING A QUERY
 //!
+//! TWO orthogonal invariants gate every read of `posts` (here OR via a
+//! `JOIN`/subquery from another domain). sqlx's compile-time macros can't share a
+//! `WHERE` fragment, so both are enforced per query; a forgotten filter OVER-hides
+//! (safe), a mistyped one is the only leak risk and is locked per surface by a test.
+//!
+//! ### 1. Moderation (`hidden_at`)
 //! A taken-down post has `hidden_at` set (operator action). Every user-facing read
-//! of `posts` — here OR via a `JOIN`/subquery from another domain — MUST exclude
-//! `hidden_at IS NOT NULL`, and every write *attached to* a post MUST refuse a hidden
-//! one. sqlx's compile-time macros can't share a `WHERE` fragment, so this is
-//! enforced per query: when you touch `posts`, add the `hidden_at IS NULL` filter
-//! unless it is an operator-only surface. This invariant has regressed twice
-//! (comments, interactions) — every surface below is now locked by a takedown test.
+//! MUST exclude `hidden_at IS NOT NULL`, and every write *attached to* a post MUST
+//! refuse a hidden one. This invariant has regressed twice (comments, interactions).
 //!
-//! Surfaces that MUST filter (all do):
+//! ### 2. Area / private-area entitlement (`area`, P-4/A4, ADR 0011 §5)
+//! A post with `area = 'private'` is the creator's paywalled area and must surface
+//! in NO read path unless the viewer is entitled. The viewer-scoped predicate (a
+//! separate conjunct, adjacent to `hidden_at`, NOT merged with it) is, with `p` the
+//! `posts` alias and `$V` the viewer bound as `Option<i64>` (NULL = anonymous):
+//!
+//! ```sql
+//! (   p.area = 'public'
+//!  OR p.author_id = $V
+//!  OR EXISTS (SELECT 1 FROM area_entitlements ae
+//!             WHERE ae.viewer_id = $V AND ae.creator_id = p.author_id
+//!               AND (ae.expires_at IS NULL OR ae.expires_at > now()))
+//!  OR EXISTS (SELECT 1 FROM private_areas pa
+//!             WHERE pa.creator_id = p.author_id AND pa.access_model = 'free'
+//!               AND $V IS NOT NULL) )   -- free = members, login required (owner-confirmable)
+//! ```
+//!
+//! This is the SQL form of `PrivateAreaRepository::is_entitled` EXTENDED with the
+//! creator arm and the `access_model = 'free'` arm it deliberately omits. It gates
+//! per-CREATOR: one entitlement row grants all of a creator's private posts (correct
+//! for free/one_time/subscription; `per_post` read-gating is DEFERRED to its payment
+//! stage, A9). The guard is INDEPENDENT of the `GAMMA_PRIVATE_AREA` flag — that flag
+//! only gates the A3 config routes; a private post can exist and must never leak.
+//! Producer/economic rails (settlement, ingestion) use the blanket `p.area = 'public'`
+//! (no viewer) — private posts leave those rails unconditionally (Rail-1/Rail-2
+//! separation; private posts are never analysed). NOTE on the ingestion producer:
+//! `PostService::create` enqueues every new post id UNCONDITIONALLY and is not
+//! producer-gated on `area` — that is deliberate. The AI worker fetches each post
+//! through the anonymous `get_post` API read (ADR 0006), so the AUTHORITATIVE
+//! analysis gate is that read's area predicate (A4b), not the enqueue: an anonymous
+//! fetch of a private post returns 404 and the worker skips it, so no
+//! `content_signals` row is ever written. This makes the ORDERING load-bearing —
+//! A4b (the read gate) MUST land before A4g (the write path that can first mint a
+//! private post); the plan orders them so.
+//!
+//! Surfaces that MUST filter `hidden_at` (all do):
 //!   - `get` / `list` (here) · the three feed CTEs (`feed::repository::candidates`)
 //!   - comment read + write (`comments::repository`)
 //!   - settlement edges (`interactions::repository::edges_for_epoch`) — drops the
 //!     gem-weight of likes on hidden posts, including likes recorded before takedown
 //!   - ingestion backfill / status (`unanalyzed_post_ids`, `count_unanalyzed_posts`,
-//!     `signals_count_by_model_version`)
+//!     `signals_count_by_model_version`, `count_embeddings`)
+//!
+//! Surfaces that MUST apply the AREA predicate/gate (A4b–A4f wire the viewer):
+//!   - `get` / `list` (viewer-scoped) · the three feed CTEs · comment read + write
+//!   - the MEDIA rail (out of this crate: `media::service` gates an asset through its
+//!     owning `posts.media_id` join — the one path `hidden_at` structurally misses)
+//!   - the write-side existence oracles (`report`, `interactions::record`) via
+//!     `post_visible_to`
+//!   - settlement + ingestion use the blanket `p.area = 'public'` (no viewer)
 //!
 //! Deliberate exceptions:
-//!   - operator surfaces (`list_reported`) intentionally include hidden rows
-//!   - the interaction *write* path stays inert on a hidden post (the post is
-//!     unreadable everywhere and `edges_for_epoch` is the authoritative guard), so
-//!     it is not guarded again at insert time
+//!   - operator surfaces (`list_reported`) intentionally include BOTH hidden and
+//!     private rows (ADR 0011 §5 116-117); `ReportedPost.area` surfaces which
+//!   - the interaction *write* path stays inert on a hidden post at the SQL layer
+//!     (guarded at the service in A4f; `edges_for_epoch` is the authoritative
+//!     economic guard), so it is not guarded again at insert time
+//!
+//! FUTURE: an M2.7 `content_signals`/embedding-driven ranker is a NEW post-content
+//! read path — it MUST re-apply the area predicate, OR stale signal/embedding rows
+//! must be purged when a post flips public->private.
 
 use chrono::{DateTime, Utc};
 
@@ -47,7 +97,7 @@ impl PostRepository {
             r#"
             INSERT INTO posts (author_id, category, body, media_id)
             VALUES ($1, $2, $3, $4)
-            RETURNING id, author_id, category, body, created_at, popularity_score, media_id
+            RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area
             "#,
             new.author_id,
             new.category.as_deref(),
@@ -81,7 +131,7 @@ impl PostRepository {
         sqlx::query_as!(
             Post,
             r#"
-            SELECT id, author_id, category, body, created_at, popularity_score, media_id
+            SELECT id, author_id, category, body, created_at, popularity_score, media_id, area
             FROM posts
             WHERE id = $1 AND hidden_at IS NULL
             "#,
@@ -104,7 +154,7 @@ impl PostRepository {
         sqlx::query_as!(
             Post,
             r#"
-            SELECT id, author_id, category, body, created_at, popularity_score, media_id
+            SELECT id, author_id, category, body, created_at, popularity_score, media_id, area
             FROM posts
             WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)
             ORDER BY created_at DESC
@@ -154,7 +204,7 @@ impl PostRepository {
             r#"
             UPDATE posts SET hidden_at = $2
             WHERE id = $1
-            RETURNING id, author_id, category, body, created_at, popularity_score, media_id
+            RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area
             "#,
             id,
             hidden_at
@@ -179,6 +229,7 @@ impl PostRepository {
             LEFT JOIN content_signals cs ON cs.post_id = p.id
             WHERE cs.post_id IS NULL
               AND p.hidden_at IS NULL
+              AND p.area = 'public'
               AND p.id > $1
             ORDER BY p.id
             LIMIT $2
@@ -198,7 +249,7 @@ impl PostRepository {
             SELECT COUNT(*) AS "count!"
             FROM posts p
             LEFT JOIN content_signals cs ON cs.post_id = p.id
-            WHERE cs.post_id IS NULL AND p.hidden_at IS NULL
+            WHERE cs.post_id IS NULL AND p.hidden_at IS NULL AND p.area = 'public'
             "#
         )
         .fetch_one(&self.pool)
@@ -215,7 +266,7 @@ impl PostRepository {
             SELECT cs.model_version, COUNT(*) AS "count!"
             FROM content_signals cs
             JOIN posts p ON p.id = cs.post_id
-            WHERE p.hidden_at IS NULL
+            WHERE p.hidden_at IS NULL AND p.area = 'public'
             GROUP BY cs.model_version
             ORDER BY cs.model_version
             "#
@@ -236,7 +287,7 @@ impl PostRepository {
             SELECT COUNT(*) AS "count!"
             FROM post_embeddings pe
             JOIN posts p ON p.id = pe.post_id
-            WHERE p.hidden_at IS NULL
+            WHERE p.hidden_at IS NULL AND p.area = 'public'
             "#
         )
         .fetch_one(&self.pool)
@@ -252,7 +303,8 @@ impl PostRepository {
             SELECT
                 p.id AS "post_id!",
                 COUNT(r.id) AS "report_count!",
-                (p.hidden_at IS NOT NULL) AS "hidden!"
+                (p.hidden_at IS NOT NULL) AS "hidden!",
+                p.area AS "area!"
             FROM posts p
             JOIN post_reports r ON r.post_id = p.id
             GROUP BY p.id

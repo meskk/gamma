@@ -96,9 +96,15 @@ impl InteractionRepository {
     ///
     /// A post interaction whose target is the author of a TAKEN-DOWN post
     /// (`hidden_at` set) is also dropped: moderation must stop removed content from
-    /// conferring social weight — including likes recorded before the takedown. A
-    /// direct user→user interaction (explicit `target_id`) is kept regardless of any
-    /// attached post's visibility, since its weight does not flow from the post.
+    /// conferring social weight — including likes recorded before the takedown. The
+    /// same drop applies to a PRIVATE post (`area = 'private'`, P-4/A4): engagement
+    /// behind the paywall never feeds the settlement graph (ADR 0011 §5 — Rail-1 vs
+    /// Rail-2 separation, and no bot-harvest surface hidden from report-driven
+    /// moderation). Both live INSIDE the `target_id IS NULL` branch: a direct
+    /// user→user interaction (explicit `target_id`) is kept regardless of any
+    /// attached post's visibility, since its weight does not flow from the post —
+    /// putting the `area` filter at the top level would null-drop every direct edge
+    /// via the LEFT JOIN and zero all tip/direct gems.
     pub async fn edges_for_epoch(&self, epoch_k: i32) -> Result<Vec<EpochEdge>, sqlx::Error> {
         sqlx::query_as!(
             EpochEdge,
@@ -113,7 +119,7 @@ impl InteractionRepository {
             WHERE ie.epoch_k = $1
               AND COALESCE(ie.target_id, p.author_id) IS NOT NULL
               AND ie.actor_id <> COALESCE(ie.target_id, p.author_id)
-              AND (ie.target_id IS NOT NULL OR p.hidden_at IS NULL)
+              AND (ie.target_id IS NOT NULL OR (p.hidden_at IS NULL AND p.area = 'public'))
             "#,
             epoch_k
         )

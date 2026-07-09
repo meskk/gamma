@@ -3,4 +3,10 @@
 /**
  * Operator review row: a reported post with how many reports it has.
  */
-export type ReportedPost = { post_id: bigint, report_count: bigint, hidden: boolean, };
+export type ReportedPost = { post_id: bigint, report_count: bigint, hidden: boolean, 
+/**
+ * `public` or `private` — so the operator queue shows whether a reported
+ * post is paywalled (the queue deliberately still lists private posts,
+ * ADR 0011 §5).
+ */
+area: string, };

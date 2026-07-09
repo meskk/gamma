@@ -21,6 +21,13 @@ pub struct Post {
     /// Optional attached media asset (image/video/audio). Access is gated by the
     /// asset's own unlock_price — see `GET /media/:id`.
     pub media_id: Option<i64>,
+    /// `public` or `private` (P-4, migration 0021). A private post is the
+    /// creator's paywalled area; it must never surface in a read path unless the
+    /// viewer is entitled — enforced in the repository queries (see the
+    /// post-visibility invariant doc). A post projected here is one the viewer
+    /// may already see, so this field is a display hint (e.g. a lock badge), not
+    /// itself the gate.
+    pub area: String,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -55,4 +62,8 @@ pub struct ReportedPost {
     pub post_id: i64,
     pub report_count: i64,
     pub hidden: bool,
+    /// `public` or `private` — so the operator queue shows whether a reported
+    /// post is paywalled (the queue deliberately still lists private posts,
+    /// ADR 0011 §5).
+    pub area: String,
 }

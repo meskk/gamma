@@ -174,6 +174,73 @@ async fn edges_exclude_interactions_on_taken_down_posts(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn edges_exclude_private_posts(pool: PgPool) {
+    // Twin of the taken-down test for the P-4/A4 area invariant: engagement on a
+    // PRIVATE post must never feed the settlement graph (ADR 0011 §5), but a
+    // DIRECT user→user edge (target_id set) survives regardless of post area.
+    let router = app(AppState::new(pool.clone()));
+    let (_t_author, author) = common::register(&router, &[]).await;
+    let (_t_actor, actor) = common::register(&router, &[]).await;
+
+    let posts = PostRepository::new(pool.clone());
+    let post = posts
+        .create(&NewPost {
+            author_id: author,
+            category: None,
+            body: "hello".to_string(),
+            media_id: None,
+        })
+        .await
+        .expect("create post");
+    let svc = InteractionService::new(pool.clone());
+    // A post-derived edge (Like: no target_id) and a direct edge (Comment: sets
+    // target_id), both on the same post.
+    svc.record(NewInteraction {
+        actor_id: actor,
+        r#type: InteractionType::Like,
+        target_id: None,
+        post_id: Some(post.id),
+    })
+    .await
+    .expect("record like");
+    svc.record(NewInteraction {
+        actor_id: actor,
+        r#type: InteractionType::Comment,
+        target_id: Some(author),
+        post_id: Some(post.id),
+    })
+    .await
+    .expect("record comment");
+
+    let epoch = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i32;
+    let repo = InteractionRepository::new(pool.clone());
+
+    // While public: both resolve to an actor→author edge.
+    assert_eq!(
+        repo.edges_for_epoch(epoch).await.expect("edges").len(),
+        2,
+        "public post: like + comment each confer an edge"
+    );
+
+    // Flip the post private (no API write path exists yet — A4g; set it directly).
+    sqlx::query!("UPDATE posts SET area = 'private' WHERE id = $1", post.id)
+        .execute(&pool)
+        .await
+        .expect("set private");
+
+    // The post-derived Like is dropped; the direct Comment edge (target_id set)
+    // survives — a top-level area filter would have wrongly zeroed it too.
+    let after = repo.edges_for_epoch(epoch).await.expect("edges after");
+    assert_eq!(
+        after.len(),
+        1,
+        "private post: the post-derived like is dropped, the direct edge survives"
+    );
+    assert_eq!(after[0].actor_id, actor);
+    assert_eq!(after[0].target_id, author);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn interaction_on_missing_post_is_404(pool: PgPool) {
     // The post FK (migration 0015) rejects an interaction on a non-existent post;
     // the service maps it to 404 (a client error) rather than a 500.

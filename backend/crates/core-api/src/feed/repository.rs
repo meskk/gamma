@@ -32,7 +32,7 @@ impl FeedRepository {
             r#"
             WITH cutoff AS (SELECT now() - interval '48 hours' AS t),
             from_follows AS (
-                SELECT p.id, p.author_id, p.category, p.body, p.created_at, p.popularity_score, p.media_id
+                SELECT p.id, p.author_id, p.category, p.body, p.created_at, p.popularity_score, p.media_id, p.area
                 FROM posts p
                 JOIN follows f ON f.followee_id = p.author_id
                 WHERE f.follower_id = $1 AND p.created_at > (SELECT t FROM cutoff)
@@ -41,7 +41,7 @@ impl FeedRepository {
                 LIMIT 800
             ),
             from_category AS (
-                SELECT id, author_id, category, body, created_at, popularity_score, media_id
+                SELECT id, author_id, category, body, created_at, popularity_score, media_id, area
                 FROM posts
                 WHERE category = ANY($2) AND created_at > (SELECT t FROM cutoff)
                   AND hidden_at IS NULL
@@ -49,7 +49,7 @@ impl FeedRepository {
                 LIMIT 800
             ),
             from_popularity AS (
-                SELECT id, author_id, category, body, created_at, popularity_score, media_id
+                SELECT id, author_id, category, body, created_at, popularity_score, media_id, area
                 FROM posts
                 WHERE created_at > (SELECT t FROM cutoff)
                   AND hidden_at IS NULL
@@ -57,11 +57,11 @@ impl FeedRepository {
                 LIMIT 400
             ),
             candidates AS (
-                SELECT id, author_id, category, body, created_at, popularity_score, media_id FROM from_follows
+                SELECT id, author_id, category, body, created_at, popularity_score, media_id, area FROM from_follows
                 UNION
-                SELECT id, author_id, category, body, created_at, popularity_score, media_id FROM from_category
+                SELECT id, author_id, category, body, created_at, popularity_score, media_id, area FROM from_category
                 UNION
-                SELECT id, author_id, category, body, created_at, popularity_score, media_id FROM from_popularity
+                SELECT id, author_id, category, body, created_at, popularity_score, media_id, area FROM from_popularity
             )
             SELECT
                 id AS "id!",
@@ -70,7 +70,8 @@ impl FeedRepository {
                 body,
                 created_at AS "created_at!",
                 popularity_score AS "popularity_score!",
-                media_id
+                media_id,
+                area AS "area!"
             FROM candidates
             "#,
             user_id,
