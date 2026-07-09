@@ -4,6 +4,8 @@
 use core_api::feed::repository::FeedRepository;
 use core_api::posts::model::NewPost;
 use core_api::posts::repository::PostRepository;
+use core_api::private_area::model::{AccessModel, EntitlementSource};
+use core_api::private_area::repository::PrivateAreaRepository;
 use core_api::users::model::NewUser;
 use core_api::users::repository::UserRepository;
 use core_api::{app, AppState};
@@ -66,6 +68,73 @@ async fn candidate_set_unions_all_three_sources(pool: PgPool) {
     assert!(ids.contains(&p_follow), "follow source missing");
     assert!(ids.contains(&p_category), "category source missing");
     assert!(ids.contains(&p_popular), "popularity source missing");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn candidate_set_excludes_private_posts(pool: PgPool) {
+    // P-4/A4c twin of the taken-down test: a private post from a FOLLOWED author
+    // must not reach a non-entitled follower's feed; an entitlement — or the
+    // creator choosing a `free` area — admits it.
+    let viewer = new_user(&pool, vec![]).await;
+    let paid_creator = new_user(&pool, vec![]).await;
+    let free_creator = new_user(&pool, vec![]).await;
+    for followee in [paid_creator, free_creator] {
+        sqlx::query("INSERT INTO follows (follower_id, followee_id) VALUES ($1, $2)")
+            .bind(viewer)
+            .bind(followee)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let pub_id = new_post(&pool, paid_creator, None, "public").await;
+    let priv_id = new_post(&pool, paid_creator, None, "secret").await;
+    let free_priv_id = new_post(&pool, free_creator, None, "free-but-members").await;
+    sqlx::query("UPDATE posts SET area = 'private' WHERE id = ANY($1)")
+        .bind(vec![priv_id, free_priv_id])
+        .execute(&pool)
+        .await
+        .unwrap();
+    let areas = PrivateAreaRepository::new(pool.clone());
+    areas
+        .upsert_area(free_creator, AccessModel::Free, 0, "")
+        .await
+        .unwrap();
+
+    let feed = FeedRepository::new(pool.clone());
+    let got: Vec<i64> = feed
+        .candidates(viewer, &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|p| p.id)
+        .collect();
+    assert!(got.contains(&pub_id), "public post should be a candidate");
+    assert!(
+        !got.contains(&priv_id),
+        "a paid creator's private post leaked into a non-entitled follower's feed"
+    );
+    assert!(
+        got.contains(&free_priv_id),
+        "a free area's private post should reach a logged-in follower's feed"
+    );
+
+    // Granting the viewer an entitlement admits the paid creator's private post.
+    areas
+        .grant_entitlement(viewer, paid_creator, EntitlementSource::Purchase, None)
+        .await
+        .unwrap();
+    let after: Vec<i64> = feed
+        .candidates(viewer, &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|p| p.id)
+        .collect();
+    assert!(
+        after.contains(&priv_id),
+        "an entitlement should admit the private post to the feed"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
