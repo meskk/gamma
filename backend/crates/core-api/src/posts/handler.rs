@@ -6,7 +6,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::auth::{AdminUser, AuthUser};
+use crate::auth::{AdminUser, AuthUser, OptionalAuthUser};
 use crate::error::ApiError;
 use crate::posts::model::{NewPost, Post, ReportRequest, ReportedPost};
 use crate::posts::service::{BackfillResult, IngestionStatus};
@@ -67,20 +67,22 @@ async fn create_post(
 }
 
 async fn get_post(
+    OptionalAuthUser(viewer): OptionalAuthUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Post>, ApiError> {
-    let post = state.posts.get(id).await?;
+    let post = state.posts.get(id, viewer).await?;
     Ok(Json(post))
 }
 
 async fn list_posts(
+    OptionalAuthUser(viewer): OptionalAuthUser,
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
 ) -> Result<Json<Vec<Post>>, ApiError> {
     let posts = state
         .posts
-        .list(params.author_id, params.limit, params.offset)
+        .list(params.author_id, viewer, params.limit, params.offset)
         .await?;
     Ok(Json(posts))
 }

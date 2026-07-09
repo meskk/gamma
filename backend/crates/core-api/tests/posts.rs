@@ -46,26 +46,31 @@ async fn repository_create_get_list(pool: PgPool) {
 
     // Every post is 'public' until the private write path lands (A4g); the area
     // column round-trips through both projections (create RETURNING and get).
+    // Public posts are visible to an anonymous viewer (None).
     assert_eq!(created.area, "public");
-    let fetched = repo.get(created.id).await.expect("get").expect("exists");
+    let fetched = repo
+        .get(created.id, None)
+        .await
+        .expect("get")
+        .expect("exists");
     assert_eq!(fetched.body.as_deref(), Some("hello world"));
     assert_eq!(fetched.author_id, author);
     assert_eq!(fetched.area, "public");
 
-    let recent = repo.list(None, 10, 0).await.expect("list");
+    let recent = repo.list(None, None, 10, 0).await.expect("list");
     assert_eq!(recent.len(), 1);
     assert_eq!(recent[0].area, "public");
 
     // Author filter: matching author returns it, a different author returns nothing.
     assert_eq!(
-        repo.list(Some(author), 10, 0)
+        repo.list(Some(author), None, 10, 0)
             .await
             .expect("by author")
             .len(),
         1
     );
     assert_eq!(
-        repo.list(Some(author + 999), 10, 0)
+        repo.list(Some(author + 999), None, 10, 0)
             .await
             .expect("other")
             .len(),
@@ -299,6 +304,6 @@ async fn create_attaches_media(pool: PgPool) {
     assert_eq!(post.media_id, Some(media_id));
 
     // It round-trips through get.
-    let fetched = repo.get(post.id).await.unwrap().unwrap();
+    let fetched = repo.get(post.id, None).await.unwrap().unwrap();
     assert_eq!(fetched.media_id, Some(media_id));
 }

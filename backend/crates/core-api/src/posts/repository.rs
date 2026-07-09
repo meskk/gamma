@@ -32,7 +32,12 @@
 //! ```
 //!
 //! This is the SQL form of `PrivateAreaRepository::is_entitled` EXTENDED with the
-//! creator arm and the `access_model = 'free'` arm it deliberately omits. It gates
+//! creator arm and the `access_model = 'free'` arm it deliberately omits. NOTE a
+//! consequence of the uniform predicate: a `free` area's private posts are visible
+//! to ANY logged-in viewer wherever posts are read — including the GLOBAL timeline
+//! (`GET /posts` with no author filter), not only the creator's profile. That is
+//! consistent with "a free area's members (= any logged-in user) are entitled", and
+//! is part of the owner-confirmable free-area decision. It gates
 //! per-CREATOR: one entitlement row grants all of a creator's private posts (correct
 //! for free/one_time/subscription; `per_post` read-gating is DEFERRED to its payment
 //! stage, A9). The guard is INDEPENDENT of the `GAMMA_PRIVATE_AREA` flag — that flag
@@ -126,16 +131,34 @@ impl PostRepository {
         .await
     }
 
-    /// A single post — but not if it has been taken down (hidden_at set).
-    pub async fn get(&self, id: i64) -> Result<Option<Post>, sqlx::Error> {
+    /// A single post — but not if it has been taken down (`hidden_at`), and not a
+    /// PRIVATE post unless `viewer` may see it (the area predicate; see the module
+    /// invariant doc). `viewer` is `None` for an anonymous caller: a private post
+    /// then fails every arm and this returns `None` (→ 404, no existence oracle).
+    pub async fn get(&self, id: i64, viewer: Option<i64>) -> Result<Option<Post>, sqlx::Error> {
         sqlx::query_as!(
             Post,
             r#"
             SELECT id, author_id, category, body, created_at, popularity_score, media_id, area
             FROM posts
             WHERE id = $1 AND hidden_at IS NULL
+              AND (
+                area = 'public'
+                OR author_id = $2
+                OR EXISTS (
+                    SELECT 1 FROM area_entitlements ae
+                    WHERE ae.viewer_id = $2 AND ae.creator_id = posts.author_id
+                      AND (ae.expires_at IS NULL OR ae.expires_at > now())
+                )
+                OR EXISTS (
+                    SELECT 1 FROM private_areas pa
+                    WHERE pa.creator_id = posts.author_id AND pa.access_model = 'free'
+                      AND $2::bigint IS NOT NULL
+                )
+              )
             "#,
-            id
+            id,
+            viewer
         )
         .fetch_optional(&self.pool)
         .await
@@ -148,6 +171,7 @@ impl PostRepository {
     pub async fn list(
         &self,
         author_id: Option<i64>,
+        viewer: Option<i64>,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Post>, sqlx::Error> {
@@ -157,10 +181,25 @@ impl PostRepository {
             SELECT id, author_id, category, body, created_at, popularity_score, media_id, area
             FROM posts
             WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)
+              AND (
+                area = 'public'
+                OR author_id = $2
+                OR EXISTS (
+                    SELECT 1 FROM area_entitlements ae
+                    WHERE ae.viewer_id = $2 AND ae.creator_id = posts.author_id
+                      AND (ae.expires_at IS NULL OR ae.expires_at > now())
+                )
+                OR EXISTS (
+                    SELECT 1 FROM private_areas pa
+                    WHERE pa.creator_id = posts.author_id AND pa.access_model = 'free'
+                      AND $2::bigint IS NOT NULL
+                )
+              )
             ORDER BY created_at DESC
-            LIMIT $2 OFFSET $3
+            LIMIT $3 OFFSET $4
             "#,
             author_id,
+            viewer,
             limit,
             offset
         )

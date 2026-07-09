@@ -1,0 +1,286 @@
+//! P-4/A4 read-gate matrix: a private post (and, later, its media) must be
+//! invisible to non-entitled viewers across EVERY read path. A4b covers the post
+//! reads — GET /v1/posts/:id and GET /v1/posts (list + profile). Later sub-steps
+//! extend this file (feed A4c, comments A4d, media A4e, write oracles A4f).
+//!
+//! Setup uses the repositories directly (no private write API exists until A4g)
+//! and the reads go through the real HTTP stack so the OptionalAuthUser extractor
+//! and the whole handler→service→repo gate are exercised.
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use axum::Router;
+use chrono::{Duration, Utc};
+use core_api::posts::model::NewPost;
+use core_api::posts::repository::PostRepository;
+use core_api::private_area::model::{AccessModel, EntitlementSource};
+use core_api::private_area::repository::PrivateAreaRepository;
+use core_api::{app, AppState};
+use serde_json::Value;
+use sqlx::PgPool;
+use tower::ServiceExt;
+
+mod common;
+
+/// Create a post by `author` and flip it private (no API write path yet — A4g).
+async fn private_post(pool: &PgPool, author: i64, body: &str) -> i64 {
+    let id = PostRepository::new(pool.clone())
+        .create(&NewPost {
+            author_id: author,
+            category: None,
+            body: body.into(),
+            media_id: None,
+        })
+        .await
+        .expect("create")
+        .id;
+    sqlx::query!("UPDATE posts SET area = 'private' WHERE id = $1", id)
+        .execute(pool)
+        .await
+        .expect("set private");
+    id
+}
+
+async fn public_post(pool: &PgPool, author: i64, body: &str) -> i64 {
+    PostRepository::new(pool.clone())
+        .create(&NewPost {
+            author_id: author,
+            category: None,
+            body: body.into(),
+            media_id: None,
+        })
+        .await
+        .expect("create")
+        .id
+}
+
+/// GET /v1/posts/:id — returns the HTTP status (200 visible, 404 hidden/missing).
+async fn get_status(router: &Router, id: i64, token: Option<&str>) -> StatusCode {
+    let mut b = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/posts/{id}"));
+    if let Some(t) = token {
+        b = b.header("authorization", format!("Bearer {t}"));
+    }
+    router
+        .clone()
+        .oneshot(b.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+        .status()
+}
+
+/// GET /v1/posts?author_id=… — returns the set of post ids the viewer sees.
+async fn list_ids(router: &Router, author_id: Option<i64>, token: Option<&str>) -> Vec<i64> {
+    let uri = match author_id {
+        Some(a) => format!("/v1/posts?author_id={a}"),
+        None => "/v1/posts".to_string(),
+    };
+    let mut b = Request::builder().method("GET").uri(uri);
+    if let Some(t) = token {
+        b = b.header("authorization", format!("Bearer {t}"));
+    }
+    let resp = router
+        .clone()
+        .oneshot(b.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let posts: Vec<Value> = serde_json::from_slice(&bytes).unwrap();
+    posts.iter().map(|p| p["id"].as_i64().unwrap()).collect()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn private_post_is_invisible_to_anonymous_and_strangers(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let (creator_token, creator) = common::register(&router, &[]).await;
+    let (stranger_token, _stranger) = common::register(&router, &[]).await;
+
+    let pub_id = public_post(&pool, creator, "public").await;
+    let priv_id = private_post(&pool, creator, "secret").await;
+
+    // Single read: the private post is 404 to anonymous and to a stranger
+    // (indistinguishable from a missing id — no existence oracle), 200 to the
+    // creator; the public post is visible to all.
+    assert_eq!(
+        get_status(&router, priv_id, None).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get_status(&router, priv_id, Some(&stranger_token)).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get_status(&router, priv_id, Some(&creator_token)).await,
+        StatusCode::OK
+    );
+    assert_eq!(get_status(&router, pub_id, None).await, StatusCode::OK);
+
+    // List / profile: strangers and anonymous see only the public post; the
+    // creator sees both of their own.
+    assert_eq!(list_ids(&router, None, None).await, vec![pub_id]);
+    assert_eq!(
+        list_ids(&router, Some(creator), Some(&stranger_token)).await,
+        vec![pub_id]
+    );
+    let mut own = list_ids(&router, Some(creator), Some(&creator_token)).await;
+    own.sort();
+    let mut expected = vec![pub_id, priv_id];
+    expected.sort();
+    assert_eq!(own, expected);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn entitlement_grants_access_and_expiry_revokes_it(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let (_creator_token, creator) = common::register(&router, &[]).await;
+    let (viewer_token, viewer) = common::register(&router, &[]).await;
+    // A second viewer whose entitlement is already expired (register up front so
+    // its token matches the id we grant to).
+    let (expired_token, expired_viewer) = common::register(&router, &[]).await;
+    let priv_id = private_post(&pool, creator, "secret").await;
+    let areas = PrivateAreaRepository::new(pool.clone());
+
+    // No entitlement → 404.
+    assert_eq!(
+        get_status(&router, priv_id, Some(&viewer_token)).await,
+        StatusCode::NOT_FOUND
+    );
+
+    // A live entitlement → visible in both single read and profile list.
+    areas
+        .grant_entitlement(viewer, creator, EntitlementSource::Purchase, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        get_status(&router, priv_id, Some(&viewer_token)).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        list_ids(&router, Some(creator), Some(&viewer_token)).await,
+        vec![priv_id]
+    );
+
+    // An already-expired entitlement never grants access (the row exists but its
+    // expiry is past — revocation by lapse, no cron).
+    areas
+        .grant_entitlement(
+            expired_viewer,
+            creator,
+            EntitlementSource::Subscription,
+            Some(Utc::now() - Duration::hours(1)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        get_status(&router, priv_id, Some(&expired_token)).await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn free_area_is_members_only_login_required(pool: PgPool) {
+    // Owner-confirmable fail-closed default (posts/repository.rs invariant doc):
+    // a 'free' area is visible to logged-in members, NOT to logged-out visitors.
+    let router = app(AppState::new(pool.clone()));
+    let (_creator_token, creator) = common::register(&router, &[]).await;
+    let (member_token, _member) = common::register(&router, &[]).await;
+    PrivateAreaRepository::new(pool.clone())
+        .upsert_area(creator, AccessModel::Free, 0, "offen für Mitglieder")
+        .await
+        .unwrap();
+    let priv_id = private_post(&pool, creator, "free-but-members").await;
+
+    // Any logged-in member sees it (no entitlement row needed for a free area)...
+    assert_eq!(
+        get_status(&router, priv_id, Some(&member_token)).await,
+        StatusCode::OK
+    );
+    // ...but an anonymous visitor does not (login required).
+    assert_eq!(
+        get_status(&router, priv_id, None).await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn stale_token_is_anonymous_not_401(pool: PgPool) {
+    // A garbage/expired bearer must NOT break an otherwise-public read (no 401):
+    // it degrades to anonymous. A private post stays 404 for it.
+    let router = app(AppState::new(pool.clone()));
+    let (_creator_token, creator) = common::register(&router, &[]).await;
+    let pub_id = public_post(&pool, creator, "public").await;
+    let priv_id = private_post(&pool, creator, "secret").await;
+
+    assert_eq!(
+        get_status(&router, pub_id, Some("not-a-real-token")).await,
+        StatusCode::OK,
+        "a stale bearer must not 401 a public read"
+    );
+    assert_eq!(
+        get_status(&router, priv_id, Some("not-a-real-token")).await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn expired_session_token_degrades_to_anonymous(pool: PgPool) {
+    // The EXPIRED-SESSION branch (a real, once-valid token whose session lapsed),
+    // distinct from the garbage-token branch above: it must also degrade to
+    // anonymous, not 401 — otherwise a lapsed login would break public reads.
+    let router = app(AppState::new(pool.clone()));
+    let (_creator_token, creator) = common::register(&router, &[]).await;
+    let (stale_token, viewer) = common::register(&router, &[]).await;
+    let pub_id = public_post(&pool, creator, "public").await;
+    let priv_id = private_post(&pool, creator, "secret").await;
+
+    // Expire the viewer's (only) session in place — a genuine lapsed token.
+    sqlx::query!(
+        "UPDATE sessions SET expires_at = now() - interval '1 hour' WHERE user_id = $1",
+        viewer
+    )
+    .execute(&pool)
+    .await
+    .expect("expire session");
+
+    assert_eq!(
+        get_status(&router, pub_id, Some(&stale_token)).await,
+        StatusCode::OK,
+        "a lapsed session must not 401 a public read"
+    );
+    assert_eq!(
+        get_status(&router, priv_id, Some(&stale_token)).await,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn paid_area_is_not_visible_to_logged_in_non_entitled_viewers(pool: PgPool) {
+    // Pins that the free arm discriminates on access_model='free'. A creator with
+    // a PAID area (one_time) has a private_areas row too — but a logged-in,
+    // non-entitled member must NOT see its private posts. If the
+    // `access_model = 'free'` condition were ever dropped from the free arm, EVERY
+    // paid area would leak to every logged-in user and this test would catch it.
+    let router = app(AppState::new(pool.clone()));
+    let (creator_token, creator) = common::register(&router, &[]).await;
+    let (member_token, _member) = common::register(&router, &[]).await;
+    PrivateAreaRepository::new(pool.clone())
+        .upsert_area(creator, AccessModel::OneTime, 500, "bezahlt")
+        .await
+        .unwrap();
+    let priv_id = private_post(&pool, creator, "paid-secret").await;
+
+    // A logged-in but non-entitled member cannot see a PAID area's private post...
+    assert_eq!(
+        get_status(&router, priv_id, Some(&member_token)).await,
+        StatusCode::NOT_FOUND
+    );
+    // ...while the creator still sees their own (the author arm).
+    assert_eq!(
+        get_status(&router, priv_id, Some(&creator_token)).await,
+        StatusCode::OK
+    );
+}

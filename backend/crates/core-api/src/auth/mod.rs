@@ -13,5 +13,5 @@ pub mod repository;
 pub mod service;
 pub mod throttle;
 
-pub use extract::{AdminUser, AuthUser, Caller, ServiceUser};
+pub use extract::{AdminUser, AuthUser, Caller, OptionalAuthUser, ServiceUser};
 pub use service::AuthService;

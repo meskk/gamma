@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE sessions SET expires_at = now() - interval '1 hour' WHERE user_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dd6ceb1973d3a4fc3d275b1d8b4e5496e5266d8b3b6a177c52f5de1e881c711e"
+}

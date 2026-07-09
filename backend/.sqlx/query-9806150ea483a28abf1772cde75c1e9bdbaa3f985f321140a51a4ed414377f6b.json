@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, author_id, category, body, created_at, popularity_score, media_id, area\n            FROM posts\n            WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)\n            ORDER BY created_at DESC\n            LIMIT $2 OFFSET $3\n            ",
+  "query": "\n            SELECT id, author_id, category, body, created_at, popularity_score, media_id, area\n            FROM posts\n            WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)\n              AND (\n                area = 'public'\n                OR author_id = $2\n                OR EXISTS (\n                    SELECT 1 FROM area_entitlements ae\n                    WHERE ae.viewer_id = $2 AND ae.creator_id = posts.author_id\n                      AND (ae.expires_at IS NULL OR ae.expires_at > now())\n                )\n                OR EXISTS (\n                    SELECT 1 FROM private_areas pa\n                    WHERE pa.creator_id = posts.author_id AND pa.access_model = 'free'\n                      AND $2::bigint IS NOT NULL\n                )\n              )\n            ORDER BY created_at DESC\n            LIMIT $3 OFFSET $4\n            ",
   "describe": {
     "columns": [
       {
@@ -48,6 +48,7 @@
       "Left": [
         "Int8",
         "Int8",
+        "Int8",
         "Int8"
       ]
     },
@@ -62,5 +63,5 @@
       false
     ]
   },
-  "hash": "6ecbdff85f61b0eba99f3ea20854264b7fe0e88f570db1a0c0dc05e9c19838e2"
+  "hash": "9806150ea483a28abf1772cde75c1e9bdbaa3f985f321140a51a4ed414377f6b"
 }

@@ -13,6 +13,15 @@ use crate::state::AppState;
 
 pub struct AuthUser(pub i64);
 
+/// The authenticated user id, or `None` for an anonymous caller. Use on a read
+/// that is public by default but must SCOPE its result to the viewer when one is
+/// present (e.g. private-area visibility). A missing, malformed, unknown, or
+/// expired token resolves to `None` (anonymous) — NOT 401 — so a stale bearer
+/// never breaks an otherwise-public read; only a genuine infrastructure fault
+/// (DB error while authenticating) surfaces, so an entitled viewer is never
+/// silently and invisibly downgraded to anonymous by a transient blip.
+pub struct OptionalAuthUser(pub Option<i64>);
+
 /// A caller proven to hold the `Operator` role. Use this on admin-only routes
 /// (e.g. epoch settlement) instead of `AuthUser`.
 pub struct AdminUser(pub i64);
@@ -55,6 +64,25 @@ impl FromRequestParts<AppState> for AuthUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         Ok(AuthUser(principal(parts, state).await?.user_id))
+    }
+}
+
+#[axum::async_trait]
+impl FromRequestParts<AppState> for OptionalAuthUser {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        match principal(parts, state).await {
+            Ok(p) => Ok(OptionalAuthUser(Some(p.user_id))),
+            // Absent / malformed / unknown / expired token → anonymous, not 401.
+            Err(ApiError::Unauthorized) => Ok(OptionalAuthUser(None)),
+            // A real fault (e.g. DB error while authenticating) must surface, so
+            // an entitled viewer is never silently downgraded to anonymous.
+            Err(other) => Err(other),
+        }
     }
 }
 
