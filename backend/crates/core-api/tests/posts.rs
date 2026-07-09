@@ -40,6 +40,7 @@ async fn repository_create_get_list(pool: PgPool) {
             category: Some("tech".into()),
             body: "hello world".into(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .expect("create");
@@ -172,6 +173,7 @@ async fn unknown_author_is_rejected_at_service_level(pool: PgPool) {
             category: None,
             body: "orphan".into(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .unwrap_err();
@@ -196,6 +198,7 @@ async fn create_offers_post_to_ingestion_queue(pool: PgPool) {
             category: None,
             body: "hello pipeline".into(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .expect("create");
@@ -205,6 +208,59 @@ async fn create_offers_post_to_ingestion_queue(pool: PgPool) {
         Some(post.id),
         "the new post id is offered to the ingestion pipeline"
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn private_post_is_never_offered_to_ingestion(pool: PgPool) {
+    // A4g: a PRIVATE post is never analysed (ADR 0011 §5), so create must not
+    // enqueue it — even though a public post is.
+    let author = seed_author(&pool).await;
+    let key = format!("gamma:ingestion:test:{}", common::unique());
+    let queue = IngestionQueue::with_key("redis://localhost:6379", key).unwrap();
+    let svc = PostService::with_ingestion(pool, queue.clone());
+
+    svc.create(NewPost {
+        author_id: author,
+        category: None,
+        body: "private, not for the AI".into(),
+        media_id: None,
+        area: "private".to_string(),
+    })
+    .await
+    .expect("create private");
+    assert!(
+        queue.dequeue().await.unwrap().is_none(),
+        "a private post must not be offered to the ingestion pipeline"
+    );
+
+    // A subsequent public post IS offered — proving the skip is area-specific.
+    let public = svc
+        .create(NewPost {
+            author_id: author,
+            category: None,
+            body: "public".into(),
+            media_id: None,
+            area: "public".to_string(),
+        })
+        .await
+        .expect("create public");
+    assert_eq!(queue.dequeue().await.unwrap(), Some(public.id));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn create_rejects_an_unknown_area(pool: PgPool) {
+    let author = seed_author(&pool).await;
+    let err = PostService::new(pool)
+        .create(NewPost {
+            author_id: author,
+            category: None,
+            body: "hello".into(),
+            media_id: None,
+            area: "secret".to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ApiError::Validation("invalid_area")));
 }
 
 /// Insert a ready media asset owned by `owner_id` and return its id.
@@ -298,6 +354,7 @@ async fn create_attaches_media(pool: PgPool) {
             category: None,
             body: "with media".into(),
             media_id: Some(media_id),
+            area: "public".to_string(),
         })
         .await
         .expect("create");

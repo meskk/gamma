@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            INSERT INTO posts (author_id, category, body, media_id)\n            VALUES ($1, $2, $3, $4)\n            RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area\n            ",
+  "query": "\n            INSERT INTO posts (author_id, category, body, media_id, area)\n            VALUES ($1, $2, $3, $4, $5)\n            RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area\n            ",
   "describe": {
     "columns": [
       {
@@ -49,7 +49,8 @@
         "Int8",
         "Text",
         "Text",
-        "Int8"
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
@@ -63,5 +64,5 @@
       false
     ]
   },
-  "hash": "7226965f71dff336ab0fc41b851d40f57db1bb2ce092456cc2394ca0ebc98460"
+  "hash": "1f80b248453efca8dc4307e28c6391e5f6b49824b015963943ebe97e7078132b"
 }

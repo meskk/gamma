@@ -5,4 +5,11 @@ export type NewPost = { category: string | null, body: string,
  * Optional id of an already-uploaded media asset to attach. The frontend sets
  * this after the presigned-upload + finalize flow.
  */
-media_id: bigint | null, };
+media_id: bigint | null, 
+/**
+ * `public` (default) or `private` (P-4/A4g). A private post is the creator's
+ * paywalled-area content: hidden from every read path unless the viewer is
+ * entitled, never analysed by ingestion. The value is whitelisted in the
+ * service; the DB CHECK (migration 0021) is the fail-closed backstop.
+ */
+area: string, };

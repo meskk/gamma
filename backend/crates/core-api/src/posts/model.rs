@@ -46,6 +46,16 @@ pub struct NewPost {
     /// this after the presigned-upload + finalize flow.
     #[serde(default)]
     pub media_id: Option<i64>,
+    /// `public` (default) or `private` (P-4/A4g). A private post is the creator's
+    /// paywalled-area content: hidden from every read path unless the viewer is
+    /// entitled, never analysed by ingestion. The value is whitelisted in the
+    /// service; the DB CHECK (migration 0021) is the fail-closed backstop.
+    #[serde(default = "default_area")]
+    pub area: String,
+}
+
+fn default_area() -> String {
+    "public".to_string()
 }
 
 /// A user's report of a post (moderation). The reporter is the session user.

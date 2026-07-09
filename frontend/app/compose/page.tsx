@@ -39,6 +39,8 @@ export default function ComposePage() {
         body: body.trim(),
         category: category.trim() ? category.trim() : null,
         media_id: mediaId, // bigint|null in the contract; a number on the wire
+        // Public posts only for now; the private-area compose UI lands with P-4/A7.
+        area: "public",
       };
       const created = await apiFetch<Post>("/posts", { method: "POST", body: payload, token });
       router.push(`/posts/${created.id}`);

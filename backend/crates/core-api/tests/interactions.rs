@@ -46,6 +46,7 @@ async fn seed_post(pool: &PgPool, author: i64) -> i64 {
             category: None,
             body: "post".into(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .expect("post")
@@ -138,6 +139,7 @@ async fn edges_exclude_interactions_on_taken_down_posts(pool: PgPool) {
             category: None,
             body: "hello".to_string(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .expect("create post");
@@ -189,6 +191,7 @@ async fn edges_exclude_private_posts(pool: PgPool) {
             category: None,
             body: "hello".to_string(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .expect("create post");

@@ -74,6 +74,14 @@ impl PostService {
         if new.body.is_empty() {
             return Err(ApiError::Validation("empty_body"));
         }
+        // Whitelist the area before the insert so a bad value is a precise 400
+        // instead of tripping the migration-0021 CHECK as an opaque 500. The flag
+        // (GAMMA_PRIVATE_AREA) deliberately does NOT gate this: it gates the config/
+        // checkout/webhook routes (ADR 0011 §6), while the read-path invariant
+        // protects a private post regardless of the flag.
+        if new.area != "public" && new.area != "private" {
+            return Err(ApiError::Validation("invalid_area"));
+        }
         // Normalise category the same way users' declared categories are normalised.
         new.category = new
             .category
@@ -93,12 +101,15 @@ impl PostService {
 
         let post = self.repo.create(&new).await.map_err(map_create_error)?;
 
-        // Offer the new post to the AI ingestion pipeline. Best-effort: a Redis
-        // hiccup must never fail a post (the post is the source of truth; the
-        // pipeline can also backfill). Mirrors media finalize → transcode enqueue.
-        if let Some(queue) = &self.ingestion {
-            if let Err(err) = queue.enqueue(post.id).await {
-                tracing::warn!(post_id = post.id, error = %err, "failed to enqueue ingestion job");
+        // Offer the new post to the AI ingestion pipeline — but NEVER a private
+        // post: private-area content is never analysed (ADR 0011 §5, Rail-1/Rail-2
+        // separation). Best-effort otherwise: a Redis hiccup must never fail a post
+        // (the post is the source of truth; the pipeline can also backfill).
+        if post.area == "public" {
+            if let Some(queue) = &self.ingestion {
+                if let Err(err) = queue.enqueue(post.id).await {
+                    tracing::warn!(post_id = post.id, error = %err, "failed to enqueue ingestion job");
+                }
             }
         }
 

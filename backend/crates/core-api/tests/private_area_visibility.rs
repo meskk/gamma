@@ -1,11 +1,13 @@
-//! P-4/A4 read-gate matrix: a private post (and, later, its media) must be
-//! invisible to non-entitled viewers across EVERY read path. A4b covers the post
-//! reads — GET /v1/posts/:id and GET /v1/posts (list + profile). Later sub-steps
-//! extend this file (feed A4c, comments A4d, media A4e, write oracles A4f).
+//! P-4/A4 gate matrix: a private post (and its media) must be invisible to
+//! non-entitled viewers across EVERY read path, and its write paths must not
+//! leak its existence. Covers posts (A4b), feed (A4c), comments (A4d), media
+//! (A4e + moderation takedown), the write oracles report/interaction (A4f), and
+//! the write path itself (A4g).
 //!
-//! Setup uses the repositories directly (no private write API exists until A4g)
-//! and the reads go through the real HTTP stack so the OptionalAuthUser extractor
-//! and the whole handler→service→repo gate are exercised.
+//! Most setup flips `area` via the repository/raw SQL (fast, viewer-independent);
+//! the A4g test exercises the real POST /v1/posts write path. Reads go through the
+//! full HTTP stack so the OptionalAuthUser extractor and the whole
+//! handler→service→repo gate are exercised.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -31,6 +33,7 @@ async fn private_post(pool: &PgPool, author: i64, body: &str) -> i64 {
             category: None,
             body: body.into(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .expect("create")
@@ -42,6 +45,38 @@ async fn private_post(pool: &PgPool, author: i64, body: &str) -> i64 {
     id
 }
 
+/// POST /v1/posts with an explicit `area` — returns (status, parsed body).
+async fn create_post_api(
+    router: &Router,
+    token: &str,
+    body: &str,
+    area: &str,
+) -> (StatusCode, Value) {
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/posts")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "body": body, "area": area }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
 async fn public_post(pool: &PgPool, author: i64, body: &str) -> i64 {
     PostRepository::new(pool.clone())
         .create(&NewPost {
@@ -49,6 +84,7 @@ async fn public_post(pool: &PgPool, author: i64, body: &str) -> i64 {
             category: None,
             body: body.into(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .expect("create")
@@ -824,4 +860,38 @@ async fn owner_cannot_reach_media_of_their_own_taken_down_post(pool: PgPool) {
         media_get_status(&router, asset, &creator_token).await,
         StatusCode::NOT_FOUND
     );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn create_private_post_via_api_is_flag_independent_and_gated(pool: PgPool) {
+    // A4g (the write path). AppState here has GAMMA_PRIVATE_AREA OFF by default,
+    // yet POST /v1/posts with area='private' succeeds: the flag gates the config/
+    // checkout routes (ADR 0011 §6), NOT the area attribute. The resulting post is
+    // then correctly hidden by the read invariant.
+    let router = app(AppState::new(pool.clone()));
+    let (creator_token, _creator) = common::register(&router, &[]).await;
+    let (stranger_token, _stranger) = common::register(&router, &[]).await;
+
+    let (status, post) = create_post_api(&router, &creator_token, "secret", "private").await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(post["area"], "private");
+    let id = post["id"].as_i64().unwrap();
+
+    // Read invariant applies: the creator sees it, a stranger gets 404.
+    assert_eq!(
+        get_status(&router, id, Some(&creator_token)).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get_status(&router, id, Some(&stranger_token)).await,
+        StatusCode::NOT_FOUND
+    );
+
+    // A public post round-trips as 'public' (the default); an unknown area is 400.
+    let (status, post) = create_post_api(&router, &creator_token, "hi", "public").await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(post["area"], "public");
+    let (status, body) = create_post_api(&router, &creator_token, "x", "secret").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_area");
 }

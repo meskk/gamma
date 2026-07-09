@@ -44,15 +44,15 @@
 //! only gates the A3 config routes; a private post can exist and must never leak.
 //! Producer/economic rails (settlement, ingestion) use the blanket `p.area = 'public'`
 //! (no viewer) — private posts leave those rails unconditionally (Rail-1/Rail-2
-//! separation; private posts are never analysed). NOTE on the ingestion producer:
-//! `PostService::create` enqueues every new post id UNCONDITIONALLY and is not
-//! producer-gated on `area` — that is deliberate. The AI worker fetches each post
-//! through the anonymous `get_post` API read (ADR 0006), so the AUTHORITATIVE
-//! analysis gate is that read's area predicate (A4b), not the enqueue: an anonymous
-//! fetch of a private post returns 404 and the worker skips it, so no
-//! `content_signals` row is ever written. This makes the ORDERING load-bearing —
-//! A4b (the read gate) MUST land before A4g (the write path that can first mint a
-//! private post); the plan orders them so.
+//! separation; private posts are never analysed). The ingestion producer is gated
+//! at BOTH ends: `PostService::create` skips the enqueue for `area != 'public'`
+//! (A4g, the create-time producer), and the backfill producer filters the same
+//! (A4a). As a backstop, the AI worker fetches each post through the anonymous
+//! `get_post` API read (ADR 0006), which the A4b area predicate 404s for a private
+//! post — so even a private post that somehow reached the queue yields no
+//! `content_signals` row. That backstop makes the ORDERING load-bearing: A4b (the
+//! read gate) had to land before A4g (the write path that can first mint a private
+//! post); the plan ordered them so.
 //!
 //! Surfaces that MUST filter `hidden_at` (all do):
 //!   - `get` / `list` (here) · the three feed CTEs (`feed::repository::candidates`)
@@ -100,14 +100,15 @@ impl PostRepository {
         sqlx::query_as!(
             Post,
             r#"
-            INSERT INTO posts (author_id, category, body, media_id)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO posts (author_id, category, body, media_id, area)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area
             "#,
             new.author_id,
             new.category.as_deref(),
             new.body,
-            new.media_id
+            new.media_id,
+            new.area
         )
         .fetch_one(&self.pool)
         .await

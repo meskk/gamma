@@ -122,6 +122,7 @@ async fn settles_epoch_mints_by_weight_and_is_idempotent(pool: PgPool) {
             category: None,
             body: "a's post".into(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .expect("post")
@@ -204,6 +205,7 @@ async fn referral_cut_is_conserving_and_journaled(pool: PgPool) {
             category: None,
             body: "a's post".into(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .expect("post")
@@ -283,6 +285,7 @@ async fn unverified_referrer_and_expired_window_get_no_cut(pool: PgPool) {
             category: None,
             body: "a's post".into(),
             media_id: None,
+            area: "public".to_string(),
         })
         .await
         .expect("post")
