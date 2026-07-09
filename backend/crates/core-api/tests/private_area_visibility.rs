@@ -599,6 +599,105 @@ async fn comments_on_a_private_post_are_gated(pool: PgPool) {
     );
 }
 
+async fn report_status(router: &Router, post_id: i64, token: &str, reason: &str) -> StatusCode {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/posts/{post_id}/report"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "reason": reason }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+async fn interact_status(router: &Router, token: &str, body: Value) -> StatusCode {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/interactions")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn report_and_interact_on_a_private_post_are_gated(pool: PgPool) {
+    // A4f write oracles: a viewer who can't SEE a private post can neither report
+    // it nor interact with it — and gets the same 404 as for a nonexistent id, so
+    // neither write is an existence oracle. A direct user→user edge is unaffected.
+    let router = app(AppState::new(pool.clone()));
+    let (_creator_token, creator) = common::register(&router, &[]).await;
+    let (stranger_token, _stranger) = common::register(&router, &[]).await;
+    let (viewer_token, viewer) = common::register(&router, &[]).await;
+    let priv_id = private_post(&pool, creator, "secret").await;
+    PrivateAreaRepository::new(pool.clone())
+        .grant_entitlement(viewer, creator, EntitlementSource::Purchase, None)
+        .await
+        .unwrap();
+
+    // Report: a non-entitled stranger → 404 (== reporting a nonexistent id); an
+    // entitled viewer → 204 (ADR 0011 §5: entitled viewers can report).
+    assert_eq!(
+        report_status(&router, priv_id, &stranger_token, "spam").await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        report_status(&router, 9_999_999, &viewer_token, "spam").await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        report_status(&router, priv_id, &viewer_token, "spam").await,
+        StatusCode::NO_CONTENT
+    );
+
+    // Interaction on the private post: stranger → 404 (== nonexistent post_id),
+    // entitled → 201.
+    let like_priv = serde_json::json!({ "type": "like", "post_id": priv_id });
+    assert_eq!(
+        interact_status(&router, &stranger_token, like_priv.clone()).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        interact_status(
+            &router,
+            &viewer_token,
+            serde_json::json!({ "type": "like", "post_id": 9_999_999 })
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        interact_status(&router, &viewer_token, like_priv).await,
+        StatusCode::CREATED
+    );
+
+    // A direct user→user interaction (target_id set, no post) is unaffected.
+    assert_eq!(
+        interact_status(
+            &router,
+            &stranger_token,
+            serde_json::json!({ "type": "like", "target_id": creator })
+        )
+        .await,
+        StatusCode::CREATED
+    );
+}
+
 async fn make_operator(pool: &PgPool, user_id: i64) {
     sqlx::query!("UPDATE users SET role = 'operator' WHERE id = $1", user_id)
         .execute(pool)

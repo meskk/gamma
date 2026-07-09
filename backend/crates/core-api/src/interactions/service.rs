@@ -9,11 +9,15 @@ use econ_params::EconParams;
 use crate::error::ApiError;
 use crate::interactions::model::{InteractionEvent, NewInteraction};
 use crate::interactions::repository::InteractionRepository;
+use crate::posts::repository::PostRepository;
 use db::PgPool;
 
 #[derive(Clone)]
 pub struct InteractionService {
     repo: InteractionRepository,
+    /// For the A4f visibility guard: a viewer may only interact with a post they
+    /// can see (folds the private-area predicate; cross-repo like FeedService).
+    posts: PostRepository,
     econ: EconParams,
 }
 
@@ -24,7 +28,8 @@ impl InteractionService {
 
     pub fn with_econ(pool: PgPool, econ: EconParams) -> Self {
         Self {
-            repo: InteractionRepository::new(pool),
+            repo: InteractionRepository::new(pool.clone()),
+            posts: PostRepository::new(pool),
             econ,
         }
     }
@@ -52,6 +57,17 @@ impl InteractionService {
                 return Err(ApiError::Validation("interaction_requires_target_or_post"))
             }
         };
+
+        // A4f: for a POST-targeted event, the actor must be able to SEE the post
+        // (ADR 0011 §5) — a private post they aren't entitled to is NotFound, the
+        // same as a nonexistent id, so interacting is no existence oracle. A direct
+        // user→user event (target_id set, post_id cleared above) is unaffected: its
+        // weight flows from the target, not any post.
+        if let Some(p) = post_id {
+            if !self.posts.post_visible_to(p, Some(new.actor_id)).await? {
+                return Err(ApiError::NotFound);
+            }
+        }
 
         // A target user or post that doesn't exist trips a foreign key (migration
         // 0015) — that's a client error (the thing being interacted with is gone),

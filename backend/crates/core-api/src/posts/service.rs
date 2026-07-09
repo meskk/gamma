@@ -140,6 +140,16 @@ impl PostService {
         if reason.len() > MAX_REASON_LEN {
             return Err(ApiError::Validation("reason_too_long"));
         }
+        // A4f: only a viewer who can SEE the post may report it (ADR 0011 §5).
+        // A private post the reporter isn't entitled to is NotFound — the same
+        // answer as a nonexistent post, so reporting is no existence oracle.
+        if !self
+            .repo
+            .post_visible_to(post_id, Some(reporter_id))
+            .await?
+        {
+            return Err(ApiError::NotFound);
+        }
         self.repo
             .report(post_id, reporter_id, reason)
             .await

@@ -131,6 +131,39 @@ impl PostRepository {
         .await
     }
 
+    /// Can `viewer` SEE post `post_id` (the area predicate only — moderation
+    /// `hidden_at` is deliberately not applied here, so this does not change the
+    /// existing report/interaction behaviour on hidden posts)? The write-side
+    /// existence guard for the report and interaction paths (A4f): a viewer who
+    /// can't see a private post can neither report it nor interact with it, and
+    /// gets the same `NotFound` as if the post didn't exist — closing the
+    /// success-vs-404 oracle. `viewer` is `None` for anonymous, but both callers
+    /// are authenticated so it is always `Some`.
+    pub async fn post_visible_to(
+        &self,
+        post_id: i64,
+        viewer: Option<i64>,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM posts p
+                WHERE p.id = $1
+                  AND (
+                    p.area = 'public'
+                    OR p.author_id = $2
+                    OR EXISTS (SELECT 1 FROM area_entitlements ae WHERE ae.viewer_id = $2 AND ae.creator_id = p.author_id AND (ae.expires_at IS NULL OR ae.expires_at > now()))
+                    OR EXISTS (SELECT 1 FROM private_areas pa WHERE pa.creator_id = p.author_id AND pa.access_model = 'free' AND $2::bigint IS NOT NULL)
+                  )
+            ) AS "visible!"
+            "#,
+            post_id,
+            viewer
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
     /// A single post — but not if it has been taken down (`hidden_at`), and not a
     /// PRIVATE post unless `viewer` may see it (the area predicate; see the module
     /// invariant doc). `viewer` is `None` for an anonymous caller: a private post
