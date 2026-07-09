@@ -172,7 +172,7 @@ async fn unknown_author_is_rejected_at_service_level(pool: PgPool) {
 async fn create_offers_post_to_ingestion_queue(pool: PgPool) {
     let author = seed_author(&pool).await;
     // Isolated queue key so this test can't see other tests' jobs.
-    let key = format!("gamma:ingestion:test:{}", common::nanos());
+    let key = format!("gamma:ingestion:test:{}", common::unique());
     let queue = IngestionQueue::with_key("redis://localhost:6379", key).unwrap();
     let svc = PostService::with_ingestion(pool, queue.clone());
 

@@ -230,7 +230,7 @@ async fn unknown_owner_is_rejected_at_service_level(pool: PgPool) {
 
 /// Generate a tiny real mp4 with ffmpeg so we can exercise the transcoder.
 async fn make_test_mp4() -> Vec<u8> {
-    let path = std::env::temp_dir().join(format!("gamma-src-{}.mp4", uuid_like()));
+    let path = std::env::temp_dir().join(format!("gamma-src-{}.mp4", common::unique()));
     let status = tokio::process::Command::new("ffmpeg")
         .args([
             "-y",
@@ -249,13 +249,6 @@ async fn make_test_mp4() -> Vec<u8> {
     let bytes = tokio::fs::read(&path).await.expect("read mp4");
     let _ = tokio::fs::remove_file(&path).await;
     bytes
-}
-
-fn uuid_like() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -351,7 +344,7 @@ async fn transcode_produces_hls_in_storage(pool: PgPool) {
 const REDIS_URL: &str = "redis://localhost:6379";
 
 fn unique_queue_key() -> String {
-    format!("gamma:transcode:test:{}", uuid_like())
+    format!("gamma:transcode:test:{}", common::unique())
 }
 
 #[tokio::test]
