@@ -28,7 +28,7 @@
 //!               AND (ae.expires_at IS NULL OR ae.expires_at > now()))
 //!  OR EXISTS (SELECT 1 FROM private_areas pa
 //!             WHERE pa.creator_id = p.author_id AND pa.access_model = 'free'
-//!               AND $V IS NOT NULL) )   -- free = members, login required (owner-confirmable)
+//!               AND $V IS NOT NULL) )   -- free = members, login required (owner-decided 2026-07-09)
 //! ```
 //!
 //! This is the SQL form of `PrivateAreaRepository::is_entitled` EXTENDED with the
@@ -36,8 +36,8 @@
 //! consequence of the uniform predicate: a `free` area's private posts are visible
 //! to ANY logged-in viewer wherever posts are read — including the GLOBAL timeline
 //! (`GET /posts` with no author filter), not only the creator's profile. That is
-//! consistent with "a free area's members (= any logged-in user) are entitled", and
-//! is part of the owner-confirmable free-area decision. It gates
+//! consistent with "a free area's members (= any logged-in user) are entitled"
+//! (owner-decided 2026-07-09: free = login required, not world-readable). It gates
 //! per-CREATOR: one entitlement row grants all of a creator's private posts (correct
 //! for free/one_time/subscription; `per_post` read-gating is DEFERRED to its payment
 //! stage, A9). The guard is INDEPENDENT of the `GAMMA_PRIVATE_AREA` flag — that flag

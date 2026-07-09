@@ -11,6 +11,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use chrono::{Duration, Utc};
+use core_api::media::repository::MediaRepository;
 use core_api::posts::model::NewPost;
 use core_api::posts::repository::PostRepository;
 use core_api::private_area::model::{AccessModel, EntitlementSource};
@@ -183,8 +184,8 @@ async fn entitlement_grants_access_and_expiry_revokes_it(pool: PgPool) {
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn free_area_is_members_only_login_required(pool: PgPool) {
-    // Owner-confirmable fail-closed default (posts/repository.rs invariant doc):
-    // a 'free' area is visible to logged-in members, NOT to logged-out visitors.
+    // Owner-decided (2026-07-09): a 'free' area is visible to logged-in members,
+    // NOT to logged-out visitors — fail-closed, login required.
     let router = app(AppState::new(pool.clone()));
     let (_creator_token, creator) = common::register(&router, &[]).await;
     let (member_token, _member) = common::register(&router, &[]).await;
@@ -316,6 +317,234 @@ async fn comment_count(router: &Router, post_id: i64, token: Option<&str>) -> (S
         .unwrap();
     let arr: Vec<Value> = serde_json::from_slice(&bytes).unwrap_or_default();
     (status, arr.len())
+}
+
+/// Create a pending media asset owned by `owner` (no storage — the object never
+/// has to exist for the area gate, which reads only the DB).
+async fn make_asset(pool: &PgPool, owner: i64, price: i64) -> i64 {
+    MediaRepository::new(pool.clone())
+        .create(
+            owner,
+            "image",
+            &format!("media/test/{}", common::unique()),
+            "image/png",
+            price,
+        )
+        .await
+        .expect("asset")
+        .id
+}
+
+async fn attach(pool: &PgPool, asset_id: i64, post_ids: &[i64]) {
+    sqlx::query!(
+        "UPDATE posts SET media_id = $1 WHERE id = ANY($2)",
+        asset_id,
+        post_ids
+    )
+    .execute(pool)
+    .await
+    .expect("attach media");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn media_area_allows_gates_by_the_owning_post(pool: PgPool) {
+    // A4e core: the media rail decides access by joining posts.media_id -> the
+    // owning post's area. This is the hole ADR 0011 §5 calls out — a price-0 asset
+    // of a private post must not be reachable, even though media entitlement is
+    // per-asset and knows no posts.
+    let router = app(AppState::new(pool.clone()));
+    let (_ct, creator) = common::register(&router, &[]).await;
+    let (_st, stranger) = common::register(&router, &[]).await;
+    let (_vt, viewer) = common::register(&router, &[]).await;
+    let media = MediaRepository::new(pool.clone());
+    let areas = PrivateAreaRepository::new(pool.clone());
+
+    // Unattached asset → allowed for anyone (out of P-4 scope, unchanged).
+    let unattached = make_asset(&pool, creator, 0).await;
+    assert!(media.media_area_allows(unattached, stranger).await.unwrap());
+
+    // Attached to a PUBLIC post → allowed for anyone.
+    let pub_post = public_post(&pool, creator, "pub").await;
+    let pub_asset = make_asset(&pool, creator, 0).await;
+    attach(&pool, pub_asset, &[pub_post]).await;
+    assert!(media.media_area_allows(pub_asset, stranger).await.unwrap());
+
+    // Attached to a PRIVATE post → denied to a stranger (the closed hole), allowed
+    // to the owner (author arm) and to an entitled viewer.
+    let priv_post = private_post(&pool, creator, "priv").await;
+    let priv_asset = make_asset(&pool, creator, 0).await;
+    attach(&pool, priv_asset, &[priv_post]).await;
+    assert!(!media.media_area_allows(priv_asset, stranger).await.unwrap());
+    assert!(media.media_area_allows(priv_asset, creator).await.unwrap());
+    areas
+        .grant_entitlement(viewer, creator, EntitlementSource::Purchase, None)
+        .await
+        .unwrap();
+    assert!(media.media_area_allows(priv_asset, viewer).await.unwrap());
+
+    // PUBLIC RESCUE: the SAME asset on both a private and a public post is allowed
+    // for a stranger — its bytes are already reachable via the public post, so
+    // serving them is not a leak (media_id is non-unique).
+    let shared = make_asset(&pool, creator, 0).await;
+    let shared_priv = private_post(&pool, creator, "shared-priv").await;
+    let shared_pub = public_post(&pool, creator, "shared-pub").await;
+    attach(&pool, shared, &[shared_priv, shared_pub]).await;
+    assert!(
+        media.media_area_allows(shared, stranger).await.unwrap(),
+        "a shared asset is served via its public post (public rescue)"
+    );
+
+    // FREE area: a free-area private post's asset is allowed for a logged-in viewer.
+    let (_ft, free_creator) = common::register(&router, &[]).await;
+    areas
+        .upsert_area(free_creator, AccessModel::Free, 0, "")
+        .await
+        .unwrap();
+    let free_post = private_post(&pool, free_creator, "free-priv").await;
+    let free_asset = make_asset(&pool, free_creator, 0).await;
+    attach(&pool, free_asset, &[free_post]).await;
+    assert!(media.media_area_allows(free_asset, stranger).await.unwrap());
+
+    // EXPIRED entitlement: media_area_allows has its OWN copy of the expiry
+    // predicate — pin that a lapsed row does not admit the asset.
+    let (_et, expired_viewer) = common::register(&router, &[]).await;
+    areas
+        .grant_entitlement(
+            expired_viewer,
+            creator,
+            EntitlementSource::Subscription,
+            Some(Utc::now() - Duration::hours(1)),
+        )
+        .await
+        .unwrap();
+    assert!(!media
+        .media_area_allows(priv_asset, expired_viewer)
+        .await
+        .unwrap());
+
+    // TAKEN-DOWN post: a moderator takedown of the PUBLIC post that rescued an
+    // asset stops it streaming to a stranger (hidden_at on the rescue arm). The
+    // asset stays "attached" (so it can't fall through to unattached=allowed).
+    let hidden_asset = make_asset(&pool, creator, 0).await;
+    let hidden_post = public_post(&pool, creator, "to-be-removed").await;
+    attach(&pool, hidden_asset, &[hidden_post]).await;
+    assert!(media
+        .media_area_allows(hidden_asset, stranger)
+        .await
+        .unwrap());
+    sqlx::query!(
+        "UPDATE posts SET hidden_at = now() WHERE id = $1",
+        hidden_post
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        !media
+            .media_area_allows(hidden_asset, stranger)
+            .await
+            .unwrap(),
+        "a taken-down post must not keep rescuing its media"
+    );
+}
+
+/// GET /v1/media/:id — status only.
+async fn media_get_status(router: &Router, id: i64, token: &str) -> StatusCode {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/media/{id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+async fn media_unlock_status(router: &Router, id: i64, token: &str) -> StatusCode {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/media/{id}/unlock"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+async fn media_manifest_status(router: &Router, id: i64, token: &str) -> StatusCode {
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/media/{id}/manifest"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn media_endpoints_404_on_a_private_posts_asset_for_strangers(pool: PgPool) {
+    // The service wires the gate: get/unlock/manifest all 404 for a non-entitled
+    // viewer of a private post's asset — before any not_ready/free_content/
+    // transcode-state tell — so the status code is never an existence oracle. The
+    // asset stays 'pending', so no storage/MinIO is touched on any path here.
+    let router = app(AppState::new(pool.clone()));
+    let (creator_token, creator) = common::register(&router, &[]).await;
+    let (stranger_token, _stranger) = common::register(&router, &[]).await;
+
+    let priv_post = private_post(&pool, creator, "priv").await;
+    let asset = make_asset(&pool, creator, 0).await; // price 0 = the hole
+    attach(&pool, asset, &[priv_post]).await;
+
+    for probe in [
+        media_get_status(&router, asset, &stranger_token).await,
+        media_unlock_status(&router, asset, &stranger_token).await,
+        media_manifest_status(&router, asset, &stranger_token).await,
+    ] {
+        assert_eq!(
+            probe,
+            StatusCode::NOT_FOUND,
+            "a private post's asset must 404 for a stranger on every media endpoint"
+        );
+    }
+    // The owner still reaches their own asset's metadata (200, pending → no URL).
+    assert_eq!(
+        media_get_status(&router, asset, &creator_token).await,
+        StatusCode::OK
+    );
+
+    // Mark the asset ready + transcoded: the stranger's 404 must be driven by the
+    // AREA gate, not by the pending status — get stays 404, and manifest 404s
+    // (area) BEFORE it could 402/not_transcoded, so status is no oracle.
+    let media = MediaRepository::new(pool.clone());
+    media.mark_ready(asset, 123).await.unwrap();
+    media
+        .set_hls(asset, &format!("{}/hls/index.m3u8", common::unique()))
+        .await
+        .unwrap();
+    assert_eq!(
+        media_get_status(&router, asset, &stranger_token).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        media_manifest_status(&router, asset, &stranger_token).await,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

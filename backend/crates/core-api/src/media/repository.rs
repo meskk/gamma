@@ -128,6 +128,58 @@ impl MediaRepository {
         Ok(exists)
     }
 
+    /// Does the private-area invariant allow `viewer` to reach `asset` (P-4/A4e,
+    /// ADR 0011 §5)? This is the media rail's answer to the one path `hidden_at`
+    /// structurally misses: media entitlement is per-asset and knows no posts, so a
+    /// private post's price-0 asset would otherwise be presign-fetchable by anyone.
+    ///
+    /// The link is `posts.media_id -> media_assets.id` (nullable, NON-unique, so an
+    /// asset may back several posts). Allowed iff the asset is attached to NO post
+    /// at all (unattached assets are out of P-4 scope — behaviour unchanged) OR to
+    /// at least one VISIBLE post the viewer may see (`hidden_at IS NULL` AND the
+    /// canonical area predicate). This "public rescue" is deliberate: if the same
+    /// asset also sits on a public/entitled/free post, its bytes are already
+    /// legitimately reachable via that post, so serving them is not a leak —
+    /// fail-closed fires only when EVERY attached post is hidden or
+    /// private-and-unentitled. `viewer` is always an authenticated user on the media
+    /// routes, so the free arm needs no `IS NOT NULL` guard.
+    ///
+    /// The `hidden_at IS NULL` conjunct lives on the RESCUE arm ONLY — a taken-down
+    /// post no longer rescues its asset, so moderator-removed media stops streaming
+    /// to enumerating non-owners (consistent with every text read path). It does
+    /// NOT go on the unattached `NOT EXISTS` arm: an attached-but-hidden post must
+    /// still count as "attached" (else the asset would fall through to the
+    /// unattached=allowed branch). RESIDUAL (tracked follow-up): the service-layer
+    /// owner short-circuit still lets the OWNER reach their own taken-down media,
+    /// and there is no asset-level takedown for the one-asset-many-posts case.
+    pub async fn media_area_allows(
+        &self,
+        asset_id: i64,
+        viewer_id: i64,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT (
+                NOT EXISTS (SELECT 1 FROM posts p WHERE p.media_id = $1)
+                OR EXISTS (
+                    SELECT 1 FROM posts p
+                    WHERE p.media_id = $1 AND p.hidden_at IS NULL
+                      AND (
+                        p.area = 'public'
+                        OR p.author_id = $2
+                        OR EXISTS (SELECT 1 FROM area_entitlements ae WHERE ae.viewer_id = $2 AND ae.creator_id = p.author_id AND (ae.expires_at IS NULL OR ae.expires_at > now()))
+                        OR EXISTS (SELECT 1 FROM private_areas pa WHERE pa.creator_id = p.author_id AND pa.access_model = 'free')
+                      )
+                )
+            ) AS "allowed!"
+            "#,
+            asset_id,
+            viewer_id
+        )
+        .fetch_one(&self.pool)
+        .await
+    }
+
     /// Pay to unlock, atomically (Phase 1a off-chain content payment): record the
     /// entitlement, debit the viewer the full price, credit the creator and the
     /// company, and record the burned remainder as a destruction.

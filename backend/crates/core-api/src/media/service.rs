@@ -167,6 +167,13 @@ impl MediaService {
     /// (price, status) so a client can prompt an unlock, but never the raw file.
     pub async fn get(&self, asset_id: i64, viewer_id: i64) -> Result<MediaAssetView, ApiError> {
         let asset = self.repo.get(asset_id).await?.ok_or(ApiError::NotFound)?;
+        // Private-area gate (A4e) BEFORE any view is built: an asset of a private
+        // post the viewer can't see is 404, not stripped metadata — so its
+        // existence, owner, price, and status don't leak (a private asset has no
+        // legitimate unlock path anyway). The owner always passes.
+        if viewer_id != asset.owner_id && !self.repo.media_area_allows(asset_id, viewer_id).await? {
+            return Err(ApiError::NotFound);
+        }
         let entitled = self.is_entitled(&asset, viewer_id).await?;
         self.view(asset, entitled).await
     }
@@ -226,6 +233,12 @@ impl MediaService {
     pub async fn unlock(&self, asset_id: i64, viewer_id: i64) -> Result<UnlockSummary, ApiError> {
         let asset = self.repo.get(asset_id).await?.ok_or(ApiError::NotFound)?;
 
+        // Private-area gate FIRST (A4e): a stranger probing a private post's asset
+        // gets 404 before any not_ready/free_content/owner state is revealed, and
+        // can never burn gems on content they could never view. Owner passes.
+        if viewer_id != asset.owner_id && !self.repo.media_area_allows(asset_id, viewer_id).await? {
+            return Err(ApiError::NotFound);
+        }
         if asset.status != "ready" {
             return Err(ApiError::Validation("not_ready"));
         }
@@ -281,6 +294,12 @@ impl MediaService {
     pub async fn manifest(&self, asset_id: i64, viewer_id: i64) -> Result<String, ApiError> {
         let asset = self.repo.get(asset_id).await?.ok_or(ApiError::NotFound)?;
 
+        // Private-area gate FIRST (A4e): 404 before the transcode state is revealed,
+        // so a private post's asset is not a transcode-status oracle. Owner passes.
+        if viewer_id != asset.owner_id && !self.repo.media_area_allows(asset_id, viewer_id).await? {
+            return Err(ApiError::NotFound);
+        }
+
         let manifest_key = match &asset.hls_manifest_key {
             Some(key) if asset.transcode_status == "done" => key,
             _ => return Err(ApiError::Validation("not_transcoded")),
@@ -311,10 +330,18 @@ impl MediaService {
         Ok(out)
     }
 
-    /// Whether `viewer` may access the asset's content: the owner, free content,
-    /// or a recorded unlock. Single source of truth for both the raw playback URL
-    /// (in `view`) and the HLS manifest gate (in `manifest`).
+    /// Whether `viewer` may access the asset's content: the private-area gate
+    /// (A4e) AND the marketplace gate (owner, free content, or a recorded unlock).
+    /// Single source of truth for both the raw playback URL (in `view`) and the HLS
+    /// manifest 402 gate (in `manifest`) — so the raw URL is never minted without
+    /// area access even if a caller forgot the explicit 404 guard. The area gate is
+    /// an ADDED gate, not a replacement: an area-entitled viewer of a private post
+    /// whose asset is priced still needs a gem unlock (ADR 0011 §5), though private-
+    /// area media is typically priced 0.
     async fn is_entitled(&self, asset: &MediaAsset, viewer_id: i64) -> Result<bool, ApiError> {
+        if viewer_id != asset.owner_id && !self.repo.media_area_allows(asset.id, viewer_id).await? {
+            return Ok(false);
+        }
         Ok(viewer_id == asset.owner_id
             || asset.unlock_price <= 0
             || self.repo.is_unlocked(viewer_id, asset.id).await?)
