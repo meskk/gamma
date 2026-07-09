@@ -53,12 +53,16 @@ impl CommentService {
     pub async fn list(
         &self,
         post_id: i64,
+        viewer: Option<i64>,
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<Comment>, ApiError> {
         let limit = limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
         let offset = offset.unwrap_or(0).max(0);
-        Ok(self.repo.list_for_post(post_id, limit, offset).await?)
+        Ok(self
+            .repo
+            .list_for_post(post_id, viewer, limit, offset)
+            .await?)
     }
 }
 

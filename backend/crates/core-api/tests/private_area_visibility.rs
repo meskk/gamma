@@ -284,3 +284,88 @@ async fn paid_area_is_not_visible_to_logged_in_non_entitled_viewers(pool: PgPool
         StatusCode::OK
     );
 }
+
+/// POST /v1/posts/:id/comments — returns the HTTP status.
+async fn post_comment(router: &Router, post_id: i64, token: &str, body: &str) -> StatusCode {
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/v1/posts/{post_id}/comments"))
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::json!({ "body": body }).to_string()))
+        .unwrap();
+    router.clone().oneshot(req).await.unwrap().status()
+}
+
+/// GET /v1/posts/:id/comments — returns (status, number of comments seen).
+async fn comment_count(router: &Router, post_id: i64, token: Option<&str>) -> (StatusCode, usize) {
+    let mut b = Request::builder()
+        .method("GET")
+        .uri(format!("/v1/posts/{post_id}/comments"));
+    if let Some(t) = token {
+        b = b.header("authorization", format!("Bearer {t}"));
+    }
+    let resp = router
+        .clone()
+        .oneshot(b.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let arr: Vec<Value> = serde_json::from_slice(&bytes).unwrap_or_default();
+    (status, arr.len())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn comments_on_a_private_post_are_gated(pool: PgPool) {
+    // A4d: a private post's thread must be invisible to non-entitled viewers, and
+    // a non-entitled user must not be able to comment on (and thereby confirm) it.
+    let router = app(AppState::new(pool.clone()));
+    let (creator_token, creator) = common::register(&router, &[]).await;
+    let (stranger_token, _stranger) = common::register(&router, &[]).await;
+    let (viewer_token, viewer) = common::register(&router, &[]).await;
+    let priv_id = private_post(&pool, creator, "secret").await;
+
+    // The creator can comment on their own private post (author arm).
+    assert_eq!(
+        post_comment(&router, priv_id, &creator_token, "mine").await,
+        StatusCode::CREATED
+    );
+    PrivateAreaRepository::new(pool.clone())
+        .grant_entitlement(viewer, creator, EntitlementSource::Purchase, None)
+        .await
+        .unwrap();
+
+    // Reading the thread: anonymous and stranger get an EMPTY list (200, NOT 404 —
+    // it must not diverge from a public post with zero comments); the creator and
+    // an entitled viewer see the comment.
+    assert_eq!(
+        comment_count(&router, priv_id, None).await,
+        (StatusCode::OK, 0)
+    );
+    assert_eq!(
+        comment_count(&router, priv_id, Some(&stranger_token)).await,
+        (StatusCode::OK, 0)
+    );
+    assert_eq!(
+        comment_count(&router, priv_id, Some(&creator_token)).await,
+        (StatusCode::OK, 1)
+    );
+    assert_eq!(
+        comment_count(&router, priv_id, Some(&viewer_token)).await,
+        (StatusCode::OK, 1)
+    );
+
+    // Writing: a non-entitled stranger commenting on a private post → 404
+    // (indistinguishable from commenting on a nonexistent id); entitled → 201.
+    assert_eq!(
+        post_comment(&router, priv_id, &stranger_token, "sneaky").await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        post_comment(&router, priv_id, &viewer_token, "nice").await,
+        StatusCode::CREATED
+    );
+}

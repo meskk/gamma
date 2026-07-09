@@ -7,7 +7,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::auth::AuthUser;
+use crate::auth::{AuthUser, OptionalAuthUser};
 use crate::comments::model::{Comment, NewComment};
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -36,6 +36,7 @@ async fn create(
 }
 
 async fn list(
+    OptionalAuthUser(viewer): OptionalAuthUser,
     State(state): State<AppState>,
     Path(post_id): Path<i64>,
     Query(page): Query<Page>,
@@ -43,7 +44,7 @@ async fn list(
     Ok(Json(
         state
             .comments
-            .list(post_id, page.limit, page.offset)
+            .list(post_id, viewer, page.limit, page.offset)
             .await?,
     ))
 }
