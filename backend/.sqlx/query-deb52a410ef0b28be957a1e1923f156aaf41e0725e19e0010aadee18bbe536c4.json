@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT EXISTS (\n                SELECT 1 FROM area_entitlements\n                WHERE viewer_id = $1 AND creator_id = $2\n                  AND (expires_at IS NULL OR expires_at > now())\n            ) AS \"entitled!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "entitled!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "deb52a410ef0b28be957a1e1923f156aaf41e0725e19e0010aadee18bbe536c4"
+}

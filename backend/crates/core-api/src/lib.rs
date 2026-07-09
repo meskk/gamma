@@ -16,6 +16,7 @@ pub mod gems;
 pub mod interactions;
 pub mod media;
 pub mod posts;
+pub mod private_area;
 pub mod queue;
 pub mod rate_limit;
 pub mod signals;

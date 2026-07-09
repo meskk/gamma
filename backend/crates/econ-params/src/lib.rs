@@ -67,6 +67,14 @@ pub struct EconParams {
     /// user's registration. Default 183 ≈ 6 months of daily epochs.
     pub referral_duration_epochs: u64,
 
+    // --- Private Area (MASTERPLAN P-4, ADR 0011) ---
+    /// Platform cut on private-area purchases (basis points; 1000 = 10%,
+    /// owner decision 2026-07-08). Applied as the provider-side application
+    /// fee at checkout creation (integer cents, floor) — customer money never
+    /// touches a platform account, and these purchases never touch the
+    /// conserved PT journal. An economic knob nonetheless: it lives HERE.
+    pub private_area_fee_bps: u16,
+
     // --- Genesis (Phase 1b only) ---
     /// Genesis LP seed target in sats — a depth/cold-start knob, not a solvency lock.
     /// $100k @ $60k/BTC ≈ 1.667 BTC.
@@ -100,9 +108,11 @@ impl Default for EconParams {
     /// Proposed defaults from Rebuild Dossier v5 §10.
     fn default() -> Self {
         Self {
+            // v3: private_area_fee_bps added (P-4, owner decision 2026-07-08:
+            // 10% marketplace cut as Stripe application fee).
             // v2: referral knobs added (owner decision 2026-07-05: 3% / 6 months
             // default, per-creator overrides in the referral_terms table).
-            version: 2,
+            version: 3,
             company_skim_bps: 200,
             content_fee_bps: 200,
             transfer_burn_bps: 200,
@@ -117,6 +127,7 @@ impl Default for EconParams {
             interaction_weights: InteractionWeights::default(),
             referral_bps_default: 300,
             referral_duration_epochs: 183,
+            private_area_fee_bps: 1000,
             genesis_seed_target_sats: 166_666_667,
         }
     }
@@ -165,6 +176,7 @@ impl EconParams {
         bps("transfer_burn_bps", self.transfer_burn_bps)?;
         bps("referral_bps_default", self.referral_bps_default)?;
         bps("emission_decay_bps", self.emission_decay_bps)?;
+        bps("private_area_fee_bps", self.private_area_fee_bps)?;
         // A paid unlock splits price into creator + fee + burn; fee+burn > 100%
         // would drive the creator's share negative.
         if self.content_fee_bps as u32 + self.transfer_burn_bps as u32 > 10_000 {
