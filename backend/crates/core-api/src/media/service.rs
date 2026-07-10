@@ -126,12 +126,14 @@ impl MediaService {
         if asset.owner_id != requester_id {
             return Err(ApiError::Forbidden);
         }
-        // A taken-down asset is frozen: even the owner cannot re-finalize it to
-        // re-mint a raw playback URL to moderated content (asset-takedown is
-        // reachable on NO content path — migration 0022).
-        if asset.hidden_at.is_some() {
-            return Err(ApiError::NotFound);
-        }
+        // Frozen if moderated: the full access gate, not just asset.hidden_at, so
+        // re-finalizing cannot re-mint a raw URL to content that is unreachable on
+        // the read paths — this covers BOTH an asset-level takedown AND a POST-level
+        // takedown of the owning post (whose media a re-finalize otherwise leaks,
+        // since finalize ends in view(_, true)). A fresh, not-yet-attached upload
+        // passes via media_area_allows' unattached arm, so the normal
+        // upload -> finalize -> attach flow is unaffected.
+        self.gate(&asset, requester_id).await?;
 
         let size = self
             .storage
@@ -190,6 +192,11 @@ impl MediaService {
         if asset.owner_id != requester_id {
             return Err(ApiError::Forbidden);
         }
+        // Same full gate as finalize: the owner's manual re-transcode must not
+        // re-mint a raw URL to a taken-down post's media (transcode ends in
+        // view(_, true)). The worker's own `transcode(asset_id)` entry keeps the
+        // bare asset.hidden_at check — it discards the view, so no URL escapes.
+        self.gate(&asset, requester_id).await?;
         self.transcode(asset_id).await
     }
 

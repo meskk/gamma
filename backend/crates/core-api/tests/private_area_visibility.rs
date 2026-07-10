@@ -851,7 +851,11 @@ async fn owner_cannot_reach_media_of_their_own_taken_down_post(pool: PgPool) {
         StatusCode::OK
     );
 
-    // Take the post down (moderation): the owner can no longer reach its media.
+    // Take the post down (moderation): the owner can no longer reach its media —
+    // not via the READ paths, and not via the owner-only WRITE paths either. A
+    // re-finalize / re-transcode must not re-mint a raw playback URL to the
+    // moderated bytes (both end in view(_, true); the fix routes them through the
+    // same access gate as get/unlock/manifest).
     sqlx::query!("UPDATE posts SET hidden_at = now() WHERE id = $1", post)
         .execute(&pool)
         .await
@@ -859,6 +863,16 @@ async fn owner_cannot_reach_media_of_their_own_taken_down_post(pool: PgPool) {
     assert_eq!(
         media_get_status(&router, asset, &creator_token).await,
         StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        media_moderate(&router, asset, "finalize", &creator_token).await,
+        StatusCode::NOT_FOUND,
+        "re-finalizing a taken-down post's media must not re-mint its raw URL"
+    );
+    assert_eq!(
+        media_moderate(&router, asset, "transcode", &creator_token).await,
+        StatusCode::NOT_FOUND,
+        "re-transcoding a taken-down post's media must not re-mint its raw URL"
     );
 }
 

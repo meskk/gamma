@@ -73,9 +73,11 @@
 //! Deliberate exceptions:
 //!   - operator surfaces (`list_reported`) intentionally include BOTH hidden and
 //!     private rows (ADR 0011 §5 116-117); `ReportedPost.area` surfaces which
-//!   - the interaction *write* path stays inert on a hidden post at the SQL layer
-//!     (guarded at the service in A4f; `edges_for_epoch` is the authoritative
-//!     economic guard), so it is not guarded again at insert time
+//!   - the interaction *write* path ACCEPTS a like on a hidden post at insert time
+//!     (only the AREA predicate is service-checked in A4f, NOT `hidden_at`); the
+//!     like is economically inert because `edges_for_epoch` — the authoritative
+//!     guard — drops it at settlement. So hidden-post interactions are not
+//!     re-guarded at insert; do not add a `hidden_at` insert check expecting a 404
 //!
 //! FUTURE: an M2.7 `content_signals`/embedding-driven ranker is a NEW post-content
 //! read path — it MUST re-apply the area predicate, OR stale signal/embedding rows

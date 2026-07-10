@@ -90,6 +90,25 @@ Betrachter ist entitled oder der Creator selbst. Durchgesetzt wird das wie
 die `hidden_at`-Invariante: in den Repository-Queries, nicht in Handlern —
 ein vergessener Pfad blendet zu viel AUS, nie zu viel EIN.
 
+**Nachtrag (2026-07-09, Owner-Entscheidung — verbindliche Präzisierung des
+kanonischen Prädikats für A4b–A4f):** Das implementierte Prädikat hat einen
+DRITTEN Arm neben „entitled ODER Creator": ein Bereich mit
+`access_model = 'free'` ist für JEDEN EINGELOGGTEN Nutzer sichtbar (nicht nur
+für „entitled" im Sinne einer `area_entitlements`-Zeile). „Free" heißt also
+Mitglieder-ohne-Bezahlung, **Login erforderlich** (nicht weltöffentlich) —
+und diese Sichtbarkeit gilt in ALLEN Lesepfaden, auch in der globalen
+Timeline, nicht nur auf dem Creator-Profil. Das kanonische Prädikat lautet
+vollständig: `area = 'public' OR author_id = $V OR EXISTS(live
+area_entitlements) OR (private_areas.access_model = 'free' AND $V IS NOT
+NULL)`. Der `$V IS NOT NULL`-Guard steht auf den anonym-erreichbaren
+Lesepfaden (posts get/list, comments list, post_visible_to) und entfällt
+bewusst dort, wo der Betrachter strukturell authentifiziert ist (Feed,
+comments create, Media-Rail). Per-Post-Read-Gating (`access_model='per_post'`)
+ist bis zu seiner Zahlungsstufe (A9) auf Creator-Ebene zurückgestellt. Diese
+Präzisierung ist auch für das Rechts-Gate relevant: Aktivierung setzt
+Anwalt-Freigabe voraus, und der Kreis der Zuschauer eines free-Bereichs ist
+größer als „entitled" — alle eingeloggten Nutzer.
+
 **Der Media-Pfad ist ausdrücklich Teil der Invariante** — und der eine Pfad,
 den das hidden_at-Muster strukturell NICHT erreicht: Media-Entitlement ist
 heute per-Asset (`unlock_price <= 0` ⇒ jeder eingeloggte Nutzer bekommt die
