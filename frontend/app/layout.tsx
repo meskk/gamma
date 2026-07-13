@@ -22,7 +22,7 @@ const hanken = Hanken_Grotesk({
 });
 
 export const metadata = {
-  title: "Peer Network",
+  title: "Poolsite",
   description: "An ad-and-creativity-funded social platform that pays its users.",
 };
 

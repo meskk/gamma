@@ -35,7 +35,7 @@ export function ActionRail({ post, token }: { post: Post; token: string }) {
     const nav = navigator as Navigator & { share?: (d: { url: string; title?: string }) => Promise<void> };
     if (nav.share) {
       try {
-        await nav.share({ url, title: "Peer Network" });
+        await nav.share({ url, title: "Poolsite" });
         return;
       } catch {
         /* user cancelled — fall through to copy */

@@ -54,14 +54,6 @@ function TagIcon() {
   );
 }
 
-function SparkleIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M12 2c.45 4.95 1.55 6.05 6.5 6.5-4.95.45-6.05 1.55-6.5 6.5-.45-4.95-1.55-6.05-6.5-6.5 4.95-.45 6.05-1.55 6.5-6.5Z" />
-    </svg>
-  );
-}
-
 function BackIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -390,11 +382,9 @@ function LoginForm() {
         >
           {/* Logo */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 6 }}>
-            <span style={{ width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 10, background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.35)", color: "#fff" }}>
-              <SparkleIcon />
-            </span>
+            <img src="/logo.svg" alt="Poolsite" style={{ height: 40, width: "auto", display: "block" }} />
             <span style={{ fontFamily: "var(--font-hanken), var(--font-inter), sans-serif", fontWeight: 700, fontSize: 22, color: "#fff" }}>
-              Peer Network
+              Poolsite
             </span>
           </div>
 

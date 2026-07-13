@@ -2,7 +2,7 @@
   "name": "gamma-frontend",
   "version": "0.1.0",
   "private": true,
-  "description": "Peer Network frontend (Next.js). Typed against the backend contract in backend/bindings.",
+  "description": "Poolsite frontend (Next.js). Typed against the backend contract in backend/bindings.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

@@ -34,7 +34,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         }}
       >
         <Link href="/" style={{ fontWeight: 700 }}>
-          Peer Network
+          Poolsite
         </Link>
         {token && (
           <>

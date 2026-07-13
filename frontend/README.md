@@ -1,4 +1,4 @@
-# Peer Network — frontend (Next.js)
+# Poolsite — frontend (Next.js)
 
 The user-facing app. This is a **starter foundation**: it runs, and it is wired to
 the backend's typed contract. The actual UX/design is built on top from here.
