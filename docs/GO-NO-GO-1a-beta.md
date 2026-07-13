@@ -139,10 +139,15 @@
   Verifizierung entziehen (stoppt künftige Payouts) + Sessions des Kontos per
   SQL löschen (`DELETE FROM sessions WHERE user_id = …`). Echtes Ban-Feature
   vor dem öffentlichen Launch.
-- **Kein Passwort-Reset** (es gibt keinen Mailer): Ein verlorenes Passwort
-  strandet das Konto samt geschuldeter Balance. Beta-Behelf: Identität des
-  bekannten Beta-Teilnehmers manuell prüfen, dann Payout der gestrandeten
-  Balance über den A/C12-Weg; echte Recovery vor dem öffentlichen Launch.
+- **Passwort-Reset: Mechanismus gebaut, echte Zustellung offen** (commit
+  5d9d83e): E-Mail-Einmalcode-Flow (Reset + passwortloser Login) hinter einer
+  `Mailer`-Seam existiert und ist getestet, ABER die Default-Impl ist der
+  **`LogMailer`** (Code landet nur im Server-Log, kein echter Versand). Für die
+  Beta genügt das für einen bekannten, begleiteten Teilnehmerkreis (Operator
+  liest den Code aus dem Log / begleitet den Reset). **Vor dem öffentlichen
+  Launch: einen echten E-Mail-Provider hinter die Seam wiren** (`with_mailer`,
+  EU/DSGVO-Provider) — bis dahin bleibt der manuelle Behelf (Identität prüfen,
+  gestrandete Balance über den A/C12-Weg auszahlen) der Fallback.
 
 **GO** = alle A-, B-, C-Boxen abgehakt. Jedes offene Kästchen ist ein
 dokumentiertes NO-GO mit benanntem Verantwortlichen.
