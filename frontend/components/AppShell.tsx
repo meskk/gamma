@@ -15,11 +15,17 @@ import { useAuth } from "@/lib/auth";
 // which has its own bottom nav — the Figma "Glass · Reels" design).
 const BARE_ROUTES = new Set(["/", "/login", "/feed"]);
 
+// User profiles (/users/:id) are the Figma "Glass · Profile" screen: full-bleed
+// with their own glass bottom nav, so they skip the app-shell chrome too.
+function isBareRoute(pathname: string): boolean {
+  return BARE_ROUTES.has(pathname) || pathname.startsWith("/users/");
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { token, userId, ready, logout, isOperator } = useAuth();
 
-  if (BARE_ROUTES.has(pathname)) return <>{children}</>;
+  if (isBareRoute(pathname)) return <>{children}</>;
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", maxWidth: 720, margin: "0 auto", padding: "1rem" }}>
