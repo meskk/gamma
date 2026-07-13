@@ -381,11 +381,8 @@ function LoginForm() {
           }}
         >
           {/* Logo */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 6 }}>
-            <img src="/logo.svg" alt="Poolsite" style={{ height: 40, width: "auto", display: "block" }} />
-            <span style={{ fontFamily: "var(--font-hanken), var(--font-inter), sans-serif", fontWeight: 700, fontSize: 22, color: "#fff" }}>
-              Poolsite
-            </span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", paddingBottom: 6 }}>
+            <img src="/logo.svg" alt="Poolsite" style={{ height: 76, width: "auto", display: "block" }} />
           </div>
 
           {/* Anmelden / Registrieren tabs */}
