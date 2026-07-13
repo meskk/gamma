@@ -6,6 +6,7 @@
 //! domains so the acting identity comes from the session, not from a spoofable
 //! request field — closing the current "act as any user" hole.
 
+pub mod code;
 pub mod extract;
 pub mod handler;
 pub mod model;

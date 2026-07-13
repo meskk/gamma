@@ -1,6 +1,6 @@
 //! Auth business logic: password hashing (argon2), token issuance, verification.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
@@ -8,10 +8,12 @@ use chrono::{DateTime, Duration, Utc};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
-use crate::auth::model::{AuthResponse, LoginRequest, Principal, RegisterRequest};
+use crate::auth::code;
+use crate::auth::model::{AuthResponse, CodePurpose, LoginRequest, Principal, RegisterRequest};
 use crate::auth::repository::AuthRepository;
 use crate::auth::throttle;
 use crate::error::ApiError;
+use crate::mailer::{LogMailer, Mailer};
 use db::PgPool;
 
 /// Minimum password length.
@@ -33,6 +35,9 @@ static DUMMY_HASH: LazyLock<String> =
 pub struct AuthService {
     repo: AuthRepository,
     econ: econ_params::EconParams,
+    /// The outbound-mail seam (recovery codes). Defaults to the dev `LogMailer`;
+    /// the running app injects a real provider via `with_mailer` once one exists.
+    mailer: Arc<dyn Mailer>,
 }
 
 impl AuthService {
@@ -46,7 +51,14 @@ impl AuthService {
         Self {
             repo: AuthRepository::new(pool),
             econ,
+            mailer: Arc::new(LogMailer),
         }
+    }
+
+    /// Inject a mail provider (production wiring, and tests that capture codes).
+    pub fn with_mailer(mut self, mailer: Arc<dyn Mailer>) -> Self {
+        self.mailer = mailer;
+        self
     }
 
     pub async fn register(&self, req: RegisterRequest) -> Result<AuthResponse, ApiError> {
@@ -192,6 +204,131 @@ impl AuthService {
         Ok(self.repo.email_exists(&email).await?)
     }
 
+    /// Request a one-time code by email (recovery entry point for BOTH
+    /// passwordless login and password reset). Returns `Ok(())` whether or not
+    /// the account exists — the handler answers 204 either way, so there is no
+    /// enumeration oracle. A per-(email, purpose) cooldown (in the repo) plus the
+    /// auth rate-limit layer bound abuse/bombing. Mail-send failures are logged,
+    /// never surfaced (that too would leak existence).
+    pub async fn request_code(&self, email: &str, purpose: CodePurpose) -> Result<(), ApiError> {
+        let email = email.trim().to_lowercase();
+        if self.repo.user_id_by_email(&email).await?.is_none() {
+            return Ok(());
+        }
+        let plaintext = code::generate_code();
+        let code_hash = sha256_hex(&plaintext);
+        let expires_at = Utc::now() + Duration::seconds(code::CODE_TTL.as_secs() as i64);
+        let should_send = self
+            .repo
+            .upsert_email_code(
+                &email,
+                purpose.as_str(),
+                &code_hash,
+                expires_at,
+                code::REQUEST_COOLDOWN.as_secs() as f64,
+            )
+            .await?;
+        if should_send {
+            // Dispatch the mail OFF the request path: a real provider can block for
+            // 100s of ms, and doing it inline would (a) stall a runtime worker and
+            // (b) make response latency depend on send time — a loud account-
+            // existence oracle. spawn_blocking decouples both. (A residual, sub-ms
+            // timing delta remains between the exists branch — one extra INSERT —
+            // and the early return for a non-existent account; accepted for 1a on
+            // this rate-limited endpoint. We deliberately do NOT store a code row
+            // for unknown emails: that would be an unbounded-growth / bombing sink.)
+            let mailer = self.mailer.clone();
+            let to = email.clone();
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = mailer.send_code(&to, purpose, &plaintext) {
+                    tracing::error!(error = %e, "failed to send email code");
+                }
+            });
+        }
+        Ok(())
+    }
+
+    /// Exchange an emailed code for a session (passwordless login).
+    pub async fn login_with_code(&self, email: &str, code: &str) -> Result<AuthResponse, ApiError> {
+        let email = email.trim().to_lowercase();
+        let user_id = self.verify_code(&email, CodePurpose::Login, code).await?;
+        self.issue_session(user_id).await
+    }
+
+    /// Set a new password using an emailed reset code, then return a fresh
+    /// session. Every prior session for the account is invalidated (logs out
+    /// other devices / any attacker), and the login throttle is cleared so the
+    /// user isn't locked out right after resetting.
+    pub async fn reset_password(
+        &self,
+        email: &str,
+        code: &str,
+        new_password: String,
+    ) -> Result<AuthResponse, ApiError> {
+        // Check password strength BEFORE touching the code, so a weak password
+        // doesn't spend an attempt / consume a valid code.
+        if new_password.len() < MIN_PASSWORD_LEN {
+            return Err(ApiError::Validation("weak_password"));
+        }
+        let email = email.trim().to_lowercase();
+        // Hash first (independent of the code) so the code is consumed only
+        // immediately before the write that uses it — shrinking the window where
+        // a consumed code is wasted by a later failure.
+        let hash = spawn_hash(move || hash_password(&new_password)).await?;
+        let user_id = self
+            .verify_code(&email, CodePurpose::PasswordReset, code)
+            .await?;
+        self.repo.set_password_hash(user_id, &hash).await?;
+        self.repo.delete_sessions_for_user(user_id).await?;
+        self.repo.clear_login_throttle(&email).await?;
+        self.issue_session(user_id).await
+    }
+
+    /// Verify a one-time code for (email, purpose) and, on success, CONSUME it
+    /// (single-use) and return the user id. Every failure path returns the same
+    /// generic `Unauthorized` — no oracle for unknown-email vs. missing/expired/
+    /// burned/wrong-code.
+    ///
+    /// Race-safety: `claim_code_attempt` does the eligibility check AND the
+    /// attempt increment in one atomic UPDATE, so concurrent guesses can't slip
+    /// past `MAX_ATTEMPTS`, and a burned code is left in place (not deleted) so
+    /// the request cooldown keyed on it keeps holding. The correct guess consumes
+    /// the row via a delete-returning, so exactly one of two concurrent correct
+    /// submissions wins.
+    async fn verify_code(
+        &self,
+        email: &str,
+        purpose: CodePurpose,
+        code: &str,
+    ) -> Result<i64, ApiError> {
+        let purpose_str = purpose.as_str();
+        let code_hash = match self
+            .repo
+            .claim_code_attempt(email, purpose_str, code::MAX_ATTEMPTS)
+            .await?
+        {
+            Some(h) => h,
+            None => return Err(ApiError::Unauthorized),
+        };
+        if sha256_hex(code) != code_hash {
+            return Err(ApiError::Unauthorized);
+        }
+        // Correct code: consume it. Losing the delete race means another request
+        // already redeemed it — reject, so single-use holds.
+        if !self.repo.consume_email_code(email, purpose_str).await? {
+            return Err(ApiError::Unauthorized);
+        }
+        self.repo
+            .user_id_by_email(email)
+            .await?
+            .ok_or(ApiError::Unauthorized)
+    }
+
+    /// Drop expired email codes (housekeeping). Returns how many were removed.
+    pub async fn sweep_expired_email_codes(&self) -> Result<u64, ApiError> {
+        Ok(self.repo.delete_expired_email_codes().await?)
+    }
+
     /// Resolve a bearer token to the authenticated principal (id + role), or
     /// `None` if the token is invalid/expired.
     pub async fn authenticate(&self, token: &str) -> Result<Option<Principal>, ApiError> {
@@ -267,5 +404,11 @@ fn new_token() -> String {
 
 /// SHA-256 of the token — only this is stored, so a DB leak can't be replayed.
 fn hash_token(token: &str) -> String {
-    hex::encode(Sha256::digest(token.as_bytes()))
+    sha256_hex(token)
+}
+
+/// Hex-encoded SHA-256 of a string. Used to store session tokens and one-time
+/// codes as hashes (never the plaintext), so a DB leak can't be replayed.
+fn sha256_hex(s: &str) -> String {
+    hex::encode(Sha256::digest(s.as_bytes()))
 }

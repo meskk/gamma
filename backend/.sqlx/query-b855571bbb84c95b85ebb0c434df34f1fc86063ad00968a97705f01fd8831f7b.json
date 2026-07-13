@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM email_codes WHERE email = $1 AND purpose = $2 RETURNING 1 AS \"one!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "one!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "b855571bbb84c95b85ebb0c434df34f1fc86063ad00968a97705f01fd8831f7b"
+}

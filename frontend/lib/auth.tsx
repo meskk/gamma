@@ -16,7 +16,9 @@ import {
 import type { AuthResponse } from "@contract/AuthResponse";
 import type { CurrentUser } from "@contract/CurrentUser";
 import type { LoginRequest } from "@contract/LoginRequest";
+import type { LoginWithCodeRequest } from "@contract/LoginWithCodeRequest";
 import type { RegisterRequest } from "@contract/RegisterRequest";
+import type { ResetPasswordRequest } from "@contract/ResetPasswordRequest";
 import type { Role } from "@contract/Role";
 
 import { ApiError, apiFetch } from "./api";
@@ -31,6 +33,10 @@ type AuthState = {
   ready: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (req: RegisterRequest) => Promise<void>;
+  /** Passwordless login: exchange an emailed code for a session. */
+  loginWithCode: (email: string, code: string) => Promise<void>;
+  /** Set a new password with an emailed reset code; returns a fresh session. */
+  resetPassword: (email: string, code: string, newPassword: string) => Promise<void>;
   logout: () => void;
 };
 
@@ -94,6 +100,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await loadSession(resp.token);
   }
 
+  async function loginWithCode(email: string, code: string) {
+    const body: LoginWithCodeRequest = { email, code };
+    const resp = await apiFetch<AuthResponse>("/auth/login-with-code", { method: "POST", body });
+    await loadSession(resp.token);
+  }
+
+  async function resetPassword(email: string, code: string, newPassword: string) {
+    const body: ResetPasswordRequest = { email, code, new_password: newPassword };
+    const resp = await apiFetch<AuthResponse>("/auth/reset-password", { method: "POST", body });
+    await loadSession(resp.token);
+  }
+
   // Clear local session state only (no request). Used by the 401 handler, where
   // the server session is already gone.
   function clearSession() {
@@ -129,6 +147,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ready,
         login,
         register,
+        loginWithCode,
+        resetPassword,
         logout,
       }}
     >

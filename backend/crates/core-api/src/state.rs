@@ -89,4 +89,11 @@ impl AppState {
         self.private_area_enabled = enabled;
         self
     }
+
+    /// Inject a mail provider for the auth recovery codes (production wiring, and
+    /// tests that capture the emitted code). Defaults to the dev `LogMailer`.
+    pub fn with_mailer(mut self, mailer: std::sync::Arc<dyn crate::mailer::Mailer>) -> Self {
+        self.auth = self.auth.with_mailer(mailer);
+        self
+    }
 }

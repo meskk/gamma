@@ -1,5 +1,7 @@
 //! Auth request/response shapes.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -93,4 +95,58 @@ pub struct EmailCheckRequest {
 #[ts(export, export_to = "../../../bindings/")]
 pub struct EmailCheckResult {
     pub exists: bool,
+}
+
+/// Why a one-time email code was issued — decides its scope and the mail copy.
+/// `Login` exchanges for a session (passwordless); `PasswordReset` authorises
+/// setting a new password. Mirrors the `email_codes.purpose` CHECK.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../bindings/")]
+pub enum CodePurpose {
+    Login,
+    PasswordReset,
+}
+
+impl CodePurpose {
+    /// The stable string stored in `email_codes.purpose`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CodePurpose::Login => "login",
+            CodePurpose::PasswordReset => "password_reset",
+        }
+    }
+}
+
+impl fmt::Display for CodePurpose {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Request a one-time code by email (recovery entry point). The response is
+/// always 204 regardless of whether the account exists — no enumeration.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct RequestCodeRequest {
+    pub email: String,
+    pub purpose: CodePurpose,
+}
+
+/// Exchange an emailed code for a session (passwordless login).
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct LoginWithCodeRequest {
+    pub email: String,
+    pub code: String,
+}
+
+/// Set a new password using an emailed reset code. On success every existing
+/// session for the account is invalidated and a fresh one is returned.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../bindings/")]
+pub struct ResetPasswordRequest {
+    pub email: String,
+    pub code: String,
+    pub new_password: String,
 }

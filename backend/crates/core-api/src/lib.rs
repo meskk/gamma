@@ -14,6 +14,7 @@ pub mod feed;
 pub mod follows;
 pub mod gems;
 pub mod interactions;
+pub mod mailer;
 pub mod media;
 pub mod posts;
 pub mod private_area;

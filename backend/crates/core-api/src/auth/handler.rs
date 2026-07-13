@@ -8,7 +8,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 
 use crate::auth::model::{
-    AuthResponse, CurrentUser, EmailCheckRequest, EmailCheckResult, LoginRequest, RegisterRequest,
+    AuthResponse, CurrentUser, EmailCheckRequest, EmailCheckResult, LoginRequest,
+    LoginWithCodeRequest, RegisterRequest, RequestCodeRequest, ResetPasswordRequest,
 };
 use crate::auth::Caller;
 use crate::error::ApiError;
@@ -19,6 +20,9 @@ pub fn routes() -> Router<AppState> {
         .route("/auth/register", post(register))
         .route("/auth/login", post(login))
         .route("/auth/check-email", post(check_email))
+        .route("/auth/request-code", post(request_code))
+        .route("/auth/login-with-code", post(login_with_code))
+        .route("/auth/reset-password", post(reset_password))
         .route("/auth/logout", post(logout))
         .route("/auth/me", get(me))
 }
@@ -64,6 +68,40 @@ async fn login(
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
     Ok(Json(state.auth.login(body).await?))
+}
+
+/// Recovery entry point: email a one-time code for passwordless login or a
+/// password reset. Always 204 — the response never reveals whether the account
+/// exists (no enumeration).
+async fn request_code(
+    State(state): State<AppState>,
+    Json(body): Json<RequestCodeRequest>,
+) -> Result<StatusCode, ApiError> {
+    state.auth.request_code(&body.email, body.purpose).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Passwordless login: exchange an emailed code for a session.
+async fn login_with_code(
+    State(state): State<AppState>,
+    Json(body): Json<LoginWithCodeRequest>,
+) -> Result<Json<AuthResponse>, ApiError> {
+    Ok(Json(
+        state.auth.login_with_code(&body.email, &body.code).await?,
+    ))
+}
+
+/// Set a new password with an emailed reset code; returns a fresh session.
+async fn reset_password(
+    State(state): State<AppState>,
+    Json(body): Json<ResetPasswordRequest>,
+) -> Result<Json<AuthResponse>, ApiError> {
+    Ok(Json(
+        state
+            .auth
+            .reset_password(&body.email, &body.code, body.new_password)
+            .await?,
+    ))
 }
 
 /// Requires a valid bearer token; returns the caller's id, role (gates

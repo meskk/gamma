@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE email_codes\n            SET attempts = attempts + 1\n            WHERE email = $1 AND purpose = $2 AND attempts < $3 AND expires_at > now()\n            RETURNING code_hash\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code_hash",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4e0b022635de66e4dc2ee458217bd0295ae8d033a5d3a7a0cda7f6b5996f6108"
+}

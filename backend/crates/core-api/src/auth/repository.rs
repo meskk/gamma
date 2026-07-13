@@ -219,6 +219,130 @@ impl AuthRepository {
         Ok(res.rows_affected())
     }
 
+    /// A user id for an email (any account), or `None`. Used by the code flows,
+    /// which — unlike `credentials_by_email` — don't need a password to be set.
+    pub async fn user_id_by_email(&self, email: &str) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar!(r#"SELECT id FROM users WHERE email = $1"#, email)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    /// Store (or replace) the one-time code for (email, purpose). A conflicting
+    /// row is overwritten ONLY if the previous code is older than `cooldown_secs`
+    /// — so a rapid re-request within the cooldown is suppressed (bounds
+    /// email-bombing). Returns whether a code was actually (re)written and should
+    /// therefore be sent.
+    pub async fn upsert_email_code(
+        &self,
+        email: &str,
+        purpose: &str,
+        code_hash: &str,
+        expires_at: DateTime<Utc>,
+        cooldown_secs: f64,
+    ) -> Result<bool, sqlx::Error> {
+        let written = sqlx::query_scalar!(
+            r#"
+            INSERT INTO email_codes (email, purpose, code_hash, expires_at, attempts, created_at)
+            VALUES ($1, $2, $3, $4, 0, now())
+            ON CONFLICT (email, purpose) DO UPDATE
+            SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at,
+                attempts = 0, created_at = now()
+            WHERE email_codes.created_at <= now() - make_interval(secs => $5)
+            RETURNING 1 AS "written!"
+            "#,
+            email,
+            purpose,
+            code_hash,
+            expires_at,
+            cooldown_secs
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(written.is_some())
+    }
+
+    /// Atomically spend ONE guess against the active code for (email, purpose)
+    /// and return its `code_hash` — but only if a live, non-burned code exists
+    /// (`attempts < max_attempts` AND not expired). Returns `None` otherwise
+    /// (missing / expired / already burned). Doing the attempt-increment and the
+    /// eligibility check in one UPDATE is what makes it race-safe: concurrent
+    /// guesses can't all read `attempts = 0` and slip past the cap. Crucially it
+    /// does NOT delete a burned code — the row survives so the request cooldown
+    /// keyed on it still holds (deleting on burn would let a fresh, cooldown-free
+    /// code be minted immediately).
+    pub async fn claim_code_attempt(
+        &self,
+        email: &str,
+        purpose: &str,
+        max_attempts: i32,
+    ) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            UPDATE email_codes
+            SET attempts = attempts + 1
+            WHERE email = $1 AND purpose = $2 AND attempts < $3 AND expires_at > now()
+            RETURNING code_hash
+            "#,
+            email,
+            purpose,
+            max_attempts
+        )
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    /// Consume (delete) the code for (email, purpose) on a correct guess. Returns
+    /// whether a row was actually deleted, so exactly one of two concurrent
+    /// correct submissions wins single-use.
+    pub async fn consume_email_code(
+        &self,
+        email: &str,
+        purpose: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let deleted = sqlx::query_scalar!(
+            r#"DELETE FROM email_codes WHERE email = $1 AND purpose = $2 RETURNING 1 AS "one!""#,
+            email,
+            purpose
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(deleted.is_some())
+    }
+
+    /// Delete expired codes (housekeeping; the `email_codes_expires_at` index
+    /// keeps this cheap). Returns how many were removed.
+    pub async fn delete_expired_email_codes(&self) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query!("DELETE FROM email_codes WHERE expires_at <= now()")
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Set a user's password hash (password reset).
+    pub async fn set_password_hash(
+        &self,
+        user_id: i64,
+        password_hash: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            r#"UPDATE users SET password_hash = $2 WHERE id = $1"#,
+            user_id,
+            password_hash
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Delete every session for a user — a password reset logs out all devices
+    /// (and any attacker who triggered the reset). Returns how many were removed.
+    pub async fn delete_sessions_for_user(&self, user_id: i64) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query!("DELETE FROM sessions WHERE user_id = $1", user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected())
+    }
+
     /// The (user id, role) behind a live (unexpired) session token hash, or
     /// `None` if the token is unknown or expired. Joins `users` so a role check
     /// needs no second query.

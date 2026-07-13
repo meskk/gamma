@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO email_codes (email, purpose, code_hash, expires_at, attempts, created_at)\n            VALUES ($1, $2, $3, $4, 0, now())\n            ON CONFLICT (email, purpose) DO UPDATE\n            SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at,\n                attempts = 0, created_at = now()\n            WHERE email_codes.created_at <= now() - make_interval(secs => $5)\n            RETURNING 1 AS \"written!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "written!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "69fce8788f29bf1e8e9573efab5125d513ca7e0702e026745db861f186971dcd"
+}

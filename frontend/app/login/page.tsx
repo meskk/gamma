@@ -12,20 +12,25 @@
 //   - Step 3 (interests, register only): capture declared_categories for cold-start,
 //     then create the account. This is the ONE registration flow (the old English
 //     /register plain-form was removed — see AppShell / app/page.tsx).
-// No passkey / no email-code / no wallet (not in the backend); the email-only
-// "Methoden-Wähler" from the design collapses to a direct email field.
+// Recovery (backend: email one-time codes): from the login password step you can
+// either sign in with an emailed code (passwordless) or reset a forgotten
+// password — both go through a shared "code" step.
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 
 import type { EmailCheckRequest } from "@contract/EmailCheckRequest";
 import type { EmailCheckResult } from "@contract/EmailCheckResult";
+import type { RequestCodeRequest } from "@contract/RequestCodeRequest";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
-type Step = "email" | "password" | "interests";
+type Step = "email" | "password" | "interests" | "code";
 type Mode = "login" | "register";
+// Recovery sub-mode once on the "code" step: exchange the code for a session, or
+// use it to set a new password.
+type Recovery = "login" | "reset";
 
 function MailIcon() {
   return (
@@ -73,7 +78,7 @@ export default function LoginPage() {
 }
 
 function LoginForm() {
-  const { login, register } = useAuth();
+  const { login, register, loginWithCode, resetPassword } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>("login");
@@ -81,6 +86,12 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [interests, setInterests] = useState("");
+  // Recovery state (the "code" step). `recovery` picks login-vs-reset; `code`
+  // and `newPassword` are the fields on that step.
+  const [recovery, setRecovery] = useState<Recovery>("login");
+  const [code, setCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
   // Referral code from a shared invite link (/login?ref=CODE, P-2). Held in
   // state so an INVALID code can be dropped after its error — the person can
   // still register, they just don't credit anyone.
@@ -133,6 +144,12 @@ function LoginForm() {
     return "/feed";
   }
 
+  function resetRecoveryFields() {
+    setCode("");
+    setNewPassword("");
+    setNotice(null);
+  }
+
   function switchMode(next: Mode) {
     if (next === mode || busy) return;
     flowGen.current += 1; // invalidate any in-flight request
@@ -140,6 +157,7 @@ function LoginForm() {
     setStep("email");
     setPassword("");
     setInterests("");
+    resetRecoveryFields();
     setError(null);
   }
 
@@ -148,6 +166,7 @@ function LoginForm() {
     flowGen.current += 1;
     setStep("email");
     setPassword("");
+    resetRecoveryFields();
     setError(null);
   }
 
@@ -155,6 +174,7 @@ function LoginForm() {
     if (busy) return;
     flowGen.current += 1;
     setStep("password");
+    resetRecoveryFields();
     setError(null);
   }
 
@@ -262,8 +282,73 @@ function LoginForm() {
     }
   }
 
+  // Ask the backend to email a one-time code, then move to the code step. Used
+  // for both "forgot password" (reset) and "sign in with a code" (login). The
+  // response is always 204 (no enumeration), so success here never confirms the
+  // account exists — the code step is shown regardless.
+  async function requestCode(which: Recovery) {
+    const gen = ++flowGen.current;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const body: RequestCodeRequest = {
+        email,
+        purpose: which === "reset" ? "password_reset" : "login",
+      };
+      await apiFetch<void>("/auth/request-code", { method: "POST", body });
+      if (gen !== flowGen.current) return;
+      setRecovery(which);
+      setCode("");
+      setNewPassword("");
+      setStep("code");
+      setNotice(`Falls ein Konto für ${email} existiert, haben wir einen Code gesendet.`);
+    } catch (err) {
+      if (gen !== flowGen.current) return;
+      if (handleRateLimit(err)) return;
+      setError("Code konnte nicht angefordert werden — bitte erneut versuchen.");
+    } finally {
+      if (gen === flowGen.current) setBusy(false);
+    }
+  }
+
+  // Code step: exchange the code for a session, or use it to set a new password.
+  async function onCodeSubmit(e: FormEvent) {
+    e.preventDefault();
+    const gen = ++flowGen.current;
+    setBusy(true);
+    setError(null);
+    try {
+      if (recovery === "reset") {
+        await resetPassword(email, code.trim(), newPassword);
+      } else {
+        await loginWithCode(email, code.trim());
+      }
+      router.push(redirectTarget());
+    } catch (err) {
+      if (gen !== flowGen.current) return;
+      if (handleRateLimit(err)) return;
+      const c = err instanceof ApiError ? err.code : "";
+      if (recovery === "reset" && c === "weak_password") {
+        setError("Neues Passwort zu kurz (mindestens 8 Zeichen).");
+      } else if (err instanceof ApiError && err.status === 401) {
+        setError("Der Code ist falsch oder abgelaufen.");
+      } else {
+        setError("Aktion fehlgeschlagen — bitte erneut versuchen.");
+      }
+    } finally {
+      if (gen === flowGen.current) setBusy(false);
+    }
+  }
+
   const onSubmit =
-    step === "email" ? onEmailSubmit : step === "password" ? onPasswordSubmit : onInterestsSubmit;
+    step === "email"
+      ? onEmailSubmit
+      : step === "password"
+        ? onPasswordSubmit
+        : step === "code"
+          ? onCodeSubmit
+          : onInterestsSubmit;
 
   const seg = (active: boolean) => ({
     flex: 1,
@@ -299,9 +384,21 @@ function LoginForm() {
       ? "Weiter"
       : step === "interests"
         ? "Konto erstellen"
-        : mode === "login"
-          ? "Anmelden"
-          : "Weiter";
+        : step === "code"
+          ? recovery === "reset"
+            ? "Passwort ändern"
+            : "Anmelden"
+          : mode === "login"
+            ? "Anmelden"
+            : "Weiter";
+  const headingText =
+    step === "code"
+      ? recovery === "reset"
+        ? "Neues Passwort"
+        : "Per Code anmelden"
+      : mode === "login"
+        ? "Willkommen zurück"
+        : "Konto erstellen";
   // Keep an accessible name on the busy button rather than a bare "…". During a
   // rate-limit cooldown the countdown replaces the label; the alert text stays
   // static so assistive tech hears one message, not a ticking number.
@@ -349,6 +446,7 @@ function LoginForm() {
           disabled={busy}
           onClick={() => {
             if (step === "interests") backToPassword();
+            else if (step === "code") backToPassword();
             else if (step === "password") backToEmail();
             // Fresh tab has no history — router.back() is a no-op there, so fall
             // back to a real destination.
@@ -395,12 +493,16 @@ function LoginForm() {
             </button>
           </div>
 
-          <h1 style={heading}>{mode === "login" ? "Willkommen zurück" : "Konto erstellen"}</h1>
+          <h1 style={heading}>{headingText}</h1>
           <p style={subtext}>
             {step === "email" ? (
               mode === "login" ? "Gib deine E-Mail ein, um dich anzumelden." : "Gib deine E-Mail ein, um zu starten."
             ) : step === "interests" ? (
               "Wähle ein paar Interessen (optional) — das verbessert deinen Feed."
+            ) : step === "code" ? (
+              recovery === "reset"
+                ? "Gib den Code aus der E-Mail ein und wähle ein neues Passwort."
+                : "Gib den Code aus der E-Mail ein, um dich anzumelden."
             ) : (
               <>
                 {email}
@@ -468,6 +570,63 @@ function LoginForm() {
             </div>
           )}
 
+          {step === "code" && (
+            <>
+              <div className="gl-field" style={field}>
+                <span style={{ color: "rgba(255,255,255,0.6)", display: "flex" }} aria-hidden>
+                  <LockIcon />
+                </span>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  aria-label="Code aus der E-Mail"
+                  placeholder="6-stelliger Code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                  style={{ ...input, letterSpacing: "0.3em" }}
+                />
+              </div>
+              {recovery === "reset" && (
+                <div className="gl-field" style={field}>
+                  <span style={{ color: "rgba(255,255,255,0.6)", display: "flex" }} aria-hidden>
+                    <LockIcon />
+                  </span>
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    aria-label="Neues Passwort"
+                    placeholder="Neues Passwort (min. 8 Zeichen)"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    style={input}
+                  />
+                </div>
+              )}
+              <button
+                type="button"
+                className="gl-change"
+                disabled={busy || cooldownActive}
+                onClick={() => requestCode(recovery)}
+                style={{ fontSize: 13 }}
+              >
+                Code erneut senden
+              </button>
+            </>
+          )}
+
+          {notice && !error && (
+            <p aria-live="polite" style={{ margin: 0, width: "100%", fontSize: 13, color: "rgba(255,255,255,0.7)", textAlign: "center" }}>
+              {notice}
+            </p>
+          )}
+
           {error && (
             <p role="alert" aria-live="assertive" style={{ margin: 0, width: "100%", fontSize: 13, color: "#ff8585", textAlign: "center" }}>
               {error}
@@ -481,6 +640,17 @@ function LoginForm() {
             style={{ width: "100%", padding: "15px 0", borderRadius: 999, background: "rgba(255,255,255,0.22)", border: "1.2px solid rgba(255,255,255,0.42)", boxShadow: "0 8px 20px rgba(0,0,0,0.4)", color: "#fff", fontSize: 15, fontWeight: 500, cursor: "pointer", transition: "background 0.15s" }}
             {...busyLabel}
           />
+
+          {step === "password" && mode === "login" && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <button type="button" className="gl-change" disabled={busy || cooldownActive} onClick={() => requestCode("reset")}>
+                Passwort vergessen?
+              </button>
+              <button type="button" className="gl-change" disabled={busy || cooldownActive} onClick={() => requestCode("login")}>
+                Per E-Mail-Code anmelden
+              </button>
+            </div>
+          )}
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, paddingTop: 6, fontSize: 11 }}>
             <span style={{ color: "rgba(255,255,255,0.38)", textAlign: "center" }}>Mit Fortfahren akzeptierst du unsere</span>

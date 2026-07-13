@@ -61,6 +61,11 @@ async fn main() -> anyhow::Result<()> {
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = ?e, "login-throttle sweep failed"),
             }
+            match auth.sweep_expired_email_codes().await {
+                Ok(n) if n > 0 => tracing::info!(removed = n, "swept expired email codes"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = ?e, "email-code sweep failed"),
+            }
         }
     });
 

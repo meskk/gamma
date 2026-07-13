@@ -1,13 +1,74 @@
 //! Auth flow tests against a real Postgres: register, login, and the bearer-token
 //! protected `/auth/me` probe.
 
+use core_api::auth::model::CodePurpose;
+use core_api::mailer::{MailError, Mailer};
 use core_api::{app, AppState};
+
+use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
+
+/// Test mailer that records every emitted code instead of sending it, so the
+/// recovery-flow tests can read the code the service generated.
+#[derive(Clone, Default)]
+struct CapturingMailer {
+    sent: Arc<Mutex<Vec<(String, String, String)>>>, // (to, purpose, code)
+}
+
+impl CapturingMailer {
+    fn count(&self) -> usize {
+        self.sent.lock().unwrap().len()
+    }
+
+    /// Wait (briefly) until at least `n` codes have been sent, then return the
+    /// most recent one. The service dispatches mail off the request path
+    /// (spawn_blocking), so a just-returned request may not have recorded its
+    /// code yet — poll instead of racing.
+    async fn wait_for_code(&self, n: usize) -> String {
+        for _ in 0..400 {
+            {
+                let sent = self.sent.lock().unwrap();
+                if sent.len() >= n {
+                    return sent.last().unwrap().2.clone();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("expected at least {n} sent codes, got {}", self.count());
+    }
+}
+
+impl Mailer for CapturingMailer {
+    fn send_code(&self, to: &str, purpose: CodePurpose, code: &str) -> Result<(), MailError> {
+        self.sent
+            .lock()
+            .unwrap()
+            .push((to.to_string(), purpose.to_string(), code.to_string()));
+        Ok(())
+    }
+}
+
+/// Does `token` authenticate `/auth/me`?
+async fn me_ok(router: &axum::Router, token: &str) -> bool {
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/auth/me")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    resp.status() == StatusCode::OK
+}
 
 async fn post_json(router: &axum::Router, uri: &str, body: Value) -> axum::http::Response<Body> {
     router
@@ -623,4 +684,218 @@ async fn me_without_or_with_bad_token_is_401(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ── Auth recovery: email-code login + password reset ─────────────────────────
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn login_with_emailed_code(pool: PgPool) {
+    let mailer = CapturingMailer::default();
+    let router = app(AppState::new(pool).with_mailer(Arc::new(mailer.clone())));
+
+    let resp = post_json(
+        &router,
+        "/v1/auth/register",
+        serde_json::json!({ "email": "bob@example.com", "password": "supersecret" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let user_id = json_body(resp).await["user_id"].as_i64().unwrap();
+
+    // Request a login code (email-first casing is normalised).
+    let resp = post_json(
+        &router,
+        "/v1/auth/request-code",
+        serde_json::json!({ "email": "Bob@example.com", "purpose": "login" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let code = mailer.wait_for_code(1).await;
+
+    // Exchange the code for a session.
+    let resp = post_json(
+        &router,
+        "/v1/auth/login-with-code",
+        serde_json::json!({ "email": "bob@example.com", "code": code }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
+    assert_eq!(body["user_id"].as_i64().unwrap(), user_id);
+    assert!(me_ok(&router, body["token"].as_str().unwrap()).await);
+
+    // Single-use: the same code cannot be redeemed twice.
+    let resp = post_json(
+        &router,
+        "/v1/auth/login-with-code",
+        serde_json::json!({ "email": "bob@example.com", "code": code }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn password_reset_replaces_password_and_kills_old_sessions(pool: PgPool) {
+    let mailer = CapturingMailer::default();
+    let router = app(AppState::new(pool).with_mailer(Arc::new(mailer.clone())));
+
+    let resp = post_json(
+        &router,
+        "/v1/auth/register",
+        serde_json::json!({ "email": "carol@example.com", "password": "oldpassword" }),
+    )
+    .await;
+    let old_token = json_body(resp).await["token"].as_str().unwrap().to_string();
+    assert!(me_ok(&router, &old_token).await);
+
+    // Request a reset code and use it to set a new password.
+    let resp = post_json(
+        &router,
+        "/v1/auth/request-code",
+        serde_json::json!({ "email": "carol@example.com", "purpose": "password_reset" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let code = mailer.wait_for_code(1).await;
+
+    let resp = post_json(
+        &router,
+        "/v1/auth/reset-password",
+        serde_json::json!({ "email": "carol@example.com", "code": code, "new_password": "brandnewpass" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let fresh_token = json_body(resp).await["token"].as_str().unwrap().to_string();
+
+    // The reset invalidated the pre-reset session; the returned one works.
+    assert!(
+        !me_ok(&router, &old_token).await,
+        "old session must be revoked"
+    );
+    assert!(
+        me_ok(&router, &fresh_token).await,
+        "post-reset session must work"
+    );
+
+    // The old password no longer logs in; the new one does.
+    let resp = post_json(
+        &router,
+        "/v1/auth/login",
+        serde_json::json!({ "email": "carol@example.com", "password": "oldpassword" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let resp = post_json(
+        &router,
+        "/v1/auth/login",
+        serde_json::json!({ "email": "carol@example.com", "password": "brandnewpass" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn request_code_for_unknown_email_leaks_nothing(pool: PgPool) {
+    let mailer = CapturingMailer::default();
+    let router = app(AppState::new(pool).with_mailer(Arc::new(mailer.clone())));
+
+    // No account for this address: still 204, and nothing is sent.
+    let resp = post_json(
+        &router,
+        "/v1/auth/request-code",
+        serde_json::json!({ "email": "nobody@example.com", "purpose": "login" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    // Give any (erroneously) dispatched send a chance to land before asserting.
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    assert_eq!(mailer.count(), 0, "no mail for a non-existent account");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn wrong_code_is_rejected_and_burned_after_max_attempts(pool: PgPool) {
+    let mailer = CapturingMailer::default();
+    let router = app(AppState::new(pool).with_mailer(Arc::new(mailer.clone())));
+
+    post_json(
+        &router,
+        "/v1/auth/register",
+        serde_json::json!({ "email": "dave@example.com", "password": "supersecret" }),
+    )
+    .await;
+    post_json(
+        &router,
+        "/v1/auth/request-code",
+        serde_json::json!({ "email": "dave@example.com", "purpose": "login" }),
+    )
+    .await;
+    let good_code = mailer.wait_for_code(1).await;
+
+    // Five wrong guesses are each rejected and burn the code.
+    for _ in 0..5 {
+        let resp = post_json(
+            &router,
+            "/v1/auth/login-with-code",
+            serde_json::json!({ "email": "dave@example.com", "code": "000000" }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+    // Even the correct code no longer works — it was burned.
+    let resp = post_json(
+        &router,
+        "/v1/auth/login-with-code",
+        serde_json::json!({ "email": "dave@example.com", "code": good_code }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn burning_a_code_does_not_reset_the_request_cooldown(pool: PgPool) {
+    let mailer = CapturingMailer::default();
+    let router = app(AppState::new(pool).with_mailer(Arc::new(mailer.clone())));
+
+    post_json(
+        &router,
+        "/v1/auth/register",
+        serde_json::json!({ "email": "erin@example.com", "password": "supersecret" }),
+    )
+    .await;
+    post_json(
+        &router,
+        "/v1/auth/request-code",
+        serde_json::json!({ "email": "erin@example.com", "purpose": "login" }),
+    )
+    .await;
+    mailer.wait_for_code(1).await; // ensure the first send has landed
+
+    // Burn the code: five wrong guesses.
+    for _ in 0..5 {
+        let resp = post_json(
+            &router,
+            "/v1/auth/login-with-code",
+            serde_json::json!({ "email": "erin@example.com", "code": "000000" }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // Re-request immediately: within the 60s cooldown, so NO new code is sent —
+    // a burn must not reopen the guessing/bombing window (regression for the
+    // delete-on-burn cooldown bypass).
+    let resp = post_json(
+        &router,
+        "/v1/auth/request-code",
+        serde_json::json!({ "email": "erin@example.com", "purpose": "login" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    // Let any (wrongly) dispatched second send land before asserting it didn't.
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    assert_eq!(
+        mailer.count(),
+        1,
+        "re-request within cooldown after a burn must not send a new code"
+    );
 }
