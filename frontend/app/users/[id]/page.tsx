@@ -361,7 +361,7 @@ function PostTile({ post, shade }: { post: Post; shade: number }) {
         boxSizing: "border-box",
       }}
     >
-      {post.media_id != null ? (
+      {post.media_id != null || locked ? (
         <ImageIcon size={40} />
       ) : (
         <span
