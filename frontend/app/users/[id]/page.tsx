@@ -7,9 +7,11 @@
 // presentation is the glass redesign.
 //
 // The design shows fields the Phase-1a backend does not have yet (display name,
-// bio, followers/likes aggregates, messaging). Per the owner's call we render
-// only real data and OMIT the rest rather than fake it. "Subscribe" is shown
-// only when the creator actually has a subscription private area configured
+// bio, followers aggregate, messaging). Per the owner's call we render only
+// real data and OMIT the rest rather than fake it. The LIKES aggregate is real
+// since ADR 0012 (`user.likes_received`: active likes on the user's public
+// posts), as are the per-tile like counts. "Subscribe" is shown only when the
+// creator actually has a subscription private area configured
 // (GAMMA_PRIVATE_AREA); the purchase flow itself is not built, so the pill is a
 // display of the offer, not a checkout.
 
@@ -195,6 +197,7 @@ export default function ProfilePage() {
               <div style={{ display: "flex", gap: 40, paddingTop: 8 }}>
                 <Stat value={postCount} label="Posts" />
                 <Stat value={followingCount} label="Folgt" />
+                <Stat value={Number(user.likes_received)} label="Likes" />
                 {isSelf && balance && (
                   <Stat value={Number(balance.balance)} label="Gems" />
                 )}
@@ -337,9 +340,11 @@ function Stat({ value, label }: { value: number | null; label: string }) {
 }
 
 // A single post tile. Media posts show an image placeholder (no thumbnail fetch
-// yet); text-only posts show a snippet. Private posts get a lock overlay.
+// yet); text-only posts show a snippet. Private posts get a lock overlay; every
+// tile carries its live like count (ADR 0012).
 function PostTile({ post, shade }: { post: Post; shade: number }) {
   const locked = post.area === "private";
+  const likeCount = Number(post.like_count);
   // Subtle per-tile gradient variation, like the Figma tiles.
   const top = 40 + (shade % 4) * 4;
   return (
@@ -378,6 +383,23 @@ function PostTile({ post, shade }: { post: Post; shade: number }) {
           {post.body ?? "(kein Text)"}
         </span>
       )}
+
+      <span
+        aria-label={`${likeCount.toLocaleString("de-DE")} Likes`}
+        style={{
+          position: "absolute",
+          left: 12,
+          bottom: 10,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+          fontSize: 13,
+          color: "rgba(255,255,255,0.85)",
+          textShadow: "0 1px 4px rgba(0,0,0,0.6)",
+        }}
+      >
+        ♥ {likeCount.toLocaleString("de-DE")}
+      </span>
 
       {locked && (
         <>

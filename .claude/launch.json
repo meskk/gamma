@@ -7,6 +7,20 @@
       "runtimeArgs": ["run", "dev"],
       "port": 3000,
       "cwd": "frontend"
+    },
+    {
+      "name": "backend-api",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run", "-p", "core-api"],
+      "port": 8080,
+      "cwd": "backend"
+    },
+    {
+      "name": "poolsite",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "serve", "--listen", "4173", "--no-clipboard", "."],
+      "cwd": "poolsite-website",
+      "port": 4173
     }
   ]
 }

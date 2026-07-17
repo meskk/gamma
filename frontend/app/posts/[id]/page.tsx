@@ -19,16 +19,17 @@ export default function PostDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
 
-  // Note (UI-lie limitation): the `Post` contract carries no per-viewer "liked"
-  // flag, so we can't hydrate `liked` from the server — after a reload a post the
-  // viewer already liked shows "♡ Like" until they interact. Backend fix required
-  // (add a `liked_by_me` field to `Post`); until then this is a known cosmetic gap.
   const { data: post, error: loadError } = useFetch<Post>(
     () => apiFetch(`/posts/${id}`, { token }),
     [token, id],
     { enabled: !!token && !!id },
   );
-  const { liked, like } = useLike(id, token ?? "");
+  // Hydrated from the fetched post (liked_by_me/like_count), toggled optimistically.
+  const { liked, count, toggle } = useLike(
+    { postId: id },
+    token ?? "",
+    post ? { liked: post.liked_by_me, count: Number(post.like_count) } : null,
+  );
   const [reported, setReported] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -84,8 +85,9 @@ export default function PostDetailPage() {
             </div>
           )}
           <div style={{ display: "flex", gap: "0.75rem" }}>
-            <button type="button" onClick={like} disabled={liked}>
+            <button type="button" onClick={toggle} aria-pressed={liked}>
               {liked ? "♥ Gefällt dir" : "♡ Gefällt mir"}
+              {` · ${count.toLocaleString("de-DE")}`}
             </button>
             <button type="button" onClick={report} disabled={reported}>
               {reported ? "Gemeldet" : "Melden"}

@@ -9,7 +9,35 @@ import type { NewInteraction } from "@contract/NewInteraction";
 
 import { apiFetch } from "@/lib/api";
 import { useFetch } from "@/lib/useFetch";
+import { useLike } from "@/lib/useLike";
 import type { Wire } from "@/lib/wire";
+
+// The per-comment like toggle, hydrated from the fetched row. Its own component
+// so each comment gets its own hook state.
+function CommentLikeButton({ comment, token }: { comment: Comment; token: string }) {
+  const { liked, count, toggle } = useLike({ commentId: String(comment.id) }, token, {
+    liked: comment.liked_by_me,
+    count: Number(comment.like_count),
+  });
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-pressed={liked}
+      aria-label={liked ? "Gefällt dir nicht mehr" : "Gefällt mir"}
+      style={{
+        background: "none",
+        border: 0,
+        padding: 0,
+        cursor: "pointer",
+        color: liked ? "crimson" : "#888",
+        fontSize: "0.78rem",
+      }}
+    >
+      {liked ? "♥" : "♡"} {count.toLocaleString("de-DE")}
+    </button>
+  );
+}
 
 export function Comments({ postId, token }: { postId: string; token: string }) {
   const {
@@ -40,6 +68,7 @@ export function Comments({ postId, token }: { postId: string; token: string }) {
         type: "comment",
         target_id: null,
         post_id: Number(postId),
+        comment_id: null,
       };
       apiFetch<void>("/interactions", { method: "POST", body: interaction, token }).catch(() => {});
       setBody("");
@@ -80,6 +109,7 @@ export function Comments({ postId, token }: { postId: string; token: string }) {
             {new Date(c.created_at).toLocaleString()}
           </div>
           <p style={{ margin: "0.2rem 0", whiteSpace: "pre-wrap" }}>{c.body}</p>
+          <CommentLikeButton comment={c} token={token} />
         </div>
       ))}
     </section>

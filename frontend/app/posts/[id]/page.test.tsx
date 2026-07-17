@@ -34,6 +34,9 @@ function postResponse(id: string) {
     created_at: new Date("2026-01-01").toISOString(),
     popularity_score: 0,
     media_id: null,
+    area: "public",
+    like_count: 3,
+    liked_by_me: false,
   };
 }
 
@@ -52,10 +55,12 @@ describe("PostDetailPage", () => {
     const { rerender } = render(<PostDetailPage />);
     await screen.findByText("post 1");
 
-    // Like post 1 → the button flips to the liked (disabled) state.
+    // Like post 1 → the button flips to the liked state, count bumps 3 → 4.
     fireEvent.click(screen.getByRole("button", { name: /Gefällt/ }));
     await vi.waitFor(() => {
-      expect(screen.getByRole("button", { name: /Gefällt/ }).textContent).toBe("♥ Gefällt dir");
+      expect(screen.getByRole("button", { name: /Gefällt/ }).textContent).toBe(
+        "♥ Gefällt dir · 4",
+      );
     });
 
     // Navigate to post 2 (App Router reuses the mounted component across [id]).
@@ -66,9 +71,36 @@ describe("PostDetailPage", () => {
     await screen.findByText("post 2");
 
     // The regression: without the state reset, `liked` stayed true and the button
-    // was stuck on the liked state + disabled, so post 2 could never be liked.
+    // was stuck on the liked state, so post 2 could never be liked. The count is
+    // post 2's own server value again, not post 1's optimistic one.
     const likeButton = screen.getByRole("button", { name: /Gefällt/ }) as HTMLButtonElement;
-    expect(likeButton.textContent).toBe("♡ Gefällt mir");
+    expect(likeButton.textContent).toBe("♡ Gefällt mir · 3");
     expect(likeButton.disabled).toBe(false);
+  });
+
+  it("hydrates the liked state from the server row (liked_by_me)", async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path.startsWith("/posts/"))
+        return Promise.resolve({ ...postResponse("1"), liked_by_me: true, like_count: 7 });
+      return Promise.resolve(undefined);
+    });
+    render(<PostDetailPage />);
+    await screen.findByText("post 1");
+    // Already liked on the server → the button starts in the liked state...
+    const likeButton = screen.getByRole("button", { name: /Gefällt/ });
+    expect(likeButton.textContent).toBe("♥ Gefällt dir · 7");
+
+    // ...and toggling now UN-likes: DELETE, count drops.
+    fireEvent.click(likeButton);
+    await vi.waitFor(() => {
+      expect(screen.getByRole("button", { name: /Gefällt/ }).textContent).toBe(
+        "♡ Gefällt mir · 6",
+      );
+    });
+    expect(apiFetchMock).toHaveBeenLastCalledWith("/interactions", {
+      method: "DELETE",
+      body: { type: "like", target_id: null, post_id: 1, comment_id: null },
+      token: "t",
+    });
   });
 });

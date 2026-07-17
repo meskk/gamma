@@ -34,6 +34,8 @@ beforeEach(() => {
         id: Number(id),
         created_at: new Date("2026-01-01").toISOString(),
         declared_categories: [],
+        bot_gate_v: false,
+        likes_received: 2,
       });
     }
     if (path.startsWith("/posts?")) return Promise.resolve([]);
@@ -50,7 +52,8 @@ afterEach(() => cleanup());
 describe("ProfilePage", () => {
   it("resets follow state across navigation (no stale Unfollow on the next profile)", async () => {
     const { rerender } = render(<ProfilePage />);
-    await screen.findByRole("heading", { name: /user-5/i });
+    // The Glass redesign renders the handle as a styled <span>, not a heading.
+    await screen.findByText("@user-5");
     // Viewer follows 5 → the button reads "Unfollow".
     await screen.findByRole("button", { name: "Entfolgen" });
 
@@ -59,7 +62,7 @@ describe("ProfilePage", () => {
       paramsRef.current = { id: "9" };
     });
     rerender(<ProfilePage />);
-    await screen.findByRole("heading", { name: /user-9/i });
+    await screen.findByText("@user-9");
 
     // The regression: without the reset, profile 5's `following=true` lingered and
     // showed a stale "Unfollow" for profile 9.

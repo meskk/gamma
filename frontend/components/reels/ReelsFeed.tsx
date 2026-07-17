@@ -15,7 +15,7 @@ import type { Follow } from "@contract/Follow";
 
 import { apiFetch } from "@/lib/api";
 import { usePagedFeed } from "@/lib/usePagedFeed";
-import { ActionRail } from "./ActionRail";
+import { ActionRail, type LikeState } from "./ActionRail";
 import { ReelMedia } from "./ReelMedia";
 import {
   ChevronUpIcon,
@@ -54,6 +54,20 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
 
   const cooldown = useRef(false); // debounces one wheel/swipe gesture to one page
   const touchStartY = useRef<number | null>(null);
+
+  // Post-toggle like truth per post id, OUTLIVING the per-reel ActionRail mount:
+  // the rail is keyed by post and unmounts on every page, so without this a
+  // scroll-back would re-hydrate from the stale fetch-time feed snapshot and
+  // visually revert a like made moments ago. The identity check keeps the
+  // report-up effect from looping (same values ⇒ same state object).
+  const [likeStates, setLikeStates] = useState<Record<string, LikeState>>({});
+  const onLikeChange = useCallback((postId: string, s: LikeState) => {
+    setLikeStates((prev) => {
+      const cur = prev[postId];
+      if (cur && cur.liked === s.liked && cur.count === s.count) return prev;
+      return { ...prev, [postId]: s };
+    });
+  }, []);
 
   useEffect(() => {
     let stale = false;
@@ -253,8 +267,17 @@ export function ReelsFeed({ token, userId }: { token: string; userId: string }) 
           </div>
         )}
 
-        {/* Pinned action rail — keyed by post so its like state resets per reel. */}
-        {active && <ActionRail key={String(active.id)} post={active} token={token} />}
+        {/* Pinned action rail — keyed by post so its like state resets per reel;
+            likeStates carries the post-toggle truth across those remounts. */}
+        {active && (
+          <ActionRail
+            key={String(active.id)}
+            post={active}
+            token={token}
+            likeState={likeStates[String(active.id)]}
+            onLikeChange={onLikeChange}
+          />
+        )}
       </div>
 
       {count > 1 && (

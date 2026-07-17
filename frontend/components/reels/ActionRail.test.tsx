@@ -15,7 +15,14 @@ vi.mock("next/navigation", () => ({
 
 import { ActionRail } from "./ActionRail";
 
-const post = { id: 1n, author_id: 2n, category: null, body: "hi" } as unknown as Post;
+const post = {
+  id: 1n,
+  author_id: 2n,
+  category: null,
+  body: "hi",
+  like_count: 3n,
+  liked_by_me: false,
+} as unknown as Post;
 
 beforeEach(() => {
   featuresMock.tips = false;

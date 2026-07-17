@@ -1,12 +1,13 @@
 "use client";
 
 // The right-hand action rail. Wires the actions the backend actually supports —
-// like (POST /interactions) and share (copy link / Web Share) — and clearly marks
+// the like toggle (POST/DELETE /interactions, hydrated from the post's
+// liked_by_me/like_count) and share (copy link / Web Share) — and clearly marks
 // the ones that don't exist yet: Tip is Phase-1b (disabled), Save is a local-only
-// toggle, and the music disc is decorative. Counts are shown only when a real value
-// is provided (no fabricated numbers); otherwise a short action label is shown.
+// toggle, and the music disc is decorative. The like count is the real journal
+// aggregate; the other rail items keep action labels (no fabricated numbers).
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import type { Post } from "@contract/Post";
@@ -23,10 +24,39 @@ import {
 } from "./icons";
 import styles from "./reels.module.css";
 
-export function ActionRail({ post, token }: { post: Post; token: string }) {
+// Compact German count for the rail label (1.234 → "1234", 12500 → "12,5 Tsd.").
+function fmtCount(n: number): string {
+  return new Intl.NumberFormat("de-DE", { notation: "compact" }).format(n);
+}
+
+export type LikeState = { liked: boolean; count: number };
+
+export function ActionRail({
+  post,
+  token,
+  likeState,
+  onLikeChange,
+}: {
+  post: Post;
+  token: string;
+  /// Overrides the hydration source. The rail is keyed per reel and UNMOUNTS on
+  /// every page — without this, scrolling back would re-hydrate from the
+  /// fetch-time feed snapshot and visually revert a like made moments ago. The
+  /// parent (ReelsFeed) keeps the post-toggle truth across mounts and feeds it
+  /// back here; standalone usages can omit both props.
+  likeState?: LikeState;
+  onLikeChange?: (postId: string, state: LikeState) => void;
+}) {
   const router = useRouter();
   const postId = String(post.id);
-  const { liked, like } = useLike(postId, token);
+  const { liked, count, toggle } = useLike(
+    { postId },
+    token,
+    likeState ?? { liked: post.liked_by_me, count: Number(post.like_count) },
+  );
+  useEffect(() => {
+    onLikeChange?.(postId, { liked, count });
+  }, [onLikeChange, postId, liked, count]);
   const [saved, setSaved] = useState(false);
   const [shareLabel, setShareLabel] = useState("Teilen");
 
@@ -56,13 +86,13 @@ export function ActionRail({ post, token }: { post: Post; token: string }) {
         <button
           type="button"
           className={`${styles.glass} ${styles.circleBtn} ${liked ? styles.liked : ""}`}
-          onClick={like}
+          onClick={toggle}
           aria-pressed={liked}
-          aria-label={liked ? "Gefällt dir" : "Gefällt mir"}
+          aria-label={liked ? "Gefällt dir nicht mehr" : "Gefällt mir"}
         >
           <HeartIcon size={26} filled={liked} />
         </button>
-        <span className={styles.railLabel}>{liked ? "Geliked" : "Like"}</span>
+        <span className={styles.railLabel}>{fmtCount(count)}</span>
       </div>
 
       <div className={styles.railItem}>
