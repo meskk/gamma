@@ -6,6 +6,7 @@
 //! actually appears. Queries use `query_as!` so they are checked against the live
 //! schema at compile time (the `.sqlx` cache lets CI do this without a database).
 
+use crate::interactions::model::InteractionType;
 use crate::users::model::{NewUser, ReferralTerms, User};
 use db::PgPool;
 
@@ -20,12 +21,14 @@ impl UserRepository {
     }
 
     pub async fn create(&self, new: &NewUser) -> Result<User, sqlx::Error> {
+        // A brand-new user has no posts, so no likes received — a literal.
         sqlx::query_as!(
             User,
             r#"
             INSERT INTO users (declared_categories, bot_gate_v)
             VALUES ($1, $2)
-            RETURNING id, created_at, declared_categories, bot_gate_v
+            RETURNING id, created_at, declared_categories, bot_gate_v,
+                      0::bigint AS "likes_received!"
             "#,
             &new.declared_categories,
             new.bot_gate_v
@@ -38,11 +41,18 @@ impl UserRepository {
         sqlx::query_as!(
             User,
             r#"
-            SELECT id, created_at, declared_categories, bot_gate_v
+            SELECT id, created_at, declared_categories, bot_gate_v,
+                   (SELECT COUNT(DISTINCT (ie.actor_id, ie.post_id)) FROM interaction_events ie
+                    JOIN posts p ON p.id = ie.post_id
+                    WHERE p.author_id = users.id AND ie.type = $2
+                      AND ie.retracted_at IS NULL
+                      AND p.hidden_at IS NULL AND p.area = 'public')
+                       AS "likes_received!"
             FROM users
             WHERE id = $1
             "#,
-            id
+            id,
+            InteractionType::Like.code()
         )
         .fetch_optional(&self.pool)
         .await
@@ -56,10 +66,17 @@ impl UserRepository {
             r#"
             UPDATE users SET bot_gate_v = $2
             WHERE id = $1
-            RETURNING id, created_at, declared_categories, bot_gate_v
+            RETURNING id, created_at, declared_categories, bot_gate_v,
+                      (SELECT COUNT(DISTINCT (ie.actor_id, ie.post_id)) FROM interaction_events ie
+                       JOIN posts p ON p.id = ie.post_id
+                       WHERE p.author_id = users.id AND ie.type = $3
+                         AND ie.retracted_at IS NULL
+                         AND p.hidden_at IS NULL AND p.area = 'public')
+                          AS "likes_received!"
             "#,
             id,
-            verified
+            verified,
+            InteractionType::Like.code()
         )
         .fetch_optional(&self.pool)
         .await

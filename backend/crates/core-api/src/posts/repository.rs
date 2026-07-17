@@ -85,6 +85,7 @@
 
 use chrono::{DateTime, Utc};
 
+use crate::interactions::model::InteractionType;
 use crate::posts::model::{NewPost, Post, ReportedPost};
 use db::PgPool;
 
@@ -99,12 +100,15 @@ impl PostRepository {
     }
 
     pub async fn create(&self, new: &NewPost) -> Result<Post, sqlx::Error> {
+        // A brand-new post has no likes and its author hasn't liked it — literals,
+        // no journal lookup needed.
         sqlx::query_as!(
             Post,
             r#"
             INSERT INTO posts (author_id, category, body, media_id, area)
             VALUES ($1, $2, $3, $4, $5)
-            RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area
+            RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area,
+                      0::bigint AS "like_count!", false AS "liked_by_me!"
             "#,
             new.author_id,
             new.category.as_deref(),
@@ -175,7 +179,13 @@ impl PostRepository {
         sqlx::query_as!(
             Post,
             r#"
-            SELECT id, author_id, category, body, created_at, popularity_score, media_id, area
+            SELECT id, author_id, category, body, created_at, popularity_score, media_id, area,
+                   (SELECT COUNT(DISTINCT ie.actor_id) FROM interaction_events ie
+                    WHERE ie.post_id = posts.id AND ie.type = $3 AND ie.retracted_at IS NULL)
+                       AS "like_count!",
+                   EXISTS(SELECT 1 FROM interaction_events ie
+                    WHERE ie.post_id = posts.id AND ie.type = $3 AND ie.actor_id = $2
+                      AND ie.retracted_at IS NULL) AS "liked_by_me!"
             FROM posts
             WHERE id = $1 AND hidden_at IS NULL
               AND (
@@ -194,7 +204,8 @@ impl PostRepository {
               )
             "#,
             id,
-            viewer
+            viewer,
+            InteractionType::Like.code()
         )
         .fetch_optional(&self.pool)
         .await
@@ -214,7 +225,13 @@ impl PostRepository {
         sqlx::query_as!(
             Post,
             r#"
-            SELECT id, author_id, category, body, created_at, popularity_score, media_id, area
+            SELECT id, author_id, category, body, created_at, popularity_score, media_id, area,
+                   (SELECT COUNT(DISTINCT ie.actor_id) FROM interaction_events ie
+                    WHERE ie.post_id = posts.id AND ie.type = $5 AND ie.retracted_at IS NULL)
+                       AS "like_count!",
+                   EXISTS(SELECT 1 FROM interaction_events ie
+                    WHERE ie.post_id = posts.id AND ie.type = $5 AND ie.actor_id = $2
+                      AND ie.retracted_at IS NULL) AS "liked_by_me!"
             FROM posts
             WHERE hidden_at IS NULL AND ($1::bigint IS NULL OR author_id = $1)
               AND (
@@ -237,7 +254,8 @@ impl PostRepository {
             author_id,
             viewer,
             limit,
-            offset
+            offset,
+            InteractionType::Like.code()
         )
         .fetch_all(&self.pool)
         .await
@@ -274,15 +292,22 @@ impl PostRepository {
         id: i64,
         hidden_at: Option<DateTime<Utc>>,
     ) -> Result<Option<Post>, sqlx::Error> {
+        // Operator context: no viewer, so `liked_by_me` is a plain false. The
+        // count still reflects the journal — a restored post shows its real likes.
         sqlx::query_as!(
             Post,
             r#"
             UPDATE posts SET hidden_at = $2
             WHERE id = $1
-            RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area
+            RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area,
+                      (SELECT COUNT(DISTINCT ie.actor_id) FROM interaction_events ie
+                       WHERE ie.post_id = posts.id AND ie.type = $3 AND ie.retracted_at IS NULL)
+                          AS "like_count!",
+                      false AS "liked_by_me!"
             "#,
             id,
-            hidden_at
+            hidden_at,
+            InteractionType::Like.code()
         )
         .fetch_optional(&self.pool)
         .await

@@ -2,7 +2,10 @@
 import type { InteractionType } from "./InteractionType";
 
 /**
- * Request to record an interaction. `target_id` (the other user) and `post_id`
- * are optional — a like targets a post, a follow targets a user, etc.
+ * Request to record an interaction. Exactly one of `target_id` (the other
+ * user), `post_id`, or `comment_id` identifies what is interacted with — a
+ * like targets a post or a comment, a follow targets a user, etc. The service
+ * normalises the triple to ONE canonical shape (see `record`), so a client
+ * sending redundant ids cannot mint distinct dedup tuples for the same edge.
  */
-export type NewInteraction = { type: InteractionType, target_id: bigint | null, post_id: bigint | null, };
+export type NewInteraction = { type: InteractionType, target_id: bigint | null, post_id: bigint | null, comment_id: bigint | null, };

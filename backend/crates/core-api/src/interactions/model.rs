@@ -58,8 +58,11 @@ impl InteractionType {
     }
 }
 
-/// Request to record an interaction. `target_id` (the other user) and `post_id`
-/// are optional — a like targets a post, a follow targets a user, etc.
+/// Request to record an interaction. Exactly one of `target_id` (the other
+/// user), `post_id`, or `comment_id` identifies what is interacted with — a
+/// like targets a post or a comment, a follow targets a user, etc. The service
+/// normalises the triple to ONE canonical shape (see `record`), so a client
+/// sending redundant ids cannot mint distinct dedup tuples for the same edge.
 #[derive(Debug, Clone, Deserialize, TS)]
 #[ts(export, export_to = "../../../bindings/")]
 pub struct NewInteraction {
@@ -73,20 +76,26 @@ pub struct NewInteraction {
     pub target_id: Option<i64>,
     #[serde(default)]
     pub post_id: Option<i64>,
+    #[serde(default)]
+    pub comment_id: Option<i64>,
 }
 
 /// A persisted interaction event (append-only). `type_code` is the stored code;
-/// callers use `InteractionView` for a typed representation.
+/// callers use `InteractionView` for a typed representation. `retracted_at`
+/// set = the event is VOIDED (an un-like): it stays in the journal but confers
+/// no weight and no read-side count (ADR 0012).
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct InteractionEvent {
     pub id: i64,
     pub actor_id: i64,
     pub target_id: Option<i64>,
     pub post_id: Option<i64>,
+    pub comment_id: Option<i64>,
     pub type_code: i16,
     pub weight: f64,
     pub created_at: DateTime<Utc>,
     pub epoch_k: i32,
+    pub retracted_at: Option<DateTime<Utc>>,
 }
 
 /// A resolved user→user edge for one epoch, ready to feed the gem engine. The
@@ -109,6 +118,7 @@ pub struct InteractionView {
     pub actor_id: i64,
     pub target_id: Option<i64>,
     pub post_id: Option<i64>,
+    pub comment_id: Option<i64>,
     pub r#type: InteractionType,
     pub weight: f64,
     pub epoch_k: i32,
@@ -124,6 +134,7 @@ impl InteractionView {
             actor_id: event.actor_id,
             target_id: event.target_id,
             post_id: event.post_id,
+            comment_id: event.comment_id,
             r#type: InteractionType::from_code(event.type_code).unwrap_or(InteractionType::Like),
             weight: event.weight,
             epoch_k: event.epoch_k,

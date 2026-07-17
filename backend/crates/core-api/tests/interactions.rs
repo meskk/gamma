@@ -66,6 +66,7 @@ async fn record_stamps_epoch_and_weight(pool: PgPool) {
             r#type: InteractionType::Comment,
             target_id: Some(target),
             post_id: Some(post),
+            comment_id: None,
         })
         .await
         .expect("record");
@@ -94,6 +95,7 @@ async fn duplicate_interaction_in_epoch_is_deduped(pool: PgPool) {
         r#type: InteractionType::Like,
         target_id: None,
         post_id: Some(post),
+        comment_id: None,
     };
 
     // The same like, twice, is idempotent — same row, no extra weight.
@@ -111,6 +113,7 @@ async fn duplicate_interaction_in_epoch_is_deduped(pool: PgPool) {
             r#type: InteractionType::Comment,
             target_id: None,
             post_id: Some(post),
+            comment_id: None,
         })
         .await
         .expect("distinct type");
@@ -149,6 +152,7 @@ async fn edges_exclude_interactions_on_taken_down_posts(pool: PgPool) {
             r#type: InteractionType::Like,
             target_id: None,
             post_id: Some(post.id),
+            comment_id: None,
         })
         .await
         .expect("record like");
@@ -203,6 +207,7 @@ async fn edges_exclude_private_posts(pool: PgPool) {
         r#type: InteractionType::Like,
         target_id: None,
         post_id: Some(post.id),
+        comment_id: None,
     })
     .await
     .expect("record like");
@@ -211,6 +216,7 @@ async fn edges_exclude_private_posts(pool: PgPool) {
         r#type: InteractionType::Comment,
         target_id: Some(author),
         post_id: Some(post.id),
+        comment_id: None,
     })
     .await
     .expect("record comment");
@@ -284,6 +290,7 @@ async fn target_directed_interactions_dedup_regardless_of_post(pool: PgPool) {
         r#type: InteractionType::Follow,
         target_id: Some(target),
         post_id: Some(post),
+        comment_id: None,
     };
     let first = svc.record(mk(p1)).await.expect("first");
     let again = svc.record(mk(p2)).await.expect("second");
@@ -341,4 +348,267 @@ async fn http_record_returns_typed_view(pool: PgPool) {
     assert_eq!(view["actor_id"].as_i64().unwrap(), actor);
     assert_eq!(view["weight"], omega(InteractionType::Share));
     assert!(view["epoch_k"].as_i64().unwrap() > 0);
+}
+
+// ---------------------------------------------------------------------------
+// ADR 0012: un-like (retraction) + comment likes
+// ---------------------------------------------------------------------------
+
+async fn seed_comment(pool: &PgPool, post: i64, author: i64) -> i64 {
+    core_api::comments::repository::CommentRepository::new(pool.clone())
+        .create(post, author, "hi")
+        .await
+        .expect("comment insert")
+        .expect("post visible to commenter")
+        .id
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn unlike_voids_the_edge_and_relike_restores_it(pool: PgPool) {
+    let actor = seed_user(&pool).await;
+    let author = seed_user(&pool).await;
+    let post = seed_post(&pool, author).await;
+    let svc = InteractionService::new(pool.clone());
+    let like = NewInteraction {
+        actor_id: actor,
+        r#type: InteractionType::Like,
+        target_id: None,
+        post_id: Some(post),
+        comment_id: None,
+    };
+    let first = svc.record(like.clone()).await.expect("like");
+
+    let epoch = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i32;
+    let repo = InteractionRepository::new(pool.clone());
+    assert_eq!(repo.edges_for_epoch(epoch).await.expect("edges").len(), 1);
+
+    // Un-like: the edge disappears from settlement, but the journal keeps the
+    // row — voided, not deleted (append-only history).
+    svc.retract(like.clone()).await.expect("retract");
+    assert!(
+        repo.edges_for_epoch(epoch).await.expect("edges").is_empty(),
+        "a retracted like confers no edge"
+    );
+    let journal = repo.list_by_epoch(epoch).await.expect("journal");
+    assert_eq!(journal.len(), 1, "the journal keeps the voided row");
+    assert!(journal[0].retracted_at.is_some());
+
+    // Re-like within the same epoch: the ORIGINAL row is un-voided — same id,
+    // same weight, still exactly one row. Like → un-like → like cycling can
+    // never inflate weight past the dedup cap.
+    let again = svc.record(like.clone()).await.expect("re-like");
+    assert_eq!(again.id, first.id);
+    assert_eq!(again.weight, first.weight);
+    assert!(again.retracted_at.is_none());
+    assert_eq!(repo.edges_for_epoch(epoch).await.expect("edges").len(), 1);
+    assert_eq!(repo.list_by_epoch(epoch).await.expect("journal").len(), 1);
+
+    // Retracting twice — and retracting something never liked — is an
+    // idempotent no-op, not an error.
+    svc.retract(like.clone()).await.expect("retract");
+    svc.retract(like).await.expect("retract again");
+    assert!(repo.edges_for_epoch(epoch).await.expect("edges").is_empty());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn retract_is_like_only(pool: PgPool) {
+    // A follow has its own DELETE path, a comment event mirrors a comment row
+    // that still exists — only `like` may be retracted.
+    let actor = seed_user(&pool).await;
+    let target = seed_user(&pool).await;
+    let svc = InteractionService::new(pool.clone());
+    let err = svc
+        .retract(NewInteraction {
+            actor_id: actor,
+            r#type: InteractionType::Follow,
+            target_id: Some(target),
+            post_id: None,
+            comment_id: None,
+        })
+        .await
+        .expect_err("follow is not retractable");
+    assert!(matches!(
+        err,
+        core_api::error::ApiError::Validation("only_like_retractable")
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn comment_like_resolves_to_comment_author(pool: PgPool) {
+    let post_author = seed_user(&pool).await;
+    let commenter = seed_user(&pool).await;
+    let liker = seed_user(&pool).await;
+    let post = seed_post(&pool, post_author).await;
+    let comment = seed_comment(&pool, post, commenter).await;
+
+    let svc = InteractionService::new(pool.clone());
+    let like = NewInteraction {
+        actor_id: liker,
+        r#type: InteractionType::Like,
+        target_id: None,
+        post_id: None,
+        comment_id: Some(comment),
+    };
+    let first = svc.record(like.clone()).await.expect("like");
+    assert_eq!(first.comment_id, Some(comment));
+
+    let epoch = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i32;
+    let repo = InteractionRepository::new(pool.clone());
+    let edges = repo.edges_for_epoch(epoch).await.expect("edges");
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0].actor_id, liker);
+    assert_eq!(
+        edges[0].target_id, commenter,
+        "the edge flows to the COMMENT author, not the post author"
+    );
+
+    // Dedup: the same comment-like repeats into the same row.
+    let again = svc.record(like.clone()).await.expect("repeat");
+    assert_eq!(first.id, again.id);
+
+    // Un-like removes the edge.
+    svc.retract(like).await.expect("retract");
+    assert!(repo.edges_for_epoch(epoch).await.expect("edges").is_empty());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn comment_like_on_missing_comment_is_404(pool: PgPool) {
+    let actor = seed_user(&pool).await;
+    let err = InteractionService::new(pool.clone())
+        .record(NewInteraction {
+            actor_id: actor,
+            r#type: InteractionType::Like,
+            target_id: None,
+            post_id: None,
+            comment_id: Some(999_999),
+        })
+        .await
+        .expect_err("missing comment");
+    assert!(matches!(err, core_api::error::ApiError::NotFound));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn comment_like_gated_by_the_posts_visibility(pool: PgPool) {
+    // A4f twin for comment targets: a comment is exactly as visible as its post.
+    // Write side: a stranger liking a comment under a private post gets the same
+    // 404 as for a missing comment (no existence oracle); the post's author can.
+    // Settlement side: the edge is gated by the COMMENT's post visibility.
+    let post_author = seed_user(&pool).await;
+    let liker = seed_user(&pool).await;
+    let post = seed_post(&pool, post_author).await;
+    let comment = seed_comment(&pool, post, post_author).await;
+
+    let svc = InteractionService::new(pool.clone());
+    let like = |actor: i64| NewInteraction {
+        actor_id: actor,
+        r#type: InteractionType::Like,
+        target_id: None,
+        post_id: None,
+        comment_id: Some(comment),
+    };
+
+    // Flip the post private (no API write path for that yet — set directly).
+    sqlx::query!("UPDATE posts SET area = 'private' WHERE id = $1", post)
+        .execute(&pool)
+        .await
+        .expect("set private");
+
+    let err = svc.record(like(liker)).await.expect_err("stranger");
+    assert!(matches!(err, core_api::error::ApiError::NotFound));
+
+    // The author can see their own private post, so liking its comment works —
+    // but as a self-loop (own comment) it confers no edge, and the private post
+    // gates any comment-derived edge out of settlement anyway.
+    svc.record(like(post_author)).await.expect("author");
+    let epoch = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i32;
+    let repo = InteractionRepository::new(pool.clone());
+    assert!(repo.edges_for_epoch(epoch).await.expect("edges").is_empty());
+
+    // Back to public, liked by a third user: one real actor→commenter edge.
+    sqlx::query!("UPDATE posts SET area = 'public' WHERE id = $1", post)
+        .execute(&pool)
+        .await
+        .expect("set public");
+    svc.record(like(liker)).await.expect("liker");
+    assert_eq!(repo.edges_for_epoch(epoch).await.expect("edges").len(), 1);
+
+    // Pin the AREA arm of the settlement gate in isolation (hidden_at stays
+    // NULL): flipping the comment's post private must drop the third-party
+    // edge — this is the `cp.area = 'public'` conjunct, not the takedown one.
+    sqlx::query!("UPDATE posts SET area = 'private' WHERE id = $1", post)
+        .execute(&pool)
+        .await
+        .expect("set private again");
+    assert!(
+        repo.edges_for_epoch(epoch).await.expect("edges").is_empty(),
+        "a comment like under a PRIVATE post confers no weight"
+    );
+    sqlx::query!("UPDATE posts SET area = 'public' WHERE id = $1", post)
+        .execute(&pool)
+        .await
+        .expect("set public again");
+    assert_eq!(repo.edges_for_epoch(epoch).await.expect("edges").len(), 1);
+
+    // And the moderation arm: a takedown drops the comment-derived edge too.
+    sqlx::query!("UPDATE posts SET hidden_at = now() WHERE id = $1", post)
+        .execute(&pool)
+        .await
+        .expect("take down");
+    assert!(
+        repo.edges_for_epoch(epoch).await.expect("edges").is_empty(),
+        "a comment like on a taken-down post confers no weight"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn http_unlike_roundtrip(pool: PgPool) {
+    let router = app(AppState::new(pool.clone()));
+    let (_t_author, author) = common::register(&router, &[]).await;
+    let (token, _liker) = common::register(&router, &[]).await;
+    let post = seed_post(&pool, author).await;
+
+    let like_body = serde_json::json!({ "type": "like", "post_id": post });
+    let send = |method: &'static str, auth: Option<String>| {
+        let router = router.clone();
+        let body = like_body.to_string();
+        async move {
+            let mut req = Request::builder()
+                .method(method)
+                .uri("/v1/interactions")
+                .header("content-type", "application/json");
+            if let Some(token) = auth {
+                req = req.header("authorization", format!("Bearer {token}"));
+            }
+            router
+                .oneshot(req.body(Body::from(body)).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+
+    // Like → 201; un-like → 204; un-like again → 204 (idempotent toggle).
+    assert_eq!(
+        send("POST", Some(token.clone())).await.status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        send("DELETE", Some(token.clone())).await.status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        send("DELETE", Some(token.clone())).await.status(),
+        StatusCode::NO_CONTENT
+    );
+    // Unauthenticated → 401, exactly like the POST.
+    assert_eq!(
+        send("DELETE", None).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let epoch = Epoch::from_unix_seconds(Utc::now().timestamp()).0 as i32;
+    assert!(InteractionRepository::new(pool)
+        .edges_for_epoch(epoch)
+        .await
+        .expect("edges")
+        .is_empty());
 }

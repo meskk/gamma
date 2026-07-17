@@ -16,6 +16,15 @@ pub struct User {
     pub declared_categories: Vec<String>,
     /// Bot gate v_i: manual early, heuristic later, KYC in Phase 2 (Dossier §4.4).
     pub bot_gate_v: bool,
+    /// Public profile stat: DISTINCT (liker, post) pairs with an active
+    /// (non-retracted) like on this user's PUBLIC, non-hidden posts (ADR 0012) —
+    /// a fan liking three posts counts three, but never twice for the same post
+    /// (distinct pairs, not journal rows; see `Post::like_count`). Deliberately
+    /// viewer-independent and blind to private-area engagement, so the public
+    /// number never leaks paywalled activity. Comment-likes and direct
+    /// user-likes are not counted — the stat mirrors what the profile grid
+    /// shows: the posts.
+    pub likes_received: i64,
 }
 
 /// Server-side create shape. NOT a client request body: there is no public

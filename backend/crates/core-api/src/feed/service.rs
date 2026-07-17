@@ -24,6 +24,11 @@ const CURSOR_MAX_AGE_SECS: i64 = 48 * 3600;
 const RECENCY_DECAY_PER_HOUR: f64 = 0.05;
 /// Flat boost for a post whose category the viewer declared.
 const CATEGORY_BONUS: f64 = 1.0;
+/// Weight of the like signal in the popularity term. Log-damped (`ln(1+likes)`)
+/// so a viral post lifts but never swamps recency and category: 10 likes ≈ +2.4,
+/// 1000 ≈ +6.9. A RANKING heuristic, not an economic knob — payouts never read
+/// it, so it lives here with the other ranker constants, not in econ-params.
+const LIKE_POPULARITY_WEIGHT: f64 = 1.0;
 
 #[derive(Clone)]
 pub struct FeedService {
@@ -129,7 +134,15 @@ fn whole_seconds(t: DateTime<Utc>) -> DateTime<Utc> {
 }
 
 /// Cold-start relevance: recency-decayed popularity, plus a category-match boost.
-/// A brand-new post (popularity 0) still scores on recency alone.
+/// Popularity is the post's live like count, log-damped (`popularity_score` is
+/// kept in the sum for forward-compatibility but is 0 today — nothing writes it).
+/// A brand-new post (0 likes) still scores on recency alone.
+///
+/// Cursor caveat: the score is pure over (post row, frozen clock), but the like
+/// count itself moves between page fetches — a like landing mid-pagination can
+/// shift one post across the cursor boundary (a rare duplicate or skip near the
+/// page seam). Same class of drift every count-ranked feed accepts; the frozen
+/// clock still pins the dominant recency term.
 fn score(post: &Post, viewer_categories: &[String], now: DateTime<Utc>) -> f64 {
     let age_hours = (now - post.created_at).num_seconds().max(0) as f64 / 3600.0;
     let recency = (-RECENCY_DECAY_PER_HOUR * age_hours).exp();
@@ -139,5 +152,7 @@ fn score(post: &Post, viewer_categories: &[String], now: DateTime<Utc>) -> f64 {
         _ => 0.0,
     };
 
-    (1.0 + post.popularity_score) * recency + category_bonus
+    let popularity =
+        post.popularity_score + LIKE_POPULARITY_WEIGHT * (1.0 + post.like_count as f64).ln();
+    (1.0 + popularity) * recency + category_bonus
 }

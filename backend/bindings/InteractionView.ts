@@ -4,4 +4,4 @@ import type { InteractionType } from "./InteractionType";
 /**
  * API representation: typed `type`, no raw code, no internal timestamp noise.
  */
-export type InteractionView = { id: bigint, actor_id: bigint, target_id: bigint | null, post_id: bigint | null, type: InteractionType, weight: number, epoch_k: number, };
+export type InteractionView = { id: bigint, actor_id: bigint, target_id: bigint | null, post_id: bigint | null, comment_id: bigint | null, type: InteractionType, weight: number, epoch_k: number, };

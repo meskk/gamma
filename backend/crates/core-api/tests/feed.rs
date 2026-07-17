@@ -239,12 +239,36 @@ async fn fetch_feed(
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn pages_concatenate_to_the_single_shot_ranking(pool: PgPool) {
+    use core_api::interactions::model::{InteractionType, NewInteraction};
+    use core_api::interactions::service::InteractionService;
+
     let router = app(AppState::new(pool.clone()));
     let (token, viewer) = common::register(&router, &["tech"]).await;
     let author = new_user(&pool, vec![]).await;
+    let mut ids = Vec::new();
     for i in 0..7 {
         let cat = if i % 2 == 0 { Some("tech") } else { None };
-        new_post(&pool, author, cat, &format!("post {i}")).await;
+        ids.push(new_post(&pool, author, cat, &format!("post {i}")).await);
+    }
+
+    // Give the first posts DISTINCT nonzero like counts (3/2/1/0/…) before any
+    // fetch: at like_count = 0 the ln(1+likes) ranking term is identically zero,
+    // so the cursor's bit-exact score round-trip would be vacuously untested.
+    // Counts are fixed before the walk and nothing mutates during it.
+    let svc = InteractionService::new(pool.clone());
+    for i in 0..3usize {
+        let fan = new_user(&pool, vec![]).await;
+        for post in ids.iter().take(3 - i) {
+            svc.record(NewInteraction {
+                actor_id: fan,
+                r#type: InteractionType::Like,
+                target_id: None,
+                post_id: Some(*post),
+                comment_id: None,
+            })
+            .await
+            .expect("like");
+        }
     }
 
     // The single-shot ranking is the reference order.
@@ -338,4 +362,60 @@ async fn feed_is_self_or_operator(pool: PgPool) {
         get(Some(format!("Bearer {token}"))).await.status(),
         StatusCode::OK
     );
+}
+
+// ---------------------------------------------------------------------------
+// ADR 0012: likes lift the cold-start ranking and hydrate liked_by_me
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn http_feed_ranks_liked_posts_higher_and_hydrates_liked_by_me(pool: PgPool) {
+    use core_api::interactions::model::{InteractionType, NewInteraction};
+    use core_api::interactions::service::InteractionService;
+
+    let router = app(AppState::new(pool.clone()));
+    let (token, viewer) = common::register(&router, &[]).await;
+    let author = new_user(&pool, vec![]).await;
+    let fan = new_user(&pool, vec![]).await;
+
+    // Equally recent, same author, no category signal — only the likes differ.
+    // "plain post" is created SECOND, so on a pure recency tie-break it would
+    // win; the liked post outranking it can only come from the like term.
+    let liked_id = new_post(&pool, author, None, "liked post").await;
+    new_post(&pool, author, None, "plain post").await;
+
+    let svc = InteractionService::new(pool.clone());
+    for actor in [viewer, fan] {
+        svc.record(NewInteraction {
+            actor_id: actor,
+            r#type: InteractionType::Like,
+            target_id: None,
+            post_id: Some(liked_id),
+            comment_id: None,
+        })
+        .await
+        .expect("like");
+    }
+
+    let (status, feed) = fetch_feed(&router, viewer, &token, "").await;
+    assert_eq!(status, StatusCode::OK);
+    let items = feed["items"].as_array().unwrap();
+    let pos = |body: &str| {
+        items
+            .iter()
+            .position(|p| p["body"].as_str() == Some(body))
+            .unwrap_or_else(|| panic!("{body} missing from feed"))
+    };
+    assert!(
+        pos("liked post") < pos("plain post"),
+        "the liked post should outrank the newer unliked one"
+    );
+
+    // The feed items hydrate the viewer's own like state and the count.
+    let liked_item = &items[pos("liked post")];
+    assert_eq!(liked_item["like_count"].as_i64(), Some(2));
+    assert_eq!(liked_item["liked_by_me"].as_bool(), Some(true));
+    let plain_item = &items[pos("plain post")];
+    assert_eq!(plain_item["like_count"].as_i64(), Some(0));
+    assert_eq!(plain_item["liked_by_me"].as_bool(), Some(false));
 }

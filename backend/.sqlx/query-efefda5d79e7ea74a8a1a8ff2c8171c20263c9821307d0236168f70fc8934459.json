@@ -1,0 +1,78 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, author_id, category, body, created_at, popularity_score, media_id, area,\n                   (SELECT COUNT(DISTINCT ie.actor_id) FROM interaction_events ie\n                    WHERE ie.post_id = posts.id AND ie.type = $3 AND ie.retracted_at IS NULL)\n                       AS \"like_count!\",\n                   EXISTS(SELECT 1 FROM interaction_events ie\n                    WHERE ie.post_id = posts.id AND ie.type = $3 AND ie.actor_id = $2\n                      AND ie.retracted_at IS NULL) AS \"liked_by_me!\"\n            FROM posts\n            WHERE id = $1 AND hidden_at IS NULL\n              AND (\n                area = 'public'\n                OR author_id = $2\n                OR EXISTS (\n                    SELECT 1 FROM area_entitlements ae\n                    WHERE ae.viewer_id = $2 AND ae.creator_id = posts.author_id\n                      AND (ae.expires_at IS NULL OR ae.expires_at > now())\n                )\n                OR EXISTS (\n                    SELECT 1 FROM private_areas pa\n                    WHERE pa.creator_id = posts.author_id AND pa.access_model = 'free'\n                      AND $2::bigint IS NOT NULL\n                )\n              )\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "author_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "category",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "body",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "popularity_score",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 6,
+        "name": "media_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "area",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "like_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "liked_by_me!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int2"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "efefda5d79e7ea74a8a1a8ff2c8171c20263c9821307d0236168f70fc8934459"
+}

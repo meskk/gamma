@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT EXISTS (\n                SELECT 1 FROM comments c\n                JOIN posts p ON p.id = c.post_id\n                WHERE c.id = $1\n                  AND (\n                    p.area = 'public'\n                    OR p.author_id = $2\n                    OR EXISTS (SELECT 1 FROM area_entitlements ae WHERE ae.viewer_id = $2 AND ae.creator_id = p.author_id AND (ae.expires_at IS NULL OR ae.expires_at > now()))\n                    OR EXISTS (SELECT 1 FROM private_areas pa WHERE pa.creator_id = p.author_id AND pa.access_model = 'free' AND $2::bigint IS NOT NULL)\n                  )\n            ) AS \"visible!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "visible!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f94bcde92ef53c7bfe0a66c246088bf5c8b5eaf926f9999c06d044b9d616e8a1"
+}

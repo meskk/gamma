@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE interaction_events SET retracted_at = now()\n            WHERE actor_id = $1 AND type = $2 AND retracted_at IS NULL\n              AND target_id IS NOT DISTINCT FROM $3\n              AND post_id IS NOT DISTINCT FROM $4\n              AND comment_id IS NOT DISTINCT FROM $5\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int2",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "277594d213e877742998ca2d9f0105c5e5968c9aaf3316d23515b7ad9a4d518a"
+}

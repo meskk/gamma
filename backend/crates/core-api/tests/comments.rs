@@ -162,3 +162,73 @@ async fn comments_respect_post_takedown(pool: PgPool) {
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v.as_array().unwrap().len(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// ADR 0012: live like aggregates on the Comment read model
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn comment_like_count_and_liked_by_me(pool: PgPool) {
+    use core_api::comments::repository::CommentRepository;
+    use core_api::interactions::model::{InteractionType, NewInteraction};
+    use core_api::interactions::service::InteractionService;
+
+    let post = seed_post(&pool).await;
+    let commenter = UserRepository::new(pool.clone())
+        .create(&NewUser {
+            declared_categories: vec![],
+            bot_gate_v: false,
+        })
+        .await
+        .expect("commenter")
+        .id;
+    let liker = UserRepository::new(pool.clone())
+        .create(&NewUser {
+            declared_categories: vec![],
+            bot_gate_v: false,
+        })
+        .await
+        .expect("liker")
+        .id;
+
+    let comments = CommentRepository::new(pool.clone());
+    let comment = comments
+        .create(post, commenter, "like me")
+        .await
+        .expect("insert")
+        .expect("visible");
+    assert_eq!(comment.like_count, 0);
+    assert!(!comment.liked_by_me);
+
+    let svc = InteractionService::new(pool.clone());
+    let like = NewInteraction {
+        actor_id: liker,
+        r#type: InteractionType::Like,
+        target_id: None,
+        post_id: None,
+        comment_id: Some(comment.id),
+    };
+    svc.record(like.clone()).await.expect("like");
+
+    let for_liker = comments
+        .list_for_post(post, Some(liker), 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(for_liker[0].like_count, 1);
+    assert!(for_liker[0].liked_by_me);
+    let anon = comments
+        .list_for_post(post, None, 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(anon[0].like_count, 1);
+    assert!(!anon[0].liked_by_me);
+
+    // Un-like drops it from both projections.
+    svc.retract(like).await.expect("unlike");
+    let after = comments
+        .list_for_post(post, Some(liker), 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(after[0].like_count, 0);
+    assert!(!after[0].liked_by_me);
+}

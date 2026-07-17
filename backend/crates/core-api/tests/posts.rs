@@ -364,3 +364,96 @@ async fn create_attaches_media(pool: PgPool) {
     let fetched = repo.get(post.id, None).await.unwrap().unwrap();
     assert_eq!(fetched.media_id, Some(media_id));
 }
+
+// ---------------------------------------------------------------------------
+// ADR 0012: live like aggregates on the Post read model
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn like_count_and_liked_by_me_reflect_the_journal(pool: PgPool) {
+    use core_api::interactions::model::{InteractionType, NewInteraction};
+    use core_api::interactions::service::InteractionService;
+
+    let author = seed_author(&pool).await;
+    let liker = seed_author(&pool).await;
+    let other = seed_author(&pool).await;
+    let repo = PostRepository::new(pool.clone());
+    let post = repo
+        .create(&NewPost {
+            author_id: author,
+            category: None,
+            body: "count me".into(),
+            media_id: None,
+            area: "public".to_string(),
+        })
+        .await
+        .expect("create");
+    assert_eq!(post.like_count, 0, "a fresh post starts unliked");
+    assert!(!post.liked_by_me);
+
+    let svc = InteractionService::new(pool.clone());
+    let like = |actor: i64| NewInteraction {
+        actor_id: actor,
+        r#type: InteractionType::Like,
+        target_id: None,
+        post_id: Some(post.id),
+        comment_id: None,
+    };
+    svc.record(like(liker)).await.expect("like 1");
+    svc.record(like(other)).await.expect("like 2");
+
+    // The count is viewer-independent; the flag is the viewer's own state.
+    let for_liker = repo.get(post.id, Some(liker)).await.expect("get").unwrap();
+    assert_eq!(for_liker.like_count, 2);
+    assert!(for_liker.liked_by_me);
+    let for_author = repo.get(post.id, Some(author)).await.expect("get").unwrap();
+    assert_eq!(for_author.like_count, 2);
+    assert!(!for_author.liked_by_me);
+    let anon = repo.get(post.id, None).await.expect("get").unwrap();
+    assert_eq!(anon.like_count, 2);
+    assert!(!anon.liked_by_me, "anonymous is never 'me'");
+
+    // Un-like: the voided row leaves both projections immediately.
+    svc.retract(like(liker)).await.expect("unlike");
+    let after = repo.get(post.id, Some(liker)).await.expect("get").unwrap();
+    assert_eq!(after.like_count, 1);
+    assert!(!after.liked_by_me);
+
+    // The list projection carries the same fields.
+    let listed = repo
+        .list(Some(author), Some(other), 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].like_count, 1);
+    assert!(listed[0].liked_by_me, "`other` still holds an active like");
+
+    // Cross-epoch rows for the SAME actor must not inflate the counter: the
+    // journal legitimately holds one weighted row per (actor, post, epoch) —
+    // daily re-engagement edges — but the DISPLAY semantics are per-user
+    // boolean, i.e. distinct likers (ADR 0012 §2). Simulate yesterday's like
+    // by inserting the prior-epoch row directly.
+    let epoch = domain::Epoch::from_unix_seconds(chrono::Utc::now().timestamp()).0 as i32;
+    sqlx::query!(
+        "INSERT INTO interaction_events (actor_id, target_id, post_id, type, weight, epoch_k)
+         VALUES ($1, NULL, $2, $3, 1.0, $4)",
+        other,
+        post.id,
+        InteractionType::Like.code(),
+        epoch - 1
+    )
+    .execute(&pool)
+    .await
+    .expect("prior-epoch like");
+    let still = repo.get(post.id, Some(other)).await.expect("get").unwrap();
+    assert_eq!(
+        still.like_count, 1,
+        "the same liker across epochs counts ONCE"
+    );
+
+    // One unlike voids BOTH epochs' rows: the counter drops exactly to 0.
+    svc.retract(like(other)).await.expect("unlike other");
+    let gone = repo.get(post.id, Some(other)).await.expect("get").unwrap();
+    assert_eq!(gone.like_count, 0);
+    assert!(!gone.liked_by_me);
+}

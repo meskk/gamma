@@ -1,5 +1,6 @@
 //! Feed candidate retrieval — the bounded candidate-set query (Dossier App. A.2).
 
+use crate::interactions::model::InteractionType;
 use crate::posts::model::Post;
 use db::PgPool;
 
@@ -68,6 +69,9 @@ impl FeedRepository {
                 LIMIT 800
             ),
             from_popularity AS (
+                -- "Globally popular" = most ACTIVE likes (ADR 0012); the stored
+                -- popularity_score column is a dead cold-start artefact (always 0,
+                -- nothing updates it), so ordering by it selected arbitrary rows.
                 SELECT p.id, p.author_id, p.category, p.body, p.created_at, p.popularity_score, p.media_id, p.area
                 FROM posts p
                 WHERE p.created_at > (SELECT t FROM cutoff)
@@ -78,7 +82,10 @@ impl FeedRepository {
                     OR EXISTS (SELECT 1 FROM area_entitlements ae WHERE ae.viewer_id = $1 AND ae.creator_id = p.author_id AND (ae.expires_at IS NULL OR ae.expires_at > now()))
                     OR EXISTS (SELECT 1 FROM private_areas pa WHERE pa.creator_id = p.author_id AND pa.access_model = 'free')
                   )
-                ORDER BY p.popularity_score DESC
+                ORDER BY (SELECT COUNT(DISTINCT ie.actor_id) FROM interaction_events ie
+                          WHERE ie.post_id = p.id AND ie.type = $3
+                            AND ie.retracted_at IS NULL) DESC,
+                         p.created_at DESC
                 LIMIT 400
             ),
             candidates AS (
@@ -96,11 +103,18 @@ impl FeedRepository {
                 created_at AS "created_at!",
                 popularity_score AS "popularity_score!",
                 media_id,
-                area AS "area!"
+                area AS "area!",
+                (SELECT COUNT(DISTINCT ie.actor_id) FROM interaction_events ie
+                 WHERE ie.post_id = candidates.id AND ie.type = $3
+                   AND ie.retracted_at IS NULL) AS "like_count!",
+                EXISTS(SELECT 1 FROM interaction_events ie
+                 WHERE ie.post_id = candidates.id AND ie.type = $3 AND ie.actor_id = $1
+                   AND ie.retracted_at IS NULL) AS "liked_by_me!"
             FROM candidates
             "#,
             user_id,
-            categories
+            categories,
+            InteractionType::Like.code()
         )
         .fetch_all(&self.pool)
         .await

@@ -1,6 +1,7 @@
 //! Postgres persistence for comments — the only place that knows comments SQL.
 
 use crate::comments::model::Comment;
+use crate::interactions::model::InteractionType;
 use db::PgPool;
 
 #[derive(Clone)]
@@ -39,13 +40,51 @@ impl CommentRepository {
                     OR EXISTS (SELECT 1 FROM private_areas pa WHERE pa.creator_id = posts.author_id AND pa.access_model = 'free')
                   )
             )
-            RETURNING id, post_id, author_id, body, created_at
+            RETURNING id, post_id, author_id, body, created_at,
+                      0::bigint AS "like_count!", false AS "liked_by_me!"
             "#,
             post_id,
             author_id,
             body
         )
         .fetch_optional(&self.pool)
+        .await
+    }
+
+    /// Can `viewer` SEE the comment — i.e. its POST (a comment is exactly as
+    /// visible as its post)? The write-side A4f guard for comment-directed
+    /// interactions, as ONE query: "comment missing" and "comment on an unseen
+    /// private post" are indistinguishable in result AND in work done (a
+    /// two-step resolve-then-check would answer a missing comment after one
+    /// query but a hidden one after two — a timing tell). Mirrors
+    /// `PostRepository::post_visible_to`: the area predicate only, no
+    /// `hidden_at` (interactions on hidden posts stay write-accepted and
+    /// economically inert — see the posts module invariant doc). The caller is
+    /// always authenticated, so the free arm keeps the `IS NOT NULL` guard only
+    /// for symmetry with the anonymous-capable predicate.
+    pub async fn comment_visible_to(
+        &self,
+        comment_id: i64,
+        viewer: Option<i64>,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM comments c
+                JOIN posts p ON p.id = c.post_id
+                WHERE c.id = $1
+                  AND (
+                    p.area = 'public'
+                    OR p.author_id = $2
+                    OR EXISTS (SELECT 1 FROM area_entitlements ae WHERE ae.viewer_id = $2 AND ae.creator_id = p.author_id AND (ae.expires_at IS NULL OR ae.expires_at > now()))
+                    OR EXISTS (SELECT 1 FROM private_areas pa WHERE pa.creator_id = p.author_id AND pa.access_model = 'free' AND $2::bigint IS NOT NULL)
+                  )
+            ) AS "visible!"
+            "#,
+            comment_id,
+            viewer
+        )
+        .fetch_one(&self.pool)
         .await
     }
 
@@ -66,7 +105,13 @@ impl CommentRepository {
         sqlx::query_as!(
             Comment,
             r#"
-            SELECT c.id, c.post_id, c.author_id, c.body, c.created_at
+            SELECT c.id, c.post_id, c.author_id, c.body, c.created_at,
+                   (SELECT COUNT(DISTINCT ie.actor_id) FROM interaction_events ie
+                    WHERE ie.comment_id = c.id AND ie.type = $5 AND ie.retracted_at IS NULL)
+                       AS "like_count!",
+                   EXISTS(SELECT 1 FROM interaction_events ie
+                    WHERE ie.comment_id = c.id AND ie.type = $5 AND ie.actor_id = $2
+                      AND ie.retracted_at IS NULL) AS "liked_by_me!"
             FROM comments c
             JOIN posts p ON p.id = c.post_id
             WHERE c.post_id = $1 AND p.hidden_at IS NULL
@@ -82,7 +127,8 @@ impl CommentRepository {
             post_id,
             viewer,
             limit,
-            offset
+            offset,
+            InteractionType::Like.code()
         )
         .fetch_all(&self.pool)
         .await

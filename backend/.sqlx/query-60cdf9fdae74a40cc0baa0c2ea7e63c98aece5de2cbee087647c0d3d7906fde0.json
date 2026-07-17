@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE posts SET hidden_at = $2\n            WHERE id = $1\n            RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area\n            ",
+  "query": "\n            UPDATE posts SET hidden_at = $2\n            WHERE id = $1\n            RETURNING id, author_id, category, body, created_at, popularity_score, media_id, area,\n                      (SELECT COUNT(DISTINCT ie.actor_id) FROM interaction_events ie\n                       WHERE ie.post_id = posts.id AND ie.type = $3 AND ie.retracted_at IS NULL)\n                          AS \"like_count!\",\n                      false AS \"liked_by_me!\"\n            ",
   "describe": {
     "columns": [
       {
@@ -42,12 +42,23 @@
         "ordinal": 7,
         "name": "area",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "like_count!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "liked_by_me!",
+        "type_info": "Bool"
       }
     ],
     "parameters": {
       "Left": [
         "Int8",
-        "Timestamptz"
+        "Timestamptz",
+        "Int2"
       ]
     },
     "nullable": [
@@ -58,8 +69,10 @@
       false,
       false,
       true,
-      false
+      false,
+      null,
+      null
     ]
   },
-  "hash": "fba6f3c915a5aff3abc2670f62a3638b7018fbb476e80623c05d7a6ec4aabd6a"
+  "hash": "60cdf9fdae74a40cc0baa0c2ea7e63c98aece5de2cbee087647c0d3d7906fde0"
 }

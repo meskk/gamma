@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                ie.actor_id AS \"actor_id!\",\n                COALESCE(ie.target_id, p.author_id, c.author_id) AS \"target_id!\",\n                ie.weight AS \"weight!\",\n                ie.created_at AS \"created_at!\"\n            FROM interaction_events ie\n            LEFT JOIN posts p ON p.id = ie.post_id\n            LEFT JOIN comments c ON c.id = ie.comment_id\n            LEFT JOIN posts cp ON cp.id = c.post_id\n            WHERE ie.epoch_k = $1\n              AND ie.retracted_at IS NULL\n              AND COALESCE(ie.target_id, p.author_id, c.author_id) IS NOT NULL\n              AND ie.actor_id <> COALESCE(ie.target_id, p.author_id, c.author_id)\n              AND (ie.target_id IS NOT NULL\n                   OR (ie.post_id IS NOT NULL AND p.hidden_at IS NULL AND p.area = 'public')\n                   OR (ie.comment_id IS NOT NULL AND cp.hidden_at IS NULL AND cp.area = 'public'))\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "actor_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "target_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "weight!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false
+    ]
+  },
+  "hash": "033c2531a3466a142a631c8fecb74367e78947c7ae271f49350d684efd2424ad"
+}

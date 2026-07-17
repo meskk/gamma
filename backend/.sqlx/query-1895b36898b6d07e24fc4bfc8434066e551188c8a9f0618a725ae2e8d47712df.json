@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO interaction_events (actor_id, target_id, post_id, type, weight, epoch_k)\n         VALUES ($1, NULL, $2, $3, 1.0, $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int2",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1895b36898b6d07e24fc4bfc8434066e551188c8a9f0618a725ae2e8d47712df"
+}

@@ -18,4 +18,18 @@ media_id: bigint | null,
  * may already see, so this field is a display hint (e.g. a lock badge), not
  * itself the gate.
  */
-area: string, };
+area: string, 
+/**
+ * DISTINCT users with an active (non-retracted) like on this post, computed
+ * live from the interaction journal (ADR 0012) — no denormalised counter to
+ * drift. Distinct ACTORS, not journal rows: the economic journal may hold
+ * one weighted row per epoch for the same (actor, post) (daily re-engagement
+ * edges), but the display counter is per-user boolean semantics — otherwise
+ * one account could pump a public counter by +1/day via the raw API.
+ */
+like_count: bigint, 
+/**
+ * Whether the REQUESTING viewer holds an active like on this post — what the
+ * like button hydrates from. `false` for anonymous reads.
+ */
+liked_by_me: boolean, };

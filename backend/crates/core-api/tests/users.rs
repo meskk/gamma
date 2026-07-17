@@ -255,3 +255,118 @@ async fn referral_terms_are_operator_only_and_upsert(pool: PgPool) {
         StatusCode::NOT_FOUND
     );
 }
+
+// ---------------------------------------------------------------------------
+// ADR 0012: the public profile stat `likes_received`
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn likes_received_counts_only_active_likes_on_visible_public_posts(pool: PgPool) {
+    use core_api::interactions::model::{InteractionType, NewInteraction};
+    use core_api::interactions::service::InteractionService;
+    use core_api::posts::model::NewPost;
+    use core_api::posts::repository::PostRepository;
+
+    let repo = UserRepository::new(pool.clone());
+    let creator = repo
+        .create(&NewUser {
+            declared_categories: vec![],
+            bot_gate_v: false,
+        })
+        .await
+        .expect("creator")
+        .id;
+    let fan = repo
+        .create(&NewUser {
+            declared_categories: vec![],
+            bot_gate_v: false,
+        })
+        .await
+        .expect("fan")
+        .id;
+
+    let posts = PostRepository::new(pool.clone());
+    let mut mk_post = Vec::new();
+    for body in ["kept", "retracted", "hidden", "private"] {
+        mk_post.push(
+            posts
+                .create(&NewPost {
+                    author_id: creator,
+                    category: None,
+                    body: body.into(),
+                    media_id: None,
+                    area: "public".to_string(),
+                })
+                .await
+                .expect("post")
+                .id,
+        );
+    }
+    let svc = InteractionService::new(pool.clone());
+    for id in &mk_post {
+        svc.record(NewInteraction {
+            actor_id: fan,
+            r#type: InteractionType::Like,
+            target_id: None,
+            post_id: Some(*id),
+            comment_id: None,
+        })
+        .await
+        .expect("like");
+    }
+
+    // 4 active likes on 4 public posts.
+    let user = repo.get(creator).await.expect("get").expect("exists");
+    assert_eq!(user.likes_received, 4);
+
+    // Retract one; hide one; flip one private. Only "kept" still counts: the
+    // public stat must not move for voided likes, and must not leak moderated
+    // or paywalled engagement.
+    svc.retract(NewInteraction {
+        actor_id: fan,
+        r#type: InteractionType::Like,
+        target_id: None,
+        post_id: Some(mk_post[1]),
+        comment_id: None,
+    })
+    .await
+    .expect("unlike");
+    sqlx::query!(
+        "UPDATE posts SET hidden_at = now() WHERE id = $1",
+        mk_post[2]
+    )
+    .execute(&pool)
+    .await
+    .expect("hide");
+    sqlx::query!(
+        "UPDATE posts SET area = 'private' WHERE id = $1",
+        mk_post[3]
+    )
+    .execute(&pool)
+    .await
+    .expect("privatise");
+
+    let user = repo.get(creator).await.expect("get").expect("exists");
+    assert_eq!(user.likes_received, 1);
+
+    // Distinct-(liker, post)-pair semantics (ADR 0012 §2): a prior-epoch
+    // duplicate of the surviving like must NOT inflate the public stat — one
+    // fan on one post counts once, no matter how many epochs the journal spans.
+    let epoch = domain::Epoch::from_unix_seconds(chrono::Utc::now().timestamp()).0 as i32;
+    sqlx::query!(
+        "INSERT INTO interaction_events (actor_id, target_id, post_id, type, weight, epoch_k)
+         VALUES ($1, NULL, $2, $3, 1.0, $4)",
+        fan,
+        mk_post[0],
+        InteractionType::Like.code(),
+        epoch - 1
+    )
+    .execute(&pool)
+    .await
+    .expect("prior-epoch like");
+    let user = repo.get(creator).await.expect("get").expect("exists");
+    assert_eq!(
+        user.likes_received, 1,
+        "the same (fan, post) pair across epochs counts once"
+    );
+}
