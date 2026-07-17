@@ -370,3 +370,47 @@ async fn likes_received_counts_only_active_likes_on_visible_public_posts(pool: P
         "the same (fan, post) pair across epochs counts once"
     );
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn followers_count_reflects_the_follows_table(pool: PgPool) {
+    let repo = UserRepository::new(pool.clone());
+    let creator = repo
+        .create(&NewUser {
+            declared_categories: vec![],
+            bot_gate_v: false,
+        })
+        .await
+        .expect("creator");
+    assert_eq!(creator.followers_count, 0, "fresh user starts unfollowed");
+    let fan_a = repo
+        .create(&NewUser {
+            declared_categories: vec![],
+            bot_gate_v: false,
+        })
+        .await
+        .expect("fan a")
+        .id;
+    let fan_b = repo
+        .create(&NewUser {
+            declared_categories: vec![],
+            bot_gate_v: false,
+        })
+        .await
+        .expect("fan b")
+        .id;
+    sqlx::query!(
+        "INSERT INTO follows (follower_id, followee_id) VALUES ($1, $3), ($2, $3)",
+        fan_a,
+        fan_b,
+        creator.id
+    )
+    .execute(&pool)
+    .await
+    .expect("follows");
+
+    let fetched = repo.get(creator.id).await.expect("get").expect("exists");
+    assert_eq!(fetched.followers_count, 2);
+    // Following someone does NOT make them a follower: the count is directional.
+    let fan = repo.get(fan_a).await.expect("get").expect("exists");
+    assert_eq!(fan.followers_count, 0);
+}

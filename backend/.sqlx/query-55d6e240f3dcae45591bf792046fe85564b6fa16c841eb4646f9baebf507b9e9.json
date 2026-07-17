@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE users SET bot_gate_v = $2\n            WHERE id = $1\n            RETURNING id, created_at, declared_categories, bot_gate_v,\n                      (SELECT COUNT(DISTINCT (ie.actor_id, ie.post_id)) FROM interaction_events ie\n                       JOIN posts p ON p.id = ie.post_id\n                       WHERE p.author_id = users.id AND ie.type = $3\n                         AND ie.retracted_at IS NULL\n                         AND p.hidden_at IS NULL AND p.area = 'public')\n                          AS \"likes_received!\"\n            ",
+  "query": "\n            INSERT INTO users (declared_categories, bot_gate_v)\n            VALUES ($1, $2)\n            RETURNING id, created_at, declared_categories, bot_gate_v,\n                      0::bigint AS \"likes_received!\", 0::bigint AS \"followers_count!\"\n            ",
   "describe": {
     "columns": [
       {
@@ -27,13 +27,17 @@
         "ordinal": 4,
         "name": "likes_received!",
         "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "followers_count!",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8",
-        "Bool",
-        "Int2"
+        "TextArray",
+        "Bool"
       ]
     },
     "nullable": [
@@ -41,8 +45,9 @@
       false,
       false,
       false,
+      null,
       null
     ]
   },
-  "hash": "b27c2a38283c5b0870e87528745ebdfdc89a93453d526deca7c7431acebf30b9"
+  "hash": "55d6e240f3dcae45591bf792046fe85564b6fa16c841eb4646f9baebf507b9e9"
 }

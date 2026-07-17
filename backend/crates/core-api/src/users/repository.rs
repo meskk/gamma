@@ -21,14 +21,14 @@ impl UserRepository {
     }
 
     pub async fn create(&self, new: &NewUser) -> Result<User, sqlx::Error> {
-        // A brand-new user has no posts, so no likes received — a literal.
+        // A brand-new user has no posts and no followers — literals.
         sqlx::query_as!(
             User,
             r#"
             INSERT INTO users (declared_categories, bot_gate_v)
             VALUES ($1, $2)
             RETURNING id, created_at, declared_categories, bot_gate_v,
-                      0::bigint AS "likes_received!"
+                      0::bigint AS "likes_received!", 0::bigint AS "followers_count!"
             "#,
             &new.declared_categories,
             new.bot_gate_v
@@ -47,7 +47,9 @@ impl UserRepository {
                     WHERE p.author_id = users.id AND ie.type = $2
                       AND ie.retracted_at IS NULL
                       AND p.hidden_at IS NULL AND p.area = 'public')
-                       AS "likes_received!"
+                       AS "likes_received!",
+                   (SELECT COUNT(*) FROM follows f WHERE f.followee_id = users.id)
+                       AS "followers_count!"
             FROM users
             WHERE id = $1
             "#,
@@ -72,7 +74,9 @@ impl UserRepository {
                        WHERE p.author_id = users.id AND ie.type = $3
                          AND ie.retracted_at IS NULL
                          AND p.hidden_at IS NULL AND p.area = 'public')
-                          AS "likes_received!"
+                          AS "likes_received!",
+                      (SELECT COUNT(*) FROM follows f WHERE f.followee_id = users.id)
+                          AS "followers_count!"
             "#,
             id,
             verified,

@@ -25,6 +25,10 @@ pub struct User {
     /// user-likes are not counted — the stat mirrors what the profile grid
     /// shows: the posts.
     pub likes_received: i64,
+    /// Public profile stat: how many users follow THIS user, live from the
+    /// `follows` table (the API previously only exposed the *following* list).
+    /// Viewer-independent, like `likes_received`.
+    pub followers_count: i64,
 }
 
 /// Server-side create shape. NOT a client request body: there is no public

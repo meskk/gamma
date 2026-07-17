@@ -7,11 +7,12 @@
 // presentation is the glass redesign.
 //
 // The design shows fields the Phase-1a backend does not have yet (display name,
-// bio, followers aggregate, messaging). Per the owner's call we render only
-// real data and OMIT the rest rather than fake it. The LIKES aggregate is real
-// since ADR 0012 (`user.likes_received`: active likes on the user's public
-// posts), as are the per-tile like counts. "Subscribe" is shown only when the
-// creator actually has a subscription private area configured
+// bio, messaging). Per the owner's call we render only real data and OMIT the
+// rest rather than fake it. The LIKES aggregate is real since ADR 0012
+// (`user.likes_received`: active likes on the user's public posts), as are the
+// per-tile like counts; FOLLOWERS is real via `user.followers_count` (with the
+// viewer's own follow toggle reflected optimistically). "Subscribe" is shown
+// only when the creator actually has a subscription private area configured
 // (GAMMA_PRIVATE_AREA); the purchase flow itself is not built, so the pill is a
 // display of the offer, not a checkout.
 
@@ -117,9 +118,19 @@ export default function ProfilePage() {
   const posts = postsData ?? (postsError ? [] : null);
   const postCount = posts ? posts.length : null;
   const followingCount = followingList ? followingList.length : null;
-  const following =
-    followOverride ??
-    (viewerFollows ? viewerFollows.some((x) => String(x.followee_id) === profileId) : null);
+  const serverFollowing = viewerFollows
+    ? viewerFollows.some((x) => String(x.followee_id) === profileId)
+    : null;
+  const following = followOverride ?? serverFollowing;
+  // The profile's follower count with the viewer's OWN follow toggle reflected
+  // immediately: ±1 only while the optimistic override diverges from the
+  // server truth (same baseline+override pattern as useLike).
+  const followerDelta =
+    followOverride !== null && serverFollowing !== null && followOverride !== serverFollowing
+      ? followOverride
+        ? 1
+        : -1
+      : 0;
   const followErr = !!followError;
   const error = userError ? "Profil konnte nicht geladen werden." : null;
   const subscribable =
@@ -196,6 +207,7 @@ export default function ProfilePage() {
               {/* Stats — only what the backend actually has. */}
               <div style={{ display: "flex", gap: 40, paddingTop: 8 }}>
                 <Stat value={postCount} label="Posts" />
+                <Stat value={Number(user.followers_count) + followerDelta} label="Follower" />
                 <Stat value={followingCount} label="Folgt" />
                 <Stat value={Number(user.likes_received)} label="Likes" />
                 {isSelf && balance && (

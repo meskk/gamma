@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,6 +36,7 @@ beforeEach(() => {
         declared_categories: [],
         bot_gate_v: false,
         likes_received: 2,
+        followers_count: 7,
       });
     }
     if (path.startsWith("/posts?")) return Promise.resolve([]);
@@ -68,5 +69,20 @@ describe("ProfilePage", () => {
     // showed a stale "Unfollow" for profile 9.
     await screen.findByRole("button", { name: "Folgen" });
     expect(screen.queryByRole("button", { name: "Entfolgen" })).toBeNull();
+  });
+
+  it("shows the follower count and bumps it optimistically with the follow toggle", async () => {
+    render(<ProfilePage />);
+    await screen.findByText("@user-5");
+    // Server baseline: 7 followers, and the viewer already follows profile 5.
+    await screen.findByText("7");
+    const unfollow = await screen.findByRole("button", { name: "Entfolgen" });
+
+    // Unfollow → the count drops by one immediately (optimistic)…
+    fireEvent.click(unfollow);
+    await screen.findByText("6");
+    // …and re-following restores the server number, not 8.
+    fireEvent.click(await screen.findByRole("button", { name: "Folgen" }));
+    await screen.findByText("7");
   });
 });

@@ -15,4 +15,10 @@ bot_gate_v: boolean,
  * user-likes are not counted — the stat mirrors what the profile grid
  * shows: the posts.
  */
-likes_received: bigint, };
+likes_received: bigint, 
+/**
+ * Public profile stat: how many users follow THIS user, live from the
+ * `follows` table (the API previously only exposed the *following* list).
+ * Viewer-independent, like `likes_received`.
+ */
+followers_count: bigint, };
